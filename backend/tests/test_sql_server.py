@@ -5,7 +5,7 @@ conn_str = (
     "Server=localhost;"
     "Database=FoodApp;"
     "UID=app_user;"
-    "PWD=Beanmj1.;"
+    "PWD=<your_password_here>;"
     "TrustServerCertificate=yes;"
 )
 
