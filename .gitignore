@@ -8,6 +8,7 @@ __pycache__/
 venv/
 .env
 .env.*
+!.env.example
 
 # Testing
 .pytest_cache/
@@ -18,3 +19,10 @@ htmlcov/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Local Azure Functions settings
+local.settings.json
+backend/local.settings.json
+
+# Local Azurite emulator data
+azurite/
