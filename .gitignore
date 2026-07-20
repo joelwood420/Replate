@@ -26,3 +26,7 @@ backend/local.settings.json
 
 # Local Azurite emulator data
 azurite/
+
+# Local Functions host run logs
+backend/func_start.log
+*.log

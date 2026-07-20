@@ -1,10 +1,10 @@
 # CLAUDE.md
 
-Project instructions for Claude Code working in this repo.
+Project instructions for Claude Code working in this repo, for **Replate**.
 
 ## Project overview
 
-"Shazam for restaurant dishes." A user at a restaurant takes a photo of their meal + shares
+Replate — "Shazam for restaurant dishes." A user at a restaurant takes a photo of their meal + shares
 GPS location → the app identifies the restaurant from GPS, finds/scrapes that restaurant's
 actual menu, analyzes the photo with a vision model, **matches the vision model's guess
 against the real menu** (this match is the primary anti-hallucination mechanism — a menu
