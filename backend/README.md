@@ -25,6 +25,24 @@ cp .env.example .env   # fill in SQL_UID/SQL_PWD; mirror values into local.setti
 keep it in sync with `.env` manually. `.env` is used by anything run directly with `python`
 (seed script, pytest integration tests) outside the Functions host.
 
+**CORS (required for the Phase 2 frontend):** `func start` does not allow any browser
+origin by default — the frontend's `fetch()` calls will be blocked by the browser even
+though `curl`/Postman work fine, since CORS is enforced client-side, not something a plain
+HTTP test can catch. Add a `Host` block to `local.settings.json`:
+
+```json
+{
+  "IsEncrypted": false,
+  "Values": { "...": "..." },
+  "Host": {
+    "CORS": "*"
+  }
+}
+```
+
+`"*"` is fine for local dev since this app doesn't use cookie-based auth (no
+`CORSCredentials` needed). Restart `func start` after adding it.
+
 ## Local services
 
 **Azurite** (Blob + Queue + Table emulator):
@@ -32,7 +50,15 @@ keep it in sync with `.env` manually. `.env` is used by anything run directly wi
 ```bash
 docker compose up -d azurite
 # or: npm install -g azurite && azurite --location azurite --skipApiVersionCheck
+python scripts/configure_azurite_cors.py   # required once per fresh Azurite volume - see below
 ```
+
+Azurite has no CORS rules by default, so the frontend's photo upload (a browser `fetch` PUT
+straight to a SAS blob URL, i.e. a different origin than the Functions host) gets blocked
+with `CorsPreflightFailure` until `scripts/configure_azurite_cors.py` has been run once
+against it. This is a runtime blob-service property Azurite persists in its data volume, so
+you only need to re-run it if the `azurite-data` volume is ever wiped (`docker compose down
+-v`, or deleting the `azurite/` folder if running the npm package instead of the container).
 
 `--skipApiVersionCheck` is required — newer `azure-storage-blob`/`azure-storage-queue` SDK
 versions send API versions Azurite may not recognize yet otherwise.
