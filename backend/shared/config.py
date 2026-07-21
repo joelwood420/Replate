@@ -59,3 +59,7 @@ def stub_auth_header_name() -> str:
 
 def stub_default_user_oid() -> str:
     return os.environ.get("STUB_DEFAULT_USER_OID", "00000000-0000-0000-0000-000000000001")
+
+
+def entraid_enabled() -> bool:
+    return os.environ.get("ENTRAID_ENABLED", "false").strip().lower() in ("1", "true", "yes")

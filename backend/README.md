@@ -68,7 +68,10 @@ Exposed endpoints:
 - `GET /api/jobs/{jobId}` — job status/result
 
 Phase 1 has no real auth — endpoints read a stub user ID from the `X-Debug-User-Oid` header
-(configurable via `STUB_AUTH_HEADER_NAME`), falling back to `STUB_DEFAULT_USER_OID`:
+(configurable via `STUB_AUTH_HEADER_NAME`), falling back to `STUB_DEFAULT_USER_OID`. This is
+controlled by `ENTRAID_ENABLED` (default `false`); flipping it to `true` raises
+`NotImplementedError` today — that's the seam Phase 3 plugs real Entra ID JWT validation
+into once the frontend and a real tenant exist:
 
 ```bash
 curl -X POST http://localhost:7071/api/jobs \
@@ -122,7 +125,9 @@ pytest -m integration   # integration tests - requires Azurite + SQL Server runn
 | `MENU_MATCH_CONFIDENCE_THRESHOLD` | Minimum similarity score to count as a menu-item match |
 | `VECTOR_SEARCH_TOP_K` | Default number of culinary-technique embeddings to retrieve |
 | `STUB_AUTH_HEADER_NAME`, `STUB_DEFAULT_USER_OID` | Phase 1 stub-auth config (see above) |
+| `ENTRAID_ENABLED` | `false` (default) uses stub auth; `true` raises `NotImplementedError` until Phase 3 wires real Entra ID JWT validation in |
 | `GOOGLE_PLACES_API_KEY`, `YELP_API_KEY`, `VISION_MODEL_API_KEY`, `EMBEDDING_MODEL_API_KEY` | **Phase 3 placeholders** — names only, not read by any Phase 1 code |
+| `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_AUTHORITY_URL`, `ENTRA_JWKS_URI` | **Phase 3 placeholders** — names only, not read by any Phase 1 code |
 
 ## Architecture: what's real vs. stubbed
 

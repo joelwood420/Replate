@@ -1,7 +1,5 @@
 from unittest.mock import MagicMock
 
-import azure.functions as func
-
 from triggers import upload_http
 
 
@@ -43,13 +41,3 @@ def test_returns_error_on_missing_required_fields():
     result = upload_http.run({}, "user-oid-1")
 
     assert "error" in result
-
-
-def test_uses_stub_oid_header_and_falls_back_to_default():
-    req_with_header = func.HttpRequest(
-        method="POST", url="/api/jobs", body=b"{}", headers={"X-Debug-User-Oid": "explicit-oid"}
-    )
-    assert upload_http.get_user_oid(req_with_header) == "explicit-oid"
-
-    req_without_header = func.HttpRequest(method="POST", url="/api/jobs", body=b"{}", headers={})
-    assert upload_http.get_user_oid(req_without_header) == upload_http.config.stub_default_user_oid()

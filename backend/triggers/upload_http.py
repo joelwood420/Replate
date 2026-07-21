@@ -3,15 +3,11 @@ import uuid
 
 import azure.functions as func
 
-from shared import blob, config, db, queue
+from shared import blob, db, queue
+from shared.auth import get_user_oid
 from shared.models import JobStatus
 
 bp = func.Blueprint()
-
-
-def get_user_oid(req: func.HttpRequest) -> str:
-    header_name = config.stub_auth_header_name()
-    return req.headers.get(header_name) or config.stub_default_user_oid()
 
 
 def validate_body(body: dict) -> str | None:
