@@ -65,7 +65,9 @@ func start
 Exposed endpoints:
 
 - `POST /api/jobs` — upload metadata + GPS, returns a Blob SAS URL + job ID, queues the job
-- `GET /api/jobs/{jobId}` — job status/result
+- `GET /api/jobs/{jobId}` — job status/result (includes a readable `image_url` and `is_saved`)
+- `GET /api/jobs` — list the caller's jobs, newest first (`?saved=true` to filter, `?limit=`)
+- `PATCH /api/jobs/{jobId}/save` — body `{"saved": true|false}`, toggles a job's saved state
 
 Phase 1 has no real auth — endpoints read a stub user ID from the `X-Debug-User-Oid` header
 (configurable via `STUB_AUTH_HEADER_NAME`), falling back to `STUB_DEFAULT_USER_OID`. This is

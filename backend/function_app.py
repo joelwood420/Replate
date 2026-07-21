@@ -9,6 +9,8 @@ from activities.query_culinary_embeddings import bp as query_culinary_embeddings
 from activities.vision_guess import bp as vision_guess_bp
 from orchestrators.dish_orchestrator import bp as dish_orchestrator_bp
 from triggers.job_result_http import bp as job_result_http_bp
+from triggers.job_save_http import bp as job_save_http_bp
+from triggers.jobs_list_http import bp as jobs_list_http_bp
 from triggers.orchestrator_starter_queue import bp as orchestrator_starter_queue_bp
 from triggers.upload_http import bp as upload_http_bp
 
@@ -33,3 +35,5 @@ app.register_blueprint(dish_orchestrator_bp)
 app.register_blueprint(upload_http_bp)
 app.register_blueprint(orchestrator_starter_queue_bp)
 app.register_blueprint(job_result_http_bp)
+app.register_blueprint(jobs_list_http_bp)
+app.register_blueprint(job_save_http_bp)

@@ -33,6 +33,7 @@ CREATE TABLE Jobs (
     Latitude     DECIMAL(9,6) NULL,
     Longitude    DECIMAL(9,6) NULL,
     ErrorMessage NVARCHAR(1000) NULL,
+    IsSaved      BIT NOT NULL DEFAULT 0,
     CreatedAt    DATETIME2 DEFAULT SYSUTCDATETIME(),
     UpdatedAt    DATETIME2 DEFAULT SYSUTCDATETIME(),
     INDEX IX_Jobs_UserId (UserId, CreatedAt DESC)
@@ -62,6 +63,7 @@ CREATE TABLE DishElements (
     JobId        UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES Jobs(JobId),
     Name         NVARCHAR(150) NOT NULL,
     Description  NVARCHAR(500) NULL,
+    Role         NVARCHAR(50) NULL,
     SortOrder    INT NOT NULL
 );
 

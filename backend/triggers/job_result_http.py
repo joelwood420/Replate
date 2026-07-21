@@ -2,7 +2,7 @@ import json
 
 import azure.functions as func
 
-from shared import db
+from shared import blob, db
 from shared.auth import get_user_oid
 from shared.models import JobStatus
 
@@ -11,7 +11,9 @@ bp = func.Blueprint()
 
 def _fetch_job(job_id: str, conn) -> dict | None:
     cursor = conn.cursor()
-    cursor.execute("SELECT JobId, UserId, Status, ErrorMessage FROM Jobs WHERE JobId = ?", job_id)
+    cursor.execute(
+        "SELECT JobId, UserId, Status, ErrorMessage, ImageBlobUrl, IsSaved FROM Jobs WHERE JobId = ?", job_id
+    )
     row = cursor.fetchone()
     if row is None:
         return None
@@ -20,13 +22,15 @@ def _fetch_job(job_id: str, conn) -> dict | None:
         "user_id": str(row.UserId),
         "status": row.Status,
         "error_message": row.ErrorMessage,
+        "image_url": blob.generate_read_sas_url(row.ImageBlobUrl),
+        "is_saved": bool(row.IsSaved),
     }
 
 
 def _fetch_elements(job_id: str, conn) -> list[dict]:
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT ElementId, Name, Description FROM DishElements WHERE JobId = ? ORDER BY SortOrder", job_id
+        "SELECT ElementId, Name, Description, Role FROM DishElements WHERE JobId = ? ORDER BY SortOrder", job_id
     )
     elements = []
     for element_row in cursor.fetchall():
@@ -50,6 +54,7 @@ def _fetch_elements(job_id: str, conn) -> list[dict]:
             {
                 "name": element_row.Name,
                 "description": element_row.Description,
+                "role": element_row.Role,
                 "ingredients": ingredients,
                 "steps": steps,
             }
@@ -88,7 +93,12 @@ def run(job_id: str, user_oid: str) -> dict:
         if job["user_id"] != user_oid:
             return {"status_code": 403, "body": {"error": "Not authorized to view this job"}}
 
-        response_body = {"job_id": job["job_id"], "status": job["status"]}
+        response_body = {
+            "job_id": job["job_id"],
+            "status": job["status"],
+            "image_url": job["image_url"],
+            "is_saved": job["is_saved"],
+        }
         if job["status"] == JobStatus.FAILED:
             response_body["error_message"] = job["error_message"]
         if job["status"] == JobStatus.COMPLETED:

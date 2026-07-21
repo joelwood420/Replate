@@ -2,6 +2,8 @@ import azure.durable_functions as df
 
 bp = df.Blueprint()
 
+_ROLES = ["Protein", "Sauce", "Side", "Garnish", "Component"]
+
 
 def _stub_ingredients(element_name: str) -> list[dict]:
     return [
@@ -35,6 +37,7 @@ def run(activity_input: dict) -> dict:
             {
                 "name": name,
                 "description": element.get("description", ""),
+                "role": _ROLES[(index - 1) % len(_ROLES)],
                 "sort_order": index,
                 "ingredients": _stub_ingredients(name),
                 "steps": _stub_steps(name, technique_hint),

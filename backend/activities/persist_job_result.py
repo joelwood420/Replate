@@ -30,11 +30,13 @@ def _execute(activity_input: dict, conn) -> None:
     for element in recreation.get("elements", []):
         element_id = str(uuid.uuid4())
         cursor.execute(
-            "INSERT INTO DishElements (ElementId, JobId, Name, Description, SortOrder) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO DishElements (ElementId, JobId, Name, Description, Role, SortOrder) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             element_id,
             job_id,
             element["name"],
             element.get("description"),
+            element.get("role"),
             element["sort_order"],
         )
         for ingredient in element.get("ingredients", []):
