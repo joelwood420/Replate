@@ -12,7 +12,8 @@ bp = func.Blueprint()
 def _fetch_job(job_id: str, conn) -> dict | None:
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT JobId, UserId, Status, ErrorMessage, ImageBlobUrl, IsSaved FROM Jobs WHERE JobId = ?", job_id
+        "SELECT JobId, UserId, Status, ErrorMessage, ImageBlobUrl, IsSaved, CreatedAt FROM Jobs WHERE JobId = ?",
+        job_id,
     )
     row = cursor.fetchone()
     if row is None:
@@ -24,6 +25,7 @@ def _fetch_job(job_id: str, conn) -> dict | None:
         "error_message": row.ErrorMessage,
         "image_url": blob.generate_read_sas_url(row.ImageBlobUrl),
         "is_saved": bool(row.IsSaved),
+        "created_at": row.CreatedAt.isoformat() if row.CreatedAt else None,
     }
 
 
@@ -65,8 +67,10 @@ def _fetch_elements(job_id: str, conn) -> list[dict]:
 def _fetch_result(job_id: str, conn) -> dict | None:
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT DishName, Cuisine, Confidence, MatchedRestaurantId, MatchedMenuItemId, MatchConfidence, "
-        "MatchMethod FROM JobResults WHERE JobId = ?",
+        "SELECT jr.DishName, jr.Cuisine, jr.Confidence, jr.MatchedRestaurantId, jr.MatchedMenuItemId, "
+        "jr.MatchConfidence, jr.MatchMethod, r.Name AS RestaurantName "
+        "FROM JobResults jr LEFT JOIN Restaurants r ON r.RestaurantId = jr.MatchedRestaurantId "
+        "WHERE jr.JobId = ?",
         job_id,
     )
     result_row = cursor.fetchone()
@@ -78,6 +82,7 @@ def _fetch_result(job_id: str, conn) -> dict | None:
         "cuisine": result_row.Cuisine,
         "confidence": result_row.Confidence,
         "matched_restaurant_id": result_row.MatchedRestaurantId,
+        "restaurant_name": result_row.RestaurantName,
         "matched_menu_item_id": str(result_row.MatchedMenuItemId) if result_row.MatchedMenuItemId else None,
         "match_confidence": result_row.MatchConfidence,
         "match_method": result_row.MatchMethod,
@@ -98,6 +103,7 @@ def run(job_id: str, user_oid: str) -> dict:
             "status": job["status"],
             "image_url": job["image_url"],
             "is_saved": job["is_saved"],
+            "created_at": job["created_at"],
         }
         if job["status"] == JobStatus.FAILED:
             response_body["error_message"] = job["error_message"]

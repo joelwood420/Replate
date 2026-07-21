@@ -1,7 +1,10 @@
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 from triggers import job_result_http
 from shared.models import JobStatus
+
+CREATED_AT = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 
 class _ConnectionCtx:
@@ -34,6 +37,7 @@ def test_returns_403_when_oid_does_not_match_job_owner(monkeypatch):
         ErrorMessage=None,
         ImageBlobUrl="https://x/uploads/photo.jpg",
         IsSaved=0,
+        CreatedAt=CREATED_AT,
     )
     monkeypatch.setattr(job_result_http.db, "get_connection", lambda: _ConnectionCtx(conn))
     monkeypatch.setattr(job_result_http.blob, "generate_read_sas_url", lambda url: f"{url}?sig=abc")
@@ -52,6 +56,7 @@ def test_returns_pending_status_when_not_yet_completed(monkeypatch):
         ErrorMessage=None,
         ImageBlobUrl="https://x/uploads/photo.jpg",
         IsSaved=0,
+        CreatedAt=CREATED_AT,
     )
     monkeypatch.setattr(job_result_http.db, "get_connection", lambda: _ConnectionCtx(conn))
     monkeypatch.setattr(job_result_http.blob, "generate_read_sas_url", lambda url: f"{url}?sig=abc")
@@ -62,6 +67,7 @@ def test_returns_pending_status_when_not_yet_completed(monkeypatch):
     assert result["body"]["status"] == JobStatus.PROCESSING
     assert result["body"]["image_url"] == "https://x/uploads/photo.jpg?sig=abc"
     assert result["body"]["is_saved"] is False
+    assert result["body"]["created_at"] == CREATED_AT.isoformat()
     assert "result" not in result["body"]
 
 
@@ -75,12 +81,14 @@ def test_returns_full_nested_result_when_completed(monkeypatch):
         ErrorMessage=None,
         ImageBlobUrl="https://x/uploads/photo.jpg",
         IsSaved=1,
+        CreatedAt=CREATED_AT,
     )
     result_row = MagicMock(
         DishName="Margherita Pizza",
         Cuisine="Italian",
         Confidence=0.8,
         MatchedRestaurantId="stub-1",
+        RestaurantName="Marchetti",
         MatchedMenuItemId=None,
         MatchConfidence=0.9,
         MatchMethod="menu_matched",
@@ -98,7 +106,9 @@ def test_returns_full_nested_result_when_completed(monkeypatch):
     assert result["status_code"] == 200
     assert result["body"]["image_url"] == "https://x/uploads/photo.jpg?sig=abc"
     assert result["body"]["is_saved"] is True
+    assert result["body"]["created_at"] == CREATED_AT.isoformat()
     assert result["body"]["result"]["dish_name"] == "Margherita Pizza"
+    assert result["body"]["result"]["restaurant_name"] == "Marchetti"
     assert len(result["body"]["result"]["elements"]) == 1
     assert result["body"]["result"]["elements"][0]["name"] == "Crust"
     assert result["body"]["result"]["elements"][0]["role"] == "Base"
