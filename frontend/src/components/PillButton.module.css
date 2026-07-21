@@ -1,0 +1,27 @@
+.button {
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--color-gold);
+  color: var(--color-bg);
+  font-family: var(--font-sans);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.cta {
+  padding: 11px 30px;
+  font-size: 13px;
+}
+
+.footer {
+  width: 100%;
+  padding: 13px 18px;
+  font-size: 13.5px;
+}

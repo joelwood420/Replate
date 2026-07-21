@@ -1,0 +1,22 @@
+.chip {
+  padding: 7px 16px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  white-space: nowrap;
+  font-family: var(--font-sans);
+  border: 1px solid transparent;
+  flex-shrink: 0;
+  background: transparent;
+}
+
+.active {
+  background: var(--color-gold);
+  color: var(--color-bg);
+  border-color: var(--color-gold);
+}
+
+.inactive {
+  background: transparent;
+  color: var(--color-muted-light);
+  border-color: var(--color-border-chip);
+}

@@ -1,0 +1,46 @@
+.guide {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -52%);
+  width: 230px;
+  height: 230px;
+}
+
+.corner {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+}
+
+.tl {
+  top: 0;
+  left: 0;
+  border-top: 2px solid var(--color-gold);
+  border-left: 2px solid var(--color-gold);
+  border-radius: 6px 0 0 0;
+}
+
+.tr {
+  top: 0;
+  right: 0;
+  border-top: 2px solid var(--color-gold);
+  border-right: 2px solid var(--color-gold);
+  border-radius: 0 6px 0 0;
+}
+
+.bl {
+  bottom: 0;
+  left: 0;
+  border-bottom: 2px solid var(--color-gold);
+  border-left: 2px solid var(--color-gold);
+  border-radius: 0 0 0 6px;
+}
+
+.br {
+  bottom: 0;
+  right: 0;
+  border-bottom: 2px solid var(--color-gold);
+  border-right: 2px solid var(--color-gold);
+  border-radius: 0 0 6px 0;
+}

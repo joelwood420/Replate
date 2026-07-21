@@ -1,0 +1,82 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+}
+
+.orb {
+  width: 88px;
+  height: 88px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.track {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid var(--color-gold-track);
+}
+
+.spinner {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  animation: replate-spin 1.6s linear infinite;
+}
+
+.arc {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 230deg,
+    transparent 0deg,
+    oklch(76% 0.1 82 / 0.12) 60deg,
+    oklch(76% 0.1 82 / 0.55) 110deg,
+    var(--color-gold) 130deg,
+    transparent 131deg,
+    transparent 360deg
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 9px), #000 calc(100% - 9px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 9px), #000 calc(100% - 9px));
+}
+
+.dot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  top: 0.5px;
+  left: calc(50% - 4px);
+  background: var(--color-orb-dot);
+  box-shadow: 0 0 8px 2px oklch(76% 0.1 82 / 0.9);
+}
+
+.glyph {
+  color: var(--color-gold);
+  font-family: var(--font-serif);
+  font-size: 34px;
+  font-weight: 500;
+}
+
+.phraseBox {
+  text-align: center;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 40px;
+}
+
+.phrase {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--color-muted-light);
+  letter-spacing: 0.02em;
+  animation: replate-fade 2.4s ease-in-out;
+  white-space: nowrap;
+}

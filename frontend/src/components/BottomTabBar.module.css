@@ -1,0 +1,35 @@
+.bar {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  padding: 12px 0 6px;
+  border-top: 1px solid var(--color-border-divider);
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-decoration: none;
+}
+
+.dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.dotActive {
+  background: var(--color-gold);
+}
+
+.label {
+  font-size: 10.5px;
+  color: var(--color-muted);
+}
+
+.labelActive {
+  color: var(--color-cream);
+}

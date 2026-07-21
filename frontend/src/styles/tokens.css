@@ -1,0 +1,50 @@
+:root {
+  --color-bg: oklch(14% 0.008 55);
+  --color-bg-camera: oklch(10% 0.006 55);
+  --color-surface: oklch(19% 0.012 60);
+  --color-border: oklch(30% 0.01 60);
+  --color-border-divider: oklch(28% 0.01 60);
+  --color-border-hairline: oklch(24% 0.01 60);
+  --color-border-chip: oklch(35% 0.01 60);
+  --color-overlay-dark: oklch(20% 0.01 60 / 0.7);
+  --color-heart-badge-bg: oklch(14% 0.008 55 / 0.75);
+
+  --color-gold: oklch(76% 0.10 82);
+  --color-gold-hover: oklch(82% 0.09 82);
+  --color-gold-border: oklch(76% 0.10 82 / 0.5);
+  --color-gold-tint: oklch(76% 0.10 82 / 0.15);
+  --color-gold-track: oklch(76% 0.10 82 / 0.22);
+
+  --color-cream: oklch(93% 0.015 80);
+  --color-cream-bright: oklch(95% 0.01 80);
+  --color-cream-soft: oklch(90% 0.015 80);
+  --color-cream-softer: oklch(85% 0.015 80);
+  --color-badge-text: oklch(88% 0.05 82);
+  --color-orb-dot: oklch(93% 0.02 82);
+
+  --color-muted: oklch(62% 0.02 75);
+  --color-muted-mid: oklch(70% 0.02 75);
+  --color-muted-light: oklch(80% 0.02 75);
+  --color-muted-dim: oklch(55% 0.02 75);
+  --color-placeholder-text: oklch(45% 0.01 60);
+
+  --color-stripe-a: oklch(24% 0.01 60);
+  --color-stripe-b: oklch(21% 0.01 60);
+
+  --color-ms-red: #f25022;
+  --color-ms-green: #7fba00;
+  --color-ms-blue: #00a4ef;
+  --color-ms-yellow: #ffb900;
+
+  --font-serif: 'Cormorant Garamond', serif;
+  --font-sans: 'Manrope', sans-serif;
+
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  --space-screen-x: 22px;
+  --space-status-bar: 54px;
+}

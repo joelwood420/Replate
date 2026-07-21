@@ -1,0 +1,58 @@
+.card {
+  background: linear-gradient(155deg, var(--color-surface), var(--color-bg));
+  border: 1px solid var(--color-gold-border);
+  border-radius: var(--radius-xl);
+  padding: 28px 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+}
+
+.iconCircle {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-gold);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cameraBody {
+  width: 26px;
+  height: 20px;
+  border: 1.5px solid var(--color-gold);
+  border-radius: 3px;
+  position: relative;
+}
+
+.cameraViewfinder {
+  position: absolute;
+  top: -6px;
+  left: 8px;
+  width: 10px;
+  height: 6px;
+  border: 1.5px solid var(--color-gold);
+  border-bottom: none;
+  border-radius: 3px 3px 0 0;
+}
+
+.title {
+  font-family: var(--font-serif);
+  font-size: 21px;
+  color: var(--color-cream);
+  white-space: nowrap;
+}
+
+.description {
+  font-size: 12.5px;
+  color: var(--color-muted);
+  line-height: 1.5;
+  max-width: 240px;
+}
+
+.button {
+  margin-top: 6px;
+}

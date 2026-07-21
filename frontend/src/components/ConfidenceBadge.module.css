@@ -1,0 +1,27 @@
+.badge {
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.matched {
+  background: var(--color-gold-tint);
+  border: 1px solid var(--color-gold-border);
+  color: var(--color-badge-text);
+}
+
+.check {
+  color: var(--color-gold);
+  font-size: 11px;
+}
+
+.unmatched {
+  background: transparent;
+  border: 1px solid var(--color-border-chip);
+  color: var(--color-muted-light);
+}
