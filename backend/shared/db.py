@@ -1,8 +1,22 @@
 import contextlib
+import datetime
 
 import pyodbc
 
 from shared import config
+
+
+def to_utc_iso(value: datetime.datetime | None) -> str | None:
+    """ISO-format a naive UTC datetime from SQL Server with an explicit offset.
+
+    SQL Server DATETIME2 columns carry no timezone, and `datetime.isoformat()`
+    on a naive value omits one too - `new Date(...)` on the JS side then
+    parses it as local time instead of UTC, skewing "time ago" displays by
+    the client's UTC offset.
+    """
+    if value is None:
+        return None
+    return value.replace(tzinfo=datetime.timezone.utc).isoformat()
 
 
 def _connection_string() -> str:

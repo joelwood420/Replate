@@ -41,7 +41,7 @@ def run(user_oid: str, saved: bool | None, limit: int) -> list[dict]:
             "job_id": str(row.JobId),
             "status": row.Status,
             "is_saved": bool(row.IsSaved),
-            "created_at": row.CreatedAt.isoformat() if row.CreatedAt else None,
+            "created_at": db.to_utc_iso(row.CreatedAt),
             "dish_name": row.DishName,
             "restaurant_name": row.RestaurantName,
             "image_url": blob.generate_read_sas_url(row.ImageBlobUrl),

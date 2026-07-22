@@ -25,7 +25,7 @@ def _fetch_job(job_id: str, conn) -> dict | None:
         "error_message": row.ErrorMessage,
         "image_url": blob.generate_read_sas_url(row.ImageBlobUrl),
         "is_saved": bool(row.IsSaved),
-        "created_at": row.CreatedAt.isoformat() if row.CreatedAt else None,
+        "created_at": db.to_utc_iso(row.CreatedAt),
     }
 
 
