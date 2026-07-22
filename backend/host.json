@@ -15,6 +15,9 @@
   "extensions": {
     "durableTask": {
       "hubName": "ReplateHub"
+    },
+    "queues": {
+      "messageEncoding": "none"
     }
   }
 }

@@ -110,24 +110,24 @@ curl -X POST http://localhost:7071/api/jobs \
 curl http://localhost:7071/api/jobs/{jobId} -H "X-Debug-User-Oid: 11111111-1111-1111-1111-111111111111"
 ```
 
-### Known local limitation: the queue trigger
+### Resolved: the queue trigger not firing against Azurite
 
-In this dev environment, `orchestrator_starter_queue` (the queue-triggered function that
-starts the Durable orchestration once a job is queued) does not reliably fire against
-Azurite — messages get dequeued and immediately poisoned (`MaxDequeueCount` reached) without
-ever reaching the Python worker. This was root-caused during Phase 1 build-out to be an
-Azurite/Azure Functions Core Tools compatibility issue local to this machine (confirmed via:
-a minimal bare queue trigger with zero business logic fails identically; the same failure
-persists across two different Azurite versions and fully wiped/fresh state; meanwhile
-HTTP-triggered Durable orchestration starts and completes correctly every time) — **not** a
-bug in `orchestrator_starter_queue`'s own logic, which is unit-tested independently
-(`tests/unit/test_orchestrator_starter_queue.py`) and was manually verified end-to-end by
-directly invoking its `build_orchestration_input()` + `client.start_new()` code path.
+Earlier in Phase 1 build-out, `orchestrator_starter_queue` appeared not to fire against
+Azurite — messages got dequeued and immediately poisoned (`MaxDequeueCount` reached) without
+ever reaching the Python worker, even though a minimal bare queue trigger with zero business
+logic failed identically and HTTP-triggered Durable orchestration always worked fine. This
+was suspected to be an Azurite/Core Tools compatibility issue, but the actual root cause was
+simpler: the Storage Queues extension bundled in extension bundle `4.*` defaults to expecting
+**base64-encoded** message bodies, while `shared/queue.py`'s `send_job_message` (via
+`azure-storage-queue`'s `send_message()`) sends plain UTF-8 JSON. The runtime's failed
+base64-decode threw during binding resolution — before the function code ever ran — which is
+exactly the "dequeued, poisoned, worker never invoked" signature, and why a from-scratch
+minimal repro hit the same wall (it also sent unencoded text).
 
-If you hit this: `POST /api/jobs` and `GET /api/jobs/{jobId}` will keep working, but the job
-will stay stuck at `"status": "Queued"` instead of progressing to `"Processing"`/`"Completed"`.
-Re-test this specific path once deployed to real Azure Storage in Phase 3 — this class of
-local-emulator bug is not expected to reproduce there.
+Fix: `host.json` now sets `"extensions.queues.messageEncoding": "none"` to match the plain
+JSON the queue producer actually sends. Verified end-to-end locally — `POST /api/jobs`
+progresses through `orchestrator_starter_queue` → `dish_orchestrator_trigger` → all activities
+→ `Completed` on the first dequeue attempt, no poisoning.
 
 If Azurite starts returning `500 EBADF: bad file descriptor` on blob writes (a separate,
 known Windows-specific Azurite bug in its extent-file cache), stop it, delete the

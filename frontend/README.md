@@ -33,14 +33,6 @@ expects out of the box. `VITE_ENTRAID_ENABLED=true` mounts a real MSAL provider,
 inert until Phase 3 provisions an actual Entra tenant — don't expect sign-in to work with it
 on locally.
 
-## Known local limitation
-
-Per `backend/README.md`, the queue trigger that starts orchestration doesn't reliably fire
-against local Azurite on this stack — a job created via Capture will likely sit at
-`"Queued"` and never reach the Recipe screen. To see the Recipe UI end-to-end locally,
-seed a `Completed` job (Jobs + JobResults + DishElements/etc, including a real
-`ImageBlobUrl`) directly in the local SQL Server database and open `/jobs/{that-id}`.
-
 ## Environment variables
 
 | Variable | Purpose |

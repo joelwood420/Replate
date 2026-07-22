@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://replate.local/docs/payload-schemas.json",
+  "title": "Replate Backend API — Request/Response Payload Schemas (Phase 1)",
+  "$defs": {
+    "JobStatus": {
+      "type": "string",
+      "enum": ["Queued", "Processing", "Completed", "Failed"]
+    },
+    "MatchMethod": {
+      "type": "string",
+      "enum": ["menu_matched", "vision_only_medium", "vision_only_low"],
+      "description": "The anti-hallucination signal: whether the dish was cross-checked against the restaurant's real menu, or is vision-only guesswork."
+    },
+    "ErrorResponse": {
+      "type": "object",
+      "properties": {
+        "error": { "type": "string" }
+      },
+      "required": ["error"],
+      "additionalProperties": false
+    },
+    "Ingredient": {
+      "type": "object",
+      "properties": {
+        "ingredient_name": { "type": "string" },
+        "amount": { "type": ["string", "null"] },
+        "unit": { "type": ["string", "null"] }
+      },
+      "required": ["ingredient_name", "amount", "unit"],
+      "additionalProperties": false
+    },
+    "Step": {
+      "type": "object",
+      "properties": {
+        "step_number": { "type": "integer", "minimum": 1 },
+        "instruction": { "type": "string" }
+      },
+      "required": ["step_number", "instruction"],
+      "additionalProperties": false
+    },
+    "DishElement": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": ["string", "null"] },
+        "role": {
+          "type": ["string", "null"],
+          "description": "e.g. Protein, Sauce, Side, Garnish, Component"
+        },
+        "ingredients": { "type": "array", "items": { "$ref": "#/$defs/Ingredient" } },
+        "steps": { "type": "array", "items": { "$ref": "#/$defs/Step" } }
+      },
+      "required": ["name", "description", "role", "ingredients", "steps"],
+      "additionalProperties": false
+    },
+    "JobResult": {
+      "type": "object",
+      "properties": {
+        "dish_name": { "type": ["string", "null"] },
+        "cuisine": { "type": ["string", "null"] },
+        "confidence": { "type": ["number", "null"] },
+        "matched_restaurant_id": { "type": ["string", "null"] },
+        "restaurant_name": { "type": ["string", "null"] },
+        "matched_menu_item_id": { "type": ["string", "null"] },
+        "match_confidence": { "type": ["number", "null"] },
+        "match_method": { "$ref": "#/$defs/MatchMethod" },
+        "elements": { "type": "array", "items": { "$ref": "#/$defs/DishElement" } }
+      },
+      "required": [
+        "dish_name", "cuisine", "confidence", "matched_restaurant_id", "restaurant_name",
+        "matched_menu_item_id", "match_confidence", "match_method", "elements"
+      ],
+      "additionalProperties": false
+    },
+    "JobSummary": {
+      "type": "object",
+      "description": "One item in the GET /jobs list response - no ingredients/steps, just enough for a list row/card.",
+      "properties": {
+        "job_id": { "type": "string", "format": "uuid" },
+        "status": { "$ref": "#/$defs/JobStatus" },
+        "is_saved": { "type": "boolean" },
+        "created_at": { "type": ["string", "null"], "format": "date-time" },
+        "dish_name": { "type": ["string", "null"] },
+        "restaurant_name": { "type": ["string", "null"] },
+        "image_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Freshly re-signed read-only SAS URL, valid for SAS_TOKEN_EXPIRY_MINUTES."
+        }
+      },
+      "required": ["job_id", "status", "is_saved", "created_at", "dish_name", "restaurant_name", "image_url"],
+      "additionalProperties": false
+    }
+  },
+
+  "endpoints": {
+    "GET /ping": {
+      "auth": "none",
+      "response": {
+        "200": { "type": "string", "const": "pong" }
+      }
+    },
+
+    "POST /jobs": {
+      "auth": "X-Debug-User-Oid header required",
+      "request": {
+        "body": {
+          "type": "object",
+          "properties": {
+            "latitude": { "type": "number", "minimum": -90, "maximum": 90 },
+            "longitude": { "type": "number", "minimum": -180, "maximum": 180 }
+          },
+          "required": ["latitude", "longitude"],
+          "additionalProperties": false
+        }
+      },
+      "response": {
+        "201": {
+          "type": "object",
+          "properties": {
+            "job_id": { "type": "string", "format": "uuid" },
+            "upload_url": {
+              "type": "string",
+              "format": "uri",
+              "description": "Short-lived, write-only SAS URL. Client PUTs photo bytes directly to Blob Storage with header x-ms-blob-type: BlockBlob."
+            },
+            "blob_url": { "type": "string", "format": "uri", "description": "The bare blob URL (no SAS token), stored server-side." }
+          },
+          "required": ["job_id", "upload_url", "blob_url"],
+          "additionalProperties": false
+        },
+        "400": { "$ref": "#/$defs/ErrorResponse" }
+      }
+    },
+
+    "GET /jobs/{jobId}": {
+      "auth": "X-Debug-User-Oid header required; must match the job's owner",
+      "response": {
+        "200": {
+          "type": "object",
+          "properties": {
+            "job_id": { "type": "string", "format": "uuid" },
+            "status": { "$ref": "#/$defs/JobStatus" },
+            "image_url": {
+              "type": "string",
+              "format": "uri",
+              "description": "Freshly re-signed read-only SAS URL, re-minted on every call."
+            },
+            "is_saved": { "type": "boolean" },
+            "created_at": { "type": ["string", "null"], "format": "date-time" },
+            "error_message": {
+              "type": "string",
+              "description": "Present only when status is \"Failed\"."
+            },
+            "result": {
+              "allOf": [{ "$ref": "#/$defs/JobResult" }],
+              "description": "Present only when status is \"Completed\"."
+            }
+          },
+          "required": ["job_id", "status", "image_url", "is_saved", "created_at"],
+          "additionalProperties": false
+        },
+        "403": { "$ref": "#/$defs/ErrorResponse" },
+        "404": { "$ref": "#/$defs/ErrorResponse" }
+      }
+    },
+
+    "GET /jobs": {
+      "auth": "X-Debug-User-Oid header required",
+      "request": {
+        "query": {
+          "saved": { "type": "boolean", "description": "Optional. Filter to saved-only jobs." },
+          "limit": { "type": "integer", "default": 20, "description": "Optional. Max results, newest first." }
+        }
+      },
+      "response": {
+        "200": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/JobSummary" }
+        }
+      }
+    },
+
+    "PATCH /jobs/{jobId}/save": {
+      "auth": "X-Debug-User-Oid header required; must match the job's owner",
+      "request": {
+        "body": {
+          "type": "object",
+          "properties": {
+            "saved": { "type": "boolean" }
+          },
+          "required": ["saved"],
+          "additionalProperties": false
+        }
+      },
+      "response": {
+        "200": {
+          "type": "object",
+          "properties": {
+            "job_id": { "type": "string", "format": "uuid" },
+            "is_saved": { "type": "boolean" }
+          },
+          "required": ["job_id", "is_saved"],
+          "additionalProperties": false
+        },
+        "403": { "$ref": "#/$defs/ErrorResponse" },
+        "404": { "$ref": "#/$defs/ErrorResponse" }
+      }
+    }
+  }
+}
