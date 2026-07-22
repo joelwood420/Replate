@@ -50,6 +50,12 @@ that also grounds itself against a vector DB of culinary technique/recipe embedd
 5. **Don't fabricate Azure pricing.** Pricing changes; if a cost claim matters for a decision,
    note that it should be re-verified against the current Azure/Anthropic pricing pages
    rather than asserting a possibly-stale number as fact.
+6. **Document the user's engineering/architecture decisions.** Whenever the user makes an
+   engineering or architecture decision — a stack/library choice, a structural or scope
+   call, picking between competing approaches, etc. (not routine/trivial choices) — ask them
+   for the reasoning behind it before proceeding, then record the decision and their stated
+   reason in `docs/decisions.md`. Keep entries dated, concise, and reason-first (decision,
+   why, brief context) — not a transcript of the conversation.
 
 ---
 
