@@ -11,6 +11,20 @@ export interface CreateJobResponse {
   blob_url: string;
 }
 
+export interface RestaurantCandidate {
+  place_id: string;
+  name: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+}
+
+export type SelectedRestaurant = RestaurantCandidate;
+
+export type CreateJobInput =
+  | { latitude: number; longitude: number }
+  | { selected_restaurant: SelectedRestaurant };
+
 export interface Ingredient {
   ingredient_name: string;
   amount: string | null;
@@ -86,10 +100,7 @@ async function request<T>(path: string, init: RequestInit, authHeaders: AuthHead
   return response.json() as Promise<T>;
 }
 
-export function createJob(
-  input: { latitude: number; longitude: number },
-  authHeaders: AuthHeaders,
-): Promise<CreateJobResponse> {
+export function createJob(input: CreateJobInput, authHeaders: AuthHeaders): Promise<CreateJobResponse> {
   return request(
     '/jobs',
     {
@@ -99,6 +110,16 @@ export function createJob(
     },
     authHeaders,
   );
+}
+
+export function searchRestaurants(
+  params: { query: string; latitude?: number; longitude?: number },
+  authHeaders: AuthHeaders,
+): Promise<{ restaurants: RestaurantCandidate[] }> {
+  const qs = new URLSearchParams({ query: params.query });
+  if (params.latitude !== undefined) qs.set('latitude', String(params.latitude));
+  if (params.longitude !== undefined) qs.set('longitude', String(params.longitude));
+  return request(`/restaurants/search?${qs.toString()}`, { method: 'GET' }, authHeaders);
 }
 
 export async function uploadPhotoToBlob(uploadUrl: string, file: Blob): Promise<void> {

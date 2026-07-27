@@ -26,16 +26,17 @@ CREATE TABLE MenuItems (
 );
 
 CREATE TABLE Jobs (
-    JobId        UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
-    UserId       UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES Users(UserId),
-    Status       NVARCHAR(20) NOT NULL,
-    ImageBlobUrl NVARCHAR(500) NOT NULL,
-    Latitude     DECIMAL(9,6) NULL,
-    Longitude    DECIMAL(9,6) NULL,
-    ErrorMessage NVARCHAR(1000) NULL,
-    IsSaved      BIT NOT NULL DEFAULT 0,
-    CreatedAt    DATETIME2 DEFAULT SYSUTCDATETIME(),
-    UpdatedAt    DATETIME2 DEFAULT SYSUTCDATETIME(),
+    JobId                UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+    UserId               UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES Users(UserId),
+    Status               NVARCHAR(20) NOT NULL,
+    ImageBlobUrl         NVARCHAR(500) NOT NULL,
+    Latitude             DECIMAL(9,6) NULL,
+    Longitude            DECIMAL(9,6) NULL,
+    SelectedRestaurantId NVARCHAR(100) NULL FOREIGN KEY REFERENCES Restaurants(RestaurantId),
+    ErrorMessage         NVARCHAR(1000) NULL,
+    IsSaved              BIT NOT NULL DEFAULT 0,
+    CreatedAt            DATETIME2 DEFAULT SYSUTCDATETIME(),
+    UpdatedAt            DATETIME2 DEFAULT SYSUTCDATETIME(),
     INDEX IX_Jobs_UserId (UserId, CreatedAt DESC)
 );
 

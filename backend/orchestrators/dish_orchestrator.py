@@ -11,14 +11,20 @@ def dish_orchestrator(context: df.DurableOrchestrationContext):
     try:
         vision_task = context.call_activity("vision_guess", {"image_blob_url": job_input["image_blob_url"]})
 
-        candidates = yield context.call_activity(
-            "geocode_restaurant_candidates",
-            {
-                "job_id": job_input["job_id"],
-                "latitude": job_input["latitude"],
-                "longitude": job_input["longitude"],
-            },
-        )
+        if job_input.get("selected_restaurant_id"):
+            candidates = yield context.call_activity(
+                "select_restaurant_candidate",
+                {"job_id": job_input["job_id"], "restaurant_id": job_input["selected_restaurant_id"]},
+            )
+        else:
+            candidates = yield context.call_activity(
+                "geocode_restaurant_candidates",
+                {
+                    "job_id": job_input["job_id"],
+                    "latitude": job_input["latitude"],
+                    "longitude": job_input["longitude"],
+                },
+            )
 
         if candidates:
             top_candidate = candidates[0]
@@ -26,6 +32,8 @@ def dish_orchestrator(context: df.DurableOrchestrationContext):
                 "fetch_restaurant_menu",
                 {
                     "restaurant_id": top_candidate["restaurant_id"],
+                    "restaurant_name": top_candidate["name"],
+                    "restaurant_address": top_candidate["address"],
                     "menu_source_url": top_candidate["menu_source_url"],
                 },
             )

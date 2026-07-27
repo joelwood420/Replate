@@ -1,6 +1,6 @@
 import azure.durable_functions as df
 
-from shared import db
+from shared import db, restaurants
 
 bp = df.Blueprint()
 
@@ -54,18 +54,14 @@ def _stub_lookup(latitude: float, longitude: float) -> list[dict]:
 def _persist(job_id: str, candidates: list[dict], conn) -> None:
     cursor = conn.cursor()
     for candidate in candidates:
-        cursor.execute(
-            "MERGE Restaurants AS target USING (SELECT ? AS RestaurantId) AS src "
-            "ON target.RestaurantId = src.RestaurantId "
-            "WHEN NOT MATCHED THEN INSERT (RestaurantId, Name, Address, Latitude, Longitude, MenuSourceUrl) "
-            "VALUES (?, ?, ?, ?, ?, ?);",
-            candidate["restaurant_id"],
+        restaurants.upsert_restaurant(
             candidate["restaurant_id"],
             candidate["name"],
             candidate["address"],
             candidate["latitude"],
             candidate["longitude"],
             candidate["menu_source_url"],
+            conn,
         )
         cursor.execute(
             "INSERT INTO JobRestaurantCandidates (JobId, RestaurantId, DistanceM) VALUES (?, ?, ?)",

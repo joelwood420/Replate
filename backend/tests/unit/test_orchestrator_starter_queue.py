@@ -19,7 +19,7 @@ class _ConnectionCtx:
 def test_build_orchestration_input_marks_processing_and_returns_job_data(monkeypatch):
     conn = MagicMock()
     conn.cursor.return_value.fetchone.return_value = MagicMock(
-        ImageBlobUrl="https://x/blob", Latitude=40.7, Longitude=-74.0
+        ImageBlobUrl="https://x/blob", Latitude=40.7, Longitude=-74.0, SelectedRestaurantId=None
     )
     monkeypatch.setattr(starter.db, "get_connection", lambda: _ConnectionCtx(conn))
 
@@ -28,6 +28,24 @@ def test_build_orchestration_input_marks_processing_and_returns_job_data(monkeyp
     assert result == {"job_id": "job-1", "image_blob_url": "https://x/blob", "latitude": 40.7, "longitude": -74.0}
     update_calls = [c for c in conn.cursor().execute.call_args_list if "UPDATE Jobs" in c.args[0]]
     assert len(update_calls) == 1
+
+
+def test_build_orchestration_input_includes_selected_restaurant_id_when_set(monkeypatch):
+    conn = MagicMock()
+    conn.cursor.return_value.fetchone.return_value = MagicMock(
+        ImageBlobUrl="https://x/blob", Latitude=40.7, Longitude=-74.0, SelectedRestaurantId="place-1"
+    )
+    monkeypatch.setattr(starter.db, "get_connection", lambda: _ConnectionCtx(conn))
+
+    result = starter.build_orchestration_input("job-1")
+
+    assert result == {
+        "job_id": "job-1",
+        "image_blob_url": "https://x/blob",
+        "latitude": 40.7,
+        "longitude": -74.0,
+        "selected_restaurant_id": "place-1",
+    }
 
 
 def test_handle_queue_message_decodes_message_and_starts_orchestration(monkeypatch):

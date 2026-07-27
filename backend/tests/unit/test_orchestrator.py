@@ -32,7 +32,9 @@ def test_happy_path_full_call_sequence():
     gen = dish_orchestrator(context)
 
     next(gen)  # yields geocode task
-    gen.send([{"restaurant_id": "stub-1", "menu_source_url": "https://x"}])  # yields task_all([vision, menu])
+    gen.send(
+        [{"restaurant_id": "stub-1", "name": "Trattoria Roma", "address": "100 Sample Ave", "menu_source_url": "https://x"}]
+    )  # yields task_all([vision, menu])
 
     vision_guess_stub = {"dish_name_guess": "Pizza", "cuisine_guess": "Italian", "elements": []}
     menu_result_stub = {"items": [{"menu_item_id": "i1"}]}
@@ -59,6 +61,15 @@ def test_happy_path_full_call_sequence():
     ]
     assert context.task_all.call_count == 1
 
+    menu_call = context.call_activity.call_args_list[2]
+    assert menu_call.args[0] == "fetch_restaurant_menu"
+    assert menu_call.args[1] == {
+        "restaurant_id": "stub-1",
+        "restaurant_name": "Trattoria Roma",
+        "restaurant_address": "100 Sample Ave",
+        "menu_source_url": "https://x",
+    }
+
 
 def test_skips_fetch_menu_when_no_candidates_found():
     context = MagicMock()
@@ -79,6 +90,29 @@ def test_skips_fetch_menu_when_no_candidates_found():
     assert match_call.args[1]["candidate_found"] is False
     assert match_call.args[1]["restaurant_id"] is None
     assert context.task_all.call_count == 0
+
+
+def test_selected_restaurant_routes_to_select_restaurant_candidate_activity():
+    context = MagicMock()
+    context.get_input.return_value = _job_input(selected_restaurant_id="place-1")
+
+    gen = dish_orchestrator(context)
+    next(gen)
+
+    assert _call_names(context)[:2] == ["vision_guess", "select_restaurant_candidate"]
+    select_call = context.call_activity.call_args_list[1]
+    assert select_call.args[1] == {"job_id": "job-1", "restaurant_id": "place-1"}
+
+
+def test_selected_restaurant_never_calls_geocode():
+    context = MagicMock()
+    context.get_input.return_value = _job_input(selected_restaurant_id="place-1")
+
+    gen = dish_orchestrator(context)
+    next(gen)
+    gen.send([{"restaurant_id": "place-1", "name": "Luigi's", "address": "123 Main St", "menu_source_url": None}])
+
+    assert "geocode_restaurant_candidates" not in _call_names(context)
 
 
 def test_exception_triggers_mark_job_failed_and_reraises():

@@ -63,3 +63,27 @@ def stub_default_user_oid() -> str:
 
 def entraid_enabled() -> bool:
     return os.environ.get("ENTRAID_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+
+
+def google_places_api_key() -> str:
+    return os.environ["GOOGLE_PLACES_API_KEY"]
+
+
+def places_timeout_seconds() -> float:
+    return float(os.environ.get("PLACES_TIMEOUT_SECONDS", "8"))
+
+
+def anthropic_api_key() -> str:
+    return os.environ["ANTHROPIC_API_KEY"]
+
+
+def menu_fetch_model() -> str:
+    return os.environ.get("MENU_FETCH_MODEL", "claude-sonnet-5")
+
+
+def menu_fetch_timeout_seconds() -> float:
+    return float(os.environ.get("MENU_FETCH_TIMEOUT_SECONDS", "60"))
+
+
+def menu_fetch_max_retries() -> int:
+    return int(os.environ.get("MENU_FETCH_MAX_RETRIES", "2"))

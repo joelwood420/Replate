@@ -1,35 +1,105 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CaptureViewfinder } from '../components/CaptureViewfinder';
 import { ErrorState } from '../components/ErrorState';
-import { createJob, uploadPhotoToBlob } from '../lib/apiClient';
+import { RestaurantSearchPanel } from '../components/RestaurantSearchPanel';
+import { createJob, uploadPhotoToBlob, type CreateJobInput, type SelectedRestaurant } from '../lib/apiClient';
 import { useAuth } from '../lib/auth/useAuth';
 import { useCamera } from '../lib/camera/useCamera';
+import { useExifLocation, type ExifLocationState } from '../lib/camera/useExifLocation';
 import { useGeolocation } from '../lib/camera/useGeolocation';
 import styles from './CaptureScreen.module.css';
+
+type CaptureMode = 'live' | 'uploaded';
+
+function isSubmitEnabled(
+  mode: CaptureMode,
+  geoCoords: { latitude: number; longitude: number } | null,
+  exifStatus: ExifLocationState['status'],
+  selectedRestaurant: SelectedRestaurant | null,
+): boolean {
+  if (mode === 'live') return geoCoords !== null;
+  if (exifStatus === 'found') return true;
+  if (exifStatus === 'not_found') return selectedRestaurant !== null;
+  return false; // 'idle' | 'checking'
+}
 
 export function CaptureScreen() {
   const navigate = useNavigate();
   const { authHeaders } = useAuth();
   const { videoRef, isReady, error: cameraError, flipCamera, capturePhoto } = useCamera();
   const geolocation = useGeolocation();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [mode, setMode] = useState<CaptureMode>('live');
+  const [uploadedPhoto, setUploadedPhoto] = useState<File | null>(null);
+  const [uploadedPhotoUrl, setUploadedPhotoUrl] = useState<string | null>(null);
+  const [selectedRestaurant, setSelectedRestaurant] = useState<SelectedRestaurant | null>(null);
+  const exifLocation = useExifLocation(uploadedPhoto);
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [lastShotUrl, setLastShotUrl] = useState<string | null>(null);
 
-  async function handleShutter() {
-    if (isSubmitting || !geolocation.coords) return;
+  useEffect(() => {
+    if (!uploadedPhoto) {
+      setUploadedPhotoUrl(null);
+      return undefined;
+    }
+    const url = URL.createObjectURL(uploadedPhoto);
+    setUploadedPhotoUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [uploadedPhoto]);
+
+  function handleLibraryClick() {
+    fileInputRef.current?.click();
+  }
+
+  function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setSubmitError(null);
+    setSelectedRestaurant(null);
+    setMode('uploaded');
+    setUploadedPhoto(file);
+  }
+
+  function handleUseCameraInstead() {
+    setMode('live');
+    setUploadedPhoto(null);
+    setSelectedRestaurant(null);
+    setSubmitError(null);
+  }
+
+  function buildCreateJobInput(): CreateJobInput | null {
+    if (mode === 'live') {
+      return geolocation.coords
+        ? { latitude: geolocation.coords.latitude, longitude: geolocation.coords.longitude }
+        : null;
+    }
+    if (exifLocation.status === 'found' && exifLocation.coords) {
+      return { latitude: exifLocation.coords.latitude, longitude: exifLocation.coords.longitude };
+    }
+    if (exifLocation.status === 'not_found' && selectedRestaurant) {
+      return { selected_restaurant: selectedRestaurant };
+    }
+    return null;
+  }
+
+  async function handleSubmit() {
+    if (isSubmitting) return;
+    const input = buildCreateJobInput();
+    if (!input) return;
+
     setSubmitError(null);
     setIsSubmitting(true);
     try {
-      const photo = await capturePhoto();
-      if (!photo) throw new Error('Could not capture a photo. Try again.');
-      setLastShotUrl(URL.createObjectURL(photo));
+      const photo = mode === 'live' ? await capturePhoto() : uploadedPhoto;
+      if (!photo) throw new Error('Could not get a photo. Try again.');
+      if (mode === 'live') setLastShotUrl(URL.createObjectURL(photo));
 
-      const { job_id: jobId, upload_url: uploadUrl } = await createJob(
-        { latitude: geolocation.coords.latitude, longitude: geolocation.coords.longitude },
-        authHeaders,
-      );
+      const { job_id: jobId, upload_url: uploadUrl } = await createJob(input, authHeaders);
       await uploadPhotoToBlob(uploadUrl, photo);
       navigate(`/jobs/${jobId}`);
     } catch (err) {
@@ -42,17 +112,48 @@ export function CaptureScreen() {
     return <ErrorState message={cameraError} onRetry={() => window.location.reload()} />;
   }
 
+  const submitEnabled = isSubmitEnabled(mode, geolocation.coords, exifLocation.status, selectedRestaurant);
+  const showSearchPanel = mode === 'uploaded' && exifLocation.status === 'not_found';
+
   const hint =
     submitError ??
-    (geolocation.status === 'error'
-      ? (geolocation.error ?? 'Location unavailable')
-      : 'Center the dish in frame');
-  const locationLabel = geolocation.status === 'ready' ? 'Location ready' : 'Locating restaurant…';
+    (mode === 'live'
+      ? geolocation.status === 'error'
+        ? (geolocation.error ?? 'Location unavailable')
+        : 'Center the dish in frame'
+      : exifLocation.status === 'checking'
+        ? 'Checking photo for a location…'
+        : exifLocation.status === 'found'
+          ? 'Location found in photo'
+          : 'Ready to submit');
+
+  const locationLabel =
+    mode === 'live'
+      ? geolocation.status === 'ready'
+        ? 'Location ready'
+        : 'Locating restaurant…'
+      : exifLocation.status === 'checking'
+        ? 'Checking photo…'
+        : exifLocation.status === 'found'
+          ? 'Location found'
+          : 'Search for restaurant';
 
   return (
     <div className={styles.screen}>
-      <video ref={videoRef} className={styles.video} autoPlay playsInline muted />
-      {!isReady && <div className={styles.videoPlaceholder} />}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleFileSelected}
+        className={styles.hiddenFileInput}
+      />
+
+      {mode === 'uploaded' && uploadedPhotoUrl ? (
+        <img src={uploadedPhotoUrl} alt="" className={styles.video} />
+      ) : (
+        <video ref={videoRef} className={styles.video} autoPlay playsInline muted />
+      )}
+      {mode === 'live' && !isReady && <div className={styles.videoPlaceholder} />}
 
       <div className={styles.topBar}>
         <button type="button" className={styles.iconButton} onClick={() => navigate(-1)} aria-label="Close">
@@ -62,32 +163,84 @@ export function CaptureScreen() {
           <span className={styles.locationDot} />
           <span>{locationLabel}</span>
         </div>
-        <button type="button" className={styles.iconButton} onClick={flipCamera} aria-label="Flip camera">
-          ⟳
-        </button>
-      </div>
-
-      <CaptureViewfinder />
-
-      <div className={styles.bottomBar}>
-        <div className={styles.hint}>{hint}</div>
-        <div className={styles.controls}>
-          <div className={styles.lastShot}>
-            {lastShotUrl && <img src={lastShotUrl} alt="" className={styles.lastShotImg} />}
-          </div>
+        {mode === 'live' ? (
+          <button type="button" className={styles.iconButton} onClick={flipCamera} aria-label="Flip camera">
+            ⟳
+          </button>
+        ) : (
           <button
             type="button"
-            className={styles.shutter}
-            onClick={handleShutter}
-            disabled={isSubmitting || !geolocation.coords}
-            aria-label="Capture photo"
+            className={styles.iconButton}
+            onClick={handleUseCameraInstead}
+            aria-label="Use camera instead"
           >
-            <span className={styles.shutterInner} />
+            ✕
           </button>
-          <button type="button" className={styles.flipButton} onClick={flipCamera} aria-label="Flip camera">
-            ⇄
+        )}
+      </div>
+
+      {mode === 'live' && <CaptureViewfinder />}
+
+      <div className={styles.bottomBar}>
+        {showSearchPanel ? (
+          <>
+            <RestaurantSearchPanel deviceCoords={geolocation.coords} onSelect={setSelectedRestaurant} />
+            {selectedRestaurant && (
+              <div className={styles.controls}>
+                <span className={styles.hint}>{selectedRestaurant.name}</span>
+                <button
+                  type="button"
+                  className={styles.shutter}
+                  onClick={handleSubmit}
+                  disabled={isSubmitting}
+                  aria-label="Submit photo"
+                >
+                  <span className={styles.shutterInner} />
+                </button>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div className={styles.hint}>{hint}</div>
+            <div className={styles.controls}>
+              <div className={styles.lastShot}>
+                {mode === 'live' && lastShotUrl && <img src={lastShotUrl} alt="" className={styles.lastShotImg} />}
+                {mode === 'uploaded' && uploadedPhotoUrl && (
+                  <img src={uploadedPhotoUrl} alt="" className={styles.lastShotImg} />
+                )}
+              </div>
+              <button
+                type="button"
+                className={styles.shutter}
+                onClick={handleSubmit}
+                disabled={isSubmitting || !submitEnabled}
+                aria-label={mode === 'live' ? 'Capture photo' : 'Submit photo'}
+              >
+                <span className={styles.shutterInner} />
+              </button>
+              {mode === 'live' ? (
+                <button type="button" className={styles.flipButton} onClick={flipCamera} aria-label="Flip camera">
+                  ⇄
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className={styles.flipButton}
+                  onClick={handleLibraryClick}
+                  aria-label="Choose a different photo"
+                >
+                  📁
+                </button>
+              )}
+            </div>
+          </>
+        )}
+        {mode === 'live' && (
+          <button type="button" className={styles.libraryButton} onClick={handleLibraryClick}>
+            Upload a photo instead
           </button>
-        </div>
+        )}
       </div>
     </div>
   );

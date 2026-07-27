@@ -1,85 +1,17 @@
-import copy
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import azure.durable_functions as df
 
-from shared import config, db
+from shared import config, db, menu_extraction
 
 bp = df.Blueprint()
-
-CANNED_MENUS = {
-    "stub-1": [
-        {
-            "item_name": "Margherita Pizza",
-            "item_description": "Wood-fired pizza with tomato, mozzarella, and basil",
-            "price": "14.00",
-        },
-        {
-            "item_name": "Spaghetti Carbonara",
-            "item_description": "Pasta with egg, pecorino, guanciale, and black pepper",
-            "price": "16.00",
-        },
-        {
-            "item_name": "Tiramisu",
-            "item_description": "Espresso-soaked ladyfingers with mascarpone cream",
-            "price": "8.00",
-        },
-        {
-            "item_name": "Caprese Salad",
-            "item_description": "Fresh mozzarella, tomato, and basil with olive oil",
-            "price": "10.00",
-        },
-    ],
-    "stub-2": [
-        {
-            "item_name": "Pad Thai",
-            "item_description": "Stir-fried rice noodles with tamarind, egg, and peanuts",
-            "price": "13.00",
-        },
-        {
-            "item_name": "Green Curry",
-            "item_description": "Coconut curry with Thai basil and vegetables",
-            "price": "14.00",
-        },
-        {
-            "item_name": "Tom Yum Soup",
-            "item_description": "Hot and sour soup with lemongrass and shrimp",
-            "price": "9.00",
-        },
-        {
-            "item_name": "Mango Sticky Rice",
-            "item_description": "Sweet sticky rice with fresh mango and coconut milk",
-            "price": "7.00",
-        },
-    ],
-    "stub-3": [
-        {
-            "item_name": "Cheeseburger",
-            "item_description": "Grilled beef patty with cheddar, lettuce, and tomato on a brioche bun",
-            "price": "12.00",
-        },
-        {
-            "item_name": "Loaded Fries",
-            "item_description": "Fries topped with cheese, bacon, and scallions",
-            "price": "8.00",
-        },
-        {
-            "item_name": "Chicken Sandwich",
-            "item_description": "Crispy fried chicken with pickles and mayo",
-            "price": "11.00",
-        },
-        {"item_name": "Milkshake", "item_description": "Classic vanilla milkshake", "price": "5.00"},
-    ],
-}
-
-
-def _stub_fetch(restaurant_id: str) -> list[dict]:
-    return copy.deepcopy(CANNED_MENUS.get(restaurant_id, []))
 
 
 def _execute(activity_input: dict, conn) -> dict:
     restaurant_id = activity_input["restaurant_id"]
+    name = activity_input.get("restaurant_name") or restaurant_id
+    address = activity_input.get("restaurant_address")
     menu_source_url = activity_input.get("menu_source_url")
     cursor = conn.cursor()
 
@@ -107,7 +39,17 @@ def _execute(activity_input: dict, conn) -> dict:
                 ]
                 return {"restaurant_id": restaurant_id, "items": items, "source": "cache"}
 
-    fetched_items = _stub_fetch(restaurant_id)
+    try:
+        fetched_items = menu_extraction.fetch_menu_items(name, address, menu_source_url)
+    except menu_extraction.MenuExtractionError:
+        # Graceful degrade rather than propagate: the orchestrator's blanket
+        # except -> mark_job_failed would otherwise fail the whole job over a
+        # menu-fetch hiccup, but match_menu_item's VISION_ONLY_MEDIUM outcome
+        # already exists to handle "no real menu data available". Leaving
+        # MenuLastFetchedAt untouched means the next job retries the fetch
+        # instead of permanently caching a failure.
+        return {"restaurant_id": restaurant_id, "items": [], "source": "fetch_failed"}
+
     cursor.execute("DELETE FROM MenuItems WHERE RestaurantId = ?", restaurant_id)
 
     persisted_items = []
@@ -129,7 +71,7 @@ def _execute(activity_input: dict, conn) -> dict:
         menu_source_url,
         restaurant_id,
     )
-    return {"restaurant_id": restaurant_id, "items": persisted_items, "source": "stub_fetch"}
+    return {"restaurant_id": restaurant_id, "items": persisted_items, "source": "claude_fetch"}
 
 
 def run(activity_input: dict) -> dict:

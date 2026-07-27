@@ -10,15 +10,20 @@ bp = df.Blueprint()
 
 def _load_job(job_id: str, conn) -> dict:
     cursor = conn.cursor()
-    cursor.execute("SELECT ImageBlobUrl, Latitude, Longitude FROM Jobs WHERE JobId = ?", job_id)
+    cursor.execute(
+        "SELECT ImageBlobUrl, Latitude, Longitude, SelectedRestaurantId FROM Jobs WHERE JobId = ?", job_id
+    )
     row = cursor.fetchone()
     if row is None:
         raise ValueError(f"Job not found: {job_id}")
-    return {
+    result = {
         "image_blob_url": row.ImageBlobUrl,
         "latitude": float(row.Latitude),
         "longitude": float(row.Longitude),
     }
+    if row.SelectedRestaurantId:
+        result["selected_restaurant_id"] = row.SelectedRestaurantId
+    return result
 
 
 def _mark_processing(job_id: str, conn) -> None:

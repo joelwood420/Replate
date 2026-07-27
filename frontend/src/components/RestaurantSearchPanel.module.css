@@ -1,0 +1,62 @@
+.panel {
+  width: 100%;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px 20px;
+  border-radius: var(--radius-xl);
+  background: var(--color-overlay-dark);
+}
+
+.input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border-chip);
+  background: var(--color-bg-camera);
+  color: var(--color-cream);
+  font-family: var(--font-sans);
+  font-size: 14px;
+}
+
+.input::placeholder {
+  color: var(--color-placeholder-text);
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--color-muted-light);
+  text-align: center;
+  padding: 4px 0;
+}
+
+.results {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.resultRow {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.resultName {
+  font-size: 14px;
+  color: var(--color-cream);
+  font-family: var(--font-sans);
+}
+
+.resultAddress {
+  font-size: 12px;
+  color: var(--color-muted-light);
+}

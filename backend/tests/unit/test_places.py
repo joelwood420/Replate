@@ -1,0 +1,76 @@
+from unittest.mock import MagicMock
+
+import httpx
+import pytest
+
+from shared import places
+
+
+def _mock_response(json_body: dict) -> MagicMock:
+    response = MagicMock()
+    response.json.return_value = json_body
+    response.raise_for_status.return_value = None
+    return response
+
+
+def test_search_restaurants_builds_request_without_location_bias(monkeypatch):
+    captured = {}
+
+    def fake_post(url, json, headers, timeout):
+        captured["url"] = url
+        captured["json"] = json
+        captured["headers"] = headers
+        return _mock_response({"places": []})
+
+    monkeypatch.setattr(places.httpx, "post", fake_post)
+
+    places.search_restaurants("Luigi's", None, None)
+
+    assert captured["url"] == places.PLACES_SEARCH_URL
+    assert captured["json"] == {"textQuery": "Luigi's", "includedType": "restaurant"}
+    assert captured["headers"]["X-Goog-FieldMask"] == places.FIELD_MASK
+
+
+def test_search_restaurants_includes_location_bias_when_coords_given(monkeypatch):
+    captured = {}
+
+    def fake_post(url, json, headers, timeout):
+        captured["json"] = json
+        return _mock_response({"places": []})
+
+    monkeypatch.setattr(places.httpx, "post", fake_post)
+
+    places.search_restaurants("Luigi's", 40.7128, -74.0060)
+
+    assert captured["json"]["locationBias"] == {
+        "circle": {"center": {"latitude": 40.7128, "longitude": -74.0060}, "radius": places.LOCATION_BIAS_RADIUS_M}
+    }
+
+
+def test_search_restaurants_parses_response_into_candidates(monkeypatch):
+    canned = {
+        "places": [
+            {
+                "id": "place-1",
+                "displayName": {"text": "Luigi's"},
+                "formattedAddress": "123 Main St",
+                "location": {"latitude": 40.7, "longitude": -74.0},
+            }
+        ]
+    }
+    monkeypatch.setattr(places.httpx, "post", lambda *a, **k: _mock_response(canned))
+
+    result = places.search_restaurants("Luigi's", None, None)
+
+    assert result == [
+        {"place_id": "place-1", "name": "Luigi's", "address": "123 Main St", "latitude": 40.7, "longitude": -74.0}
+    ]
+
+
+def test_search_restaurants_propagates_http_errors(monkeypatch):
+    response = MagicMock()
+    response.raise_for_status.side_effect = httpx.HTTPStatusError("bad", request=MagicMock(), response=MagicMock())
+    monkeypatch.setattr(places.httpx, "post", lambda *a, **k: response)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        places.search_restaurants("Luigi's", None, None)
