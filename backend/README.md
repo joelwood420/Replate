@@ -90,10 +90,14 @@ func start
 
 Exposed endpoints:
 
-- `POST /api/jobs` — upload metadata + GPS, returns a Blob SAS URL + job ID, queues the job
+- `POST /api/jobs` — upload metadata + GPS **or** a manually-selected restaurant, returns a
+  Blob SAS URL + job ID, queues the job
 - `GET /api/jobs/{jobId}` — job status/result (includes a readable `image_url` and `is_saved`)
 - `GET /api/jobs` — list the caller's jobs, newest first (`?saved=true` to filter, `?limit=`)
 - `PATCH /api/jobs/{jobId}/save` — body `{"saved": true|false}`, toggles a job's saved state
+- `GET /api/restaurants/search?query=...&latitude=&longitude=` — real Google Places text
+  search (`latitude`/`longitude` are an optional ranking bias, not a hard filter). Used by
+  the frontend's manual restaurant-search flow when an uploaded photo has no EXIF GPS.
 
 Phase 1 has no real auth — endpoints read a stub user ID from the `X-Debug-User-Oid` header
 (configurable via `STUB_AUTH_HEADER_NAME`), falling back to `STUB_DEFAULT_USER_OID`. This is
@@ -108,6 +112,19 @@ curl -X POST http://localhost:7071/api/jobs \
   -d '{"latitude": 40.7128, "longitude": -74.0060}'
 
 curl http://localhost:7071/api/jobs/{jobId} -H "X-Debug-User-Oid: 11111111-1111-1111-1111-111111111111"
+```
+
+**Restaurant search + manual selection** (the fallback path when an uploaded photo has no
+EXIF GPS):
+
+```bash
+curl "http://localhost:7071/api/restaurants/search?query=Luigis&latitude=40.7128&longitude=-74.0060" \
+  -H "X-Debug-User-Oid: 11111111-1111-1111-1111-111111111111"
+
+curl -X POST http://localhost:7071/api/jobs \
+  -H "Content-Type: application/json" \
+  -H "X-Debug-User-Oid: 11111111-1111-1111-1111-111111111111" \
+  -d '{"selected_restaurant": {"place_id": "ChIJ...", "name": "Luigi'"'"'s", "address": "123 Main St", "latitude": 40.7128, "longitude": -74.0060}}'
 ```
 
 ### Resolved: the queue trigger not firing against Azurite
@@ -154,19 +171,29 @@ pytest -m integration   # integration tests - requires Azurite + SQL Server runn
 | `VECTOR_SEARCH_TOP_K` | Default number of culinary-technique embeddings to retrieve |
 | `STUB_AUTH_HEADER_NAME`, `STUB_DEFAULT_USER_OID` | Phase 1 stub-auth config (see above) |
 | `ENTRAID_ENABLED` | `false` (default) uses stub auth; `true` raises `NotImplementedError` until Phase 3 wires real Entra ID JWT validation in |
-| `GOOGLE_PLACES_API_KEY`, `YELP_API_KEY`, `VISION_MODEL_API_KEY`, `EMBEDDING_MODEL_API_KEY` | **Phase 3 placeholders** — names only, not read by any Phase 1 code |
-| `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_AUTHORITY_URL`, `ENTRA_JWKS_URI` | **Phase 3 placeholders** — names only, not read by any Phase 1 code |
+| `GOOGLE_PLACES_API_KEY`, `PLACES_TIMEOUT_SECONDS` | Real — powers `GET /api/restaurants/search` (Google Places Text Search) |
+| `ANTHROPIC_API_KEY`, `MENU_FETCH_MODEL`, `MENU_FETCH_TIMEOUT_SECONDS`, `MENU_FETCH_MAX_RETRIES` | Real — powers `fetch_restaurant_menu`'s Claude + web-search call. `MENU_FETCH_MODEL` defaults to `claude-sonnet-5`, not the API-wide default, per this project's cost-discipline rule for a repeated, cache-gated extraction task — see `docs/decisions.md` |
+| `CLAUDE_BASE_URL`, `VISION_MODEL_DEPLOYMENT` | **Phase 3** — Microsoft Foundry endpoint and Claude deployment name. Set by `infra/`; not read by any code yet. Note that on Foundry the `model` parameter must be a *deployment name*, not a model id |
+| `AZURE_OPENAI_ENDPOINT`, `EMBEDDING_DEPLOYMENT_NAME` | **Phase 3** — Azure OpenAI `text-embedding-3-small` (1536-dim, matching `CulinaryEmbeddings`). Set by `infra/`; not read by any code yet |
+| `CONTENT_SAFETY_ENDPOINT`, `CONTENT_SAFETY_KEY` | **Phase 3** — image moderation. Set by `infra/`; not read by any code yet |
+| `ENTRA_TENANT_ID`, `ENTRA_API_CLIENT_ID`, `ENTRA_AUTHORITY_URL`, `ENTRA_JWKS_URI` | **Phase 3 placeholders** — names only, not read by any Phase 1 code. `ENTRA_API_CLIENT_ID` is the **API** app registration (the token audience), *not* the SPA client ID the frontend uses as `VITE_ENTRA_CLIENT_ID` |
+| `YELP_API_KEY` | Unused placeholder for a possible Yelp Fusion fallback |
 
 ## Architecture: what's real vs. stubbed
 
 The orchestrator (`orchestrators/dish_orchestrator.py`) models a dependency chain, not flat
 fan-out: vision analysis runs concurrently with the geocode→menu-fetch chain, then both join
-at the menu-matching fan-in step.
+at the menu-matching fan-in step. A job either arrives with GPS coordinates (device or photo
+EXIF) or with a manually-selected restaurant (`Jobs.SelectedRestaurantId`, set when an
+uploaded photo has no EXIF GPS); the orchestrator branches to `geocode_restaurant_candidates`
+or `select_restaurant_candidate` accordingly, but the two activities return an identical
+shape so everything downstream is unaffected by which path a job took.
 
 | Activity | Real | Stubbed |
 |---|---|---|
-| `geocode_restaurant_candidates` | Writes to `JobRestaurantCandidates` | Candidate lookup (canned list) |
-| `fetch_restaurant_menu` | Cache check via `MenuLastFetchedAt`, upserts `Restaurants`/`MenuItems` | Fetch content |
+| `geocode_restaurant_candidates` | Writes to `JobRestaurantCandidates` | Candidate lookup (canned list) — GPS reverse-geocode stays stubbed this pass |
+| `select_restaurant_candidate` | Fully real — loads the manually-selected `Restaurants` row, writes `JobRestaurantCandidates` | — |
+| `fetch_restaurant_menu` | Fully real — Claude API + native web-search tool, cache check via `MenuLastFetchedAt`, upserts `Restaurants`/`MenuItems`. On extraction failure, degrades to an empty menu (`source: "fetch_failed"`) rather than failing the job | — |
 | `vision_guess` | — | Entirely stub |
 | `match_menu_item` | Real `difflib`-based matching → one of 3 confidence outcomes | — (this is the anti-hallucination mechanism, never skipped) |
 | `query_culinary_embeddings` | Real `VECTOR_DISTANCE` SQL query | Query-text → pseudo-embedding (deterministic hash, not a real embedding call) |

@@ -1,10 +1,23 @@
+-- Single source of truth for the Replate schema.
+--
+-- Applied locally by the dev setup and in Azure by infra/modules/sql-schema.bicep
+-- (which pulls this file in verbatim via loadTextContent). Every statement is
+-- guarded so the file is safe to re-run - the deployment script re-runs on every
+-- deploy, and local dev re-applies it routinely.
+--
+-- Requires SQL Server 2025 / Azure SQL Database for the VECTOR type used by
+-- CulinaryEmbeddings.
+
+IF OBJECT_ID(N'dbo.Users', N'U') IS NULL
 CREATE TABLE Users (
     UserId       UNIQUEIDENTIFIER PRIMARY KEY,
     Email        NVARCHAR(256) NULL,
     DisplayName  NVARCHAR(200) NULL,
     CreatedAt    DATETIME2 DEFAULT SYSUTCDATETIME()
 );
+GO
 
+IF OBJECT_ID(N'dbo.Restaurants', N'U') IS NULL
 CREATE TABLE Restaurants (
     RestaurantId      NVARCHAR(100) PRIMARY KEY,
     Name              NVARCHAR(200) NOT NULL,
@@ -15,7 +28,9 @@ CREATE TABLE Restaurants (
     MenuLastFetchedAt DATETIME2 NULL,
     CreatedAt         DATETIME2 DEFAULT SYSUTCDATETIME()
 );
+GO
 
+IF OBJECT_ID(N'dbo.MenuItems', N'U') IS NULL
 CREATE TABLE MenuItems (
     MenuItemId       UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
     RestaurantId     NVARCHAR(100) NOT NULL FOREIGN KEY REFERENCES Restaurants(RestaurantId),
@@ -24,7 +39,9 @@ CREATE TABLE MenuItems (
     Price            NVARCHAR(50) NULL,
     CreatedAt        DATETIME2 DEFAULT SYSUTCDATETIME()
 );
+GO
 
+IF OBJECT_ID(N'dbo.Jobs', N'U') IS NULL
 CREATE TABLE Jobs (
     JobId                UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
     UserId               UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES Users(UserId),
@@ -39,14 +56,18 @@ CREATE TABLE Jobs (
     UpdatedAt            DATETIME2 DEFAULT SYSUTCDATETIME(),
     INDEX IX_Jobs_UserId (UserId, CreatedAt DESC)
 );
+GO
 
+IF OBJECT_ID(N'dbo.JobRestaurantCandidates', N'U') IS NULL
 CREATE TABLE JobRestaurantCandidates (
     JobId         UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES Jobs(JobId),
     RestaurantId  NVARCHAR(100) NOT NULL FOREIGN KEY REFERENCES Restaurants(RestaurantId),
     DistanceM     INT NULL,
     PRIMARY KEY (JobId, RestaurantId)
 );
+GO
 
+IF OBJECT_ID(N'dbo.JobResults', N'U') IS NULL
 CREATE TABLE JobResults (
     JobId                UNIQUEIDENTIFIER PRIMARY KEY FOREIGN KEY REFERENCES Jobs(JobId),
     DishName             NVARCHAR(200) NULL,
@@ -58,7 +79,9 @@ CREATE TABLE JobResults (
     MatchMethod          NVARCHAR(30) NOT NULL,
     CreatedAt            DATETIME2 DEFAULT SYSUTCDATETIME()
 );
+GO
 
+IF OBJECT_ID(N'dbo.DishElements', N'U') IS NULL
 CREATE TABLE DishElements (
     ElementId    UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
     JobId        UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES Jobs(JobId),
@@ -67,7 +90,9 @@ CREATE TABLE DishElements (
     Role         NVARCHAR(50) NULL,
     SortOrder    INT NOT NULL
 );
+GO
 
+IF OBJECT_ID(N'dbo.ElementIngredients', N'U') IS NULL
 CREATE TABLE ElementIngredients (
     ElementId       UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES DishElements(ElementId),
     IngredientName  NVARCHAR(150) NOT NULL,
@@ -76,14 +101,18 @@ CREATE TABLE ElementIngredients (
     SortOrder       INT NOT NULL,
     PRIMARY KEY (ElementId, SortOrder)
 );
+GO
 
+IF OBJECT_ID(N'dbo.ElementSteps', N'U') IS NULL
 CREATE TABLE ElementSteps (
     ElementId    UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES DishElements(ElementId),
     StepNumber   INT NOT NULL,
     Instruction  NVARCHAR(1000) NOT NULL,
     PRIMARY KEY (ElementId, StepNumber)
 );
+GO
 
+IF OBJECT_ID(N'dbo.CulinaryEmbeddings', N'U') IS NULL
 CREATE TABLE CulinaryEmbeddings (
     EmbeddingId  UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
     SourceText   NVARCHAR(MAX) NOT NULL,
@@ -92,3 +121,4 @@ CREATE TABLE CulinaryEmbeddings (
     SourceUrl    NVARCHAR(500) NULL,
     CreatedAt    DATETIME2 DEFAULT SYSUTCDATETIME()
 );
+GO
