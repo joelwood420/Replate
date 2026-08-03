@@ -1,9 +1,12 @@
 # User Flow
 
 The end-to-end journey through the Replate app, from opening it to seeing a recreated
-recipe. The Capture step's location-sourcing branch (live GPS vs. EXIF vs. manual search) is
-the most decision-heavy part of the flow — see `docs/decisions.md` for the reasoning behind
-each branch.
+recipe. Two parts carry most of the decisions — the Capture step's location-sourcing branch
+(live GPS vs. EXIF vs. manual search), and the split between identifying a dish and
+reverse-engineering it. See `docs/decisions.md` for the reasoning behind each.
+
+The headline shape: **snapping a photo identifies and saves the dish; generating the recipe
+is a separate, deliberate action later.**
 
 ```mermaid
 flowchart TD
@@ -29,17 +32,21 @@ flowchart TD
     ExifGPS --> Submit
     SelectRestaurant --> Submit
 
-    Submit --> Job["Job screen — Processing<br/>polls GET /api/jobs/{id}"]
+    Submit --> Job["Job screen — Processing<br/>stage 1: restaurant + menu + vision + match<br/>polls GET /api/jobs/{id}"]
 
-    Job -->|Completed| Result["Result<br/>matched dish + confidence badge<br/>+ per-component recipe cards"]
+    Job -->|Identified| Identified["Dish identified<br/>matched dish + confidence badge<br/>auto-saved to Cookbook<br/>'Reverse engineer' button"]
     Job -->|Failed| Failed["Failed state<br/>with retry"]
 
-    Result --> SaveChoice{"Save to Cookbook?"}
-    SaveChoice -->|Yes| Cookbook
-    SaveChoice -->|No, done| Home
+    Identified --> Cookbook
+    Cookbook --> ViewSaved["Open a saved dish"]
+    ViewSaved --> Identified
 
-    Cookbook --> ViewSaved["Open a saved job"]
-    ViewSaved --> Result
+    Identified -->|"Tap 'Reverse engineer'"| Generating["Generating<br/>stage 2: vector search + recipe generation<br/>POST /api/jobs/{id}/reverse-engineer<br/>same full-screen loading orb"]
+    Generating -->|Completed| Result["Result<br/>per-component recipe cards<br/>ingredients + method"]
+    Generating -->|"Generation failed"| Identified
+
+    Cookbook --> ViewRecipe["Open an already<br/>reverse-engineered dish"]
+    ViewRecipe --> Result
 ```
 
 ## Notes
@@ -51,9 +58,20 @@ flowchart TD
 - **Manual search** never silently substitutes device location for the restaurant's
   location — device coordinates only bias which search results rank first. The user's tap is
   what actually sets the job's restaurant.
+- **Auto-save** happens server-side the moment stage 1 finishes — there is no "save this?"
+  prompt. Photographing a dish already implies wanting to keep it, so the old choice was
+  friction with a foregone conclusion. The heart on a dish still removes it.
+- **Reverse engineering is opt-in** because generating the method is the heaviest and most
+  expensive call in the pipeline, and a user sitting in the restaurant doesn't need it yet.
+  Stage 1 stops at `Identified`, and the recipe is generated only when the user opens the
+  dish and asks. A cookbook card shows a "not yet reverse-engineered" badge until then.
 - **Result confidence** comes from one of three outcomes computed server-side
   (`match_method` in the API response, see `docs/api.md`): `menu_matched` (the vision
   guess was cross-checked against the restaurant's real, fetched menu — the primary
   anti-hallucination signal), `vision_only_medium` (a restaurant was found but no menu item
-  matched), or `vision_only_low` (no restaurant found at all). The Result screen's confidence
-  badge reflects whichever applies.
+  matched), or `vision_only_low` (no restaurant found at all). This badge now appears at the
+  `Identified` stage, *before* any recipe exists — it is what makes a freshly-saved cookbook
+  entry meaningful on its own.
+- **A failed generation is not a failed job.** Stage 2 errors revert the dish to `Identified`
+  with the error shown inline beside a working retry button, so a transient model error never
+  throws away a good restaurant identification and menu match. `Failed` means stage 1 failed.

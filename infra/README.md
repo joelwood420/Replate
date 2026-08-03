@@ -135,9 +135,12 @@ az deployment group what-if \
 Compile-only checks, no subscription needed:
 
 ```bash
-az bicep build --file infra/main.bicep --outfile /dev/null
+az bicep build --file infra/main.bicep --outfile "$TEMP/main.json"
 az bicep lint  --file infra/main.bicep
 ```
+
+(On Windows, `--outfile /dev/null` fails with `Unsupported Windows DOS device path` — the
+Bicep CLI needs a real path, so write the compiled JSON somewhere disposable.)
 
 > ⚠️ Do **not** commit the output of `az bicep build-params`. It resolves
 > `readEnvironmentVariable()` and writes the actual secret values into the generated JSON.

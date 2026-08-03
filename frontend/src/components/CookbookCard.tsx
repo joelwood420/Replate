@@ -24,6 +24,7 @@ export function CookbookCard({ job, onToggleSaved }: CookbookCardProps) {
         >
           ♥
         </button>
+        {job.status === 'Identified' && <div className={styles.pendingBadge}>Not yet reverse-engineered</div>}
       </div>
       <div className={styles.name}>{job.dish_name ?? 'Identifying…'}</div>
       <div className={styles.place}>{job.restaurant_name ?? ''}</div>

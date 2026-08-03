@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from orchestrators.dish_orchestrator import dish_orchestrator
+from shared.models import JobStatus
 
 
 def _job_input(**overrides):
@@ -26,6 +27,7 @@ def test_vision_task_created_before_first_yield():
 
 
 def test_happy_path_full_call_sequence():
+    """Stage 1 stops at the menu match - recipe generation is a separate orchestrator."""
     context = MagicMock()
     context.get_input.return_value = _job_input()
 
@@ -41,23 +43,18 @@ def test_happy_path_full_call_sequence():
     gen.send([vision_guess_stub, menu_result_stub])  # yields match_menu_item task
 
     match_result_stub = {"dish_name": "Pizza", "cuisine": "Italian", "match_method": "menu_matched"}
-    gen.send(match_result_stub)  # yields query_culinary_embeddings task
-
-    gen.send([{"source_text": "tip"}])  # yields generate_recreation task
-    gen.send({"elements": []})  # yields persist_job_result task
+    gen.send(match_result_stub)  # yields persist_match_result task
 
     with pytest.raises(StopIteration) as excinfo:
         gen.send(None)
-    assert excinfo.value.value == {"job_id": "job-1", "status": "Completed"}
+    assert excinfo.value.value == {"job_id": "job-1", "status": JobStatus.IDENTIFIED}
 
     assert _call_names(context) == [
         "vision_guess",
         "geocode_restaurant_candidates",
         "fetch_restaurant_menu",
         "match_menu_item",
-        "query_culinary_embeddings",
-        "generate_recreation",
-        "persist_job_result",
+        "persist_match_result",
     ]
     assert context.task_all.call_count == 1
 
@@ -69,6 +66,34 @@ def test_happy_path_full_call_sequence():
         "restaurant_address": "100 Sample Ave",
         "menu_source_url": "https://x",
     }
+
+    # The vision guess has to reach persistence: stage 2 reads it back out of the
+    # database, and nothing else in the schema records it until a recipe exists.
+    persist_call = context.call_activity.call_args_list[-1]
+    assert persist_call.args[1] == {
+        "job_id": "job-1",
+        "match_result": match_result_stub,
+        "vision_guess": vision_guess_stub,
+    }
+
+
+def test_never_generates_a_recipe():
+    """The expensive generator must not run on upload - it is user-triggered now."""
+    context = MagicMock()
+    context.get_input.return_value = _job_input()
+
+    gen = dish_orchestrator(context)
+    next(gen)
+    gen.send([{"restaurant_id": "stub-1", "name": "R", "address": "A", "menu_source_url": None}])
+    gen.send([{"dish_name_guess": "Pizza", "elements": []}, {"items": []}])
+    gen.send({"dish_name": "Pizza", "match_method": "menu_matched"})
+
+    with pytest.raises(StopIteration):
+        gen.send(None)
+
+    call_names = _call_names(context)
+    assert "generate_recreation" not in call_names
+    assert "query_culinary_embeddings" not in call_names
 
 
 def test_skips_fetch_menu_when_no_candidates_found():
@@ -87,6 +112,7 @@ def test_skips_fetch_menu_when_no_candidates_found():
     assert call_names[-1] == "match_menu_item"
 
     match_call = context.call_activity.call_args_list[-1]
+    assert match_call.args[0] == "match_menu_item"
     assert match_call.args[1]["candidate_found"] is False
     assert match_call.args[1]["restaurant_id"] is None
     assert context.task_all.call_count == 0

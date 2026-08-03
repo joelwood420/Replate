@@ -53,3 +53,38 @@
   justify-content: center;
   background: var(--color-bg);
 }
+
+/* Shown on an Identified dish - matched to a menu, but not yet reverse engineered. */
+.reverseEngineerPrompt {
+  padding: 30px 22px 8px;
+  text-align: center;
+}
+
+.promptTitle {
+  font-family: var(--font-serif);
+  font-size: 21px;
+  color: var(--color-cream-bright);
+  line-height: 1.2;
+  margin-bottom: 10px;
+}
+
+.promptBody {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--color-muted-light);
+  max-width: 32ch;
+  margin: 0 auto;
+}
+
+.promptError {
+  margin: 18px auto 0;
+  max-width: 34ch;
+  padding: 10px 14px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--color-cream-soft);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  text-align: left;
+}

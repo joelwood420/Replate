@@ -1,13 +1,26 @@
-import { useEffect, useRef, useState } from 'react';
-import { getJob, type JobDetail } from '../apiClient';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { getJob, type JobDetail, type JobStatusValue } from '../apiClient';
 import { useAuth } from '../auth/useAuth';
 
 const POLL_INTERVAL_MS = 3000;
+
+/**
+ * Statuses where more work is in flight, so the job is worth polling again.
+ * `Identified` is deliberately absent - stage 1 is finished and stage 2 won't start
+ * until the user asks for it, so an un-reverse-engineered dish must not poll forever.
+ */
+const IN_FLIGHT_STATUSES: JobStatusValue[] = ['Queued', 'Processing', 'Generating'];
 
 export interface JobPollingState {
   job: JobDetail | null;
   error: string | null;
   isLoading: boolean;
+  /**
+   * Re-reads the job and resumes polling. Needed after an action that puts the job
+   * back in flight - pressing "Reverse engineer" moves it from the terminal
+   * `Identified` state to `Generating`, which polling has already stopped for.
+   */
+  refetch: () => void;
 }
 
 /**
@@ -20,7 +33,10 @@ export function useJobPolling(jobId: string | undefined): JobPollingState {
   const [job, setJob] = useState<JobDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [reloadToken, setReloadToken] = useState(0);
   const timerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  const refetch = useCallback(() => setReloadToken((token) => token + 1), []);
 
   useEffect(() => {
     if (!jobId) return undefined;
@@ -31,8 +47,9 @@ export function useJobPolling(jobId: string | undefined): JobPollingState {
         const result = await getJob(jobId as string, authHeaders);
         if (cancelled) return;
         setJob(result);
+        setError(null);
         setIsLoading(false);
-        if (result.status === 'Queued' || result.status === 'Processing') {
+        if (IN_FLIGHT_STATUSES.includes(result.status)) {
           timerRef.current = setTimeout(poll, POLL_INTERVAL_MS);
         }
       } catch (err) {
@@ -48,7 +65,7 @@ export function useJobPolling(jobId: string | undefined): JobPollingState {
       cancelled = true;
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [jobId, authHeaders]);
+  }, [jobId, authHeaders, reloadToken]);
 
-  return { job, error, isLoading };
+  return { job, error, isLoading, refetch };
 }

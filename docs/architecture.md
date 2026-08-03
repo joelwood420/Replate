@@ -60,7 +60,7 @@ flowchart TB
 
     Browser -- "sign in (OIDC)" --> EntraID
     Browser -- "loads app" --> SWA
-    Browser -- "POST /api/jobs, GET /api/jobs/{id} (polled)<br/>— bearer token" --> FuncApp
+    Browser -- "POST /api/jobs, GET /api/jobs/{id} (polled),<br/>POST /api/jobs/{id}/reverse-engineer<br/>— bearer token" --> FuncApp
     Browser -- "PUT photo direct (write-only SAS)" --> StorageAcct
 
     FuncApp -- "validates token" --> EntraID
@@ -79,16 +79,36 @@ flowchart TB
 
 ## Request flow (happy path)
 
+The pipeline runs as **two separately-triggered Durable orchestrations**, not one. Stage 1 is
+automatic; stage 2 only runs when the user asks for the recipe, because it is the most
+expensive call in the pipeline and isn't wanted while the user is still at the restaurant —
+see `docs/decisions.md`.
+
+**Stage 1 — automatic, on upload:**
+
 1. Browser signs in via Entra External ID (MSAL), loads the React app from Static Web Apps.
-2. `POST /api/jobs` (GPS) → Function App creates a `Jobs` row, returns a write-only SAS URL.
+2. `POST /api/jobs` (GPS or a manually-selected restaurant) → Function App creates a `Jobs`
+   row, returns a write-only SAS URL.
 3. Browser `PUT`s the photo directly to Blob Storage with that SAS URL — never through the
    Function App.
-4. A queue message starts the Durable Functions orchestrator: geocode → menu fetch (cached
-   per restaurant) runs alongside the vision-model guess, then both join at the menu-match
-   fan-in step (the anti-hallucination check), then the structured recipe generator runs,
-   grounded by a `VECTOR_DISTANCE` lookup against `CulinaryEmbeddings`.
-5. Result is persisted to Azure SQL; the client picks it up on its next poll of
-   `GET /api/jobs/{id}`.
+4. A queue message starts `dish_orchestrator`: geocode (or select the chosen restaurant) →
+   menu fetch (cached per restaurant) runs alongside the vision-model guess, then both join at
+   the menu-match fan-in step (the anti-hallucination check). The orchestration **stops there**.
+5. `persist_match_result` writes the `JobResults` row — including the raw vision guess as JSON,
+   which stage 2 needs as input — sets the job to `Identified` and marks it saved, putting the
+   dish in the user's cookbook automatically. The client picks it up on its next poll of
+   `GET /api/jobs/{id}`, which returns the matched dish and confidence badge with an empty
+   `elements` array.
+
+**Stage 2 — only when the user presses "Reverse engineer":**
+
+6. `POST /api/jobs/{id}/reverse-engineer` sets the job to `Generating` and starts
+   `recipe_orchestrator` on a separate instance id (`{job_id}:recipe`).
+7. A `VECTOR_DISTANCE` lookup against `CulinaryEmbeddings` grounds the structured recipe
+   generator, whose output is persisted as `DishElements`/`ElementIngredients`/`ElementSteps`
+   and the job set to `Completed`.
+8. If generation fails the job reverts to `Identified` with an error message rather than
+   `Failed`, so a transient model error doesn't discard a good menu match.
 
 ## Resource free-tier notes (Global Rule 1 — re-verify before provisioning, pricing changes)
 
@@ -115,6 +135,10 @@ unset, `freeLimitExhaustionBehavior` stays `AutoPause`, Foundry deployments stay
 **Most likely to actually cost money:** Claude token spend on the recipe generator (the
 heaviest-output call in the pipeline), Application Insights ingestion, and Azure SQL
 vCore-seconds if `autoPauseDelay` is tuned badly.
+
+Splitting the pipeline in two directly targets that first item: the generator no longer runs
+on every uploaded photo, only on the dishes a user explicitly asks to reverse engineer. Stage 1
+(vision guess + menu extraction) still runs per photo, so it remains the per-upload cost floor.
 
 ## Deployment
 

@@ -43,7 +43,16 @@ def _parse_response(response) -> list[dict]:
 
 
 def fetch_menu_items(name: str, address: str | None, menu_source_url: str | None) -> list[dict]:
-    client = Anthropic(api_key=config.anthropic_api_key(), timeout=config.menu_fetch_timeout_seconds())
+    # A missing/blank key is reported as a MenuExtractionError so the caller's graceful
+    # degrade path handles it. Constructing Anthropic(api_key="") raises a bare TypeError
+    # from the SDK, which would escape that path and fail the whole job.
+    api_key = config.anthropic_api_key()
+    if not api_key:
+        raise MenuExtractionError(
+            f"Cannot fetch menu for {name}: ANTHROPIC_API_KEY is not set"
+        )
+
+    client = Anthropic(api_key=api_key, timeout=config.menu_fetch_timeout_seconds())
     address_clause = f" at {address}" if address else ""
     prompt = _PROMPT_TEMPLATE.format(name=name, address_clause=address_clause)
     if menu_source_url:

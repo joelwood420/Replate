@@ -2,7 +2,20 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:7071
 
 export type AuthHeaders = Record<string, string>;
 
-export type JobStatusValue = 'Queued' | 'Processing' | 'Completed' | 'Failed';
+/**
+ * Mirrors shared/models.py's JobStatus. The pipeline runs in two stages:
+ * `Identified` means stage 1 finished - the dish is in the cookbook with a matched
+ * restaurant and menu item, but no recipe yet. `Generating` means the user pressed
+ * "Reverse engineer" and stage 2 is running. `Failed` only ever means stage 1 failed;
+ * a stage-2 failure reverts to `Identified` with an error_message so it stays retryable.
+ */
+export type JobStatusValue =
+  | 'Queued'
+  | 'Processing'
+  | 'Identified'
+  | 'Generating'
+  | 'Completed'
+  | 'Failed';
 export type MatchMethod = 'menu_matched' | 'vision_only_medium' | 'vision_only_low';
 
 export interface CreateJobResponse {
@@ -139,6 +152,18 @@ export async function uploadPhotoToBlob(uploadUrl: string, file: Blob): Promise<
 
 export function getJob(jobId: string, authHeaders: AuthHeaders): Promise<JobDetail> {
   return request(`/jobs/${jobId}`, { method: 'GET' }, authHeaders);
+}
+
+/**
+ * Starts stage 2 for an already-identified dish. Returns as soon as the orchestration
+ * is queued (202) - poll the job to watch it move Generating -> Completed.
+ * Throws ApiError 409 if the dish is not in the `Identified` state.
+ */
+export function reverseEngineerJob(
+  jobId: string,
+  authHeaders: AuthHeaders,
+): Promise<{ job_id: string; status: JobStatusValue }> {
+  return request(`/jobs/${jobId}/reverse-engineer`, { method: 'POST' }, authHeaders);
 }
 
 export function listJobs(

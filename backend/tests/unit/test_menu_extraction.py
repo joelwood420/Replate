@@ -34,6 +34,10 @@ class _FakeClient:
 def _patch_client(monkeypatch, responses):
     fake_client = _FakeClient(responses)
     monkeypatch.setattr(menu_extraction, "Anthropic", lambda **kwargs: fake_client)
+    # Stub the key too: fetch_menu_items now fails fast on a blank one, and the local
+    # .env legitimately leaves ANTHROPIC_API_KEY empty. These tests cover extraction
+    # logic, not auth config - see test_missing_api_key_raises_menu_extraction_error.
+    monkeypatch.setattr(menu_extraction.config, "anthropic_api_key", lambda: "sk-test-key")
     return fake_client
 
 
@@ -76,4 +80,17 @@ def test_exhausted_retries_raises_menu_extraction_error(monkeypatch):
     _patch_client(monkeypatch, [_FakeResponse("not json")] * 10)
 
     with pytest.raises(menu_extraction.MenuExtractionError):
+        menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)
+
+
+def test_missing_api_key_raises_menu_extraction_error(monkeypatch):
+    """A blank key must surface as MenuExtractionError, not a bare TypeError.
+
+    fetch_restaurant_menu only catches MenuExtractionError in order to degrade to an
+    empty menu instead of failing the whole job. Anthropic(api_key="") raises TypeError
+    from the SDK constructor, which would escape that path.
+    """
+    monkeypatch.setattr(menu_extraction.config, "anthropic_api_key", lambda: "")
+
+    with pytest.raises(menu_extraction.MenuExtractionError, match="ANTHROPIC_API_KEY"):
         menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)

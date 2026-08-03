@@ -8,6 +8,10 @@ from shared.models import JobStatus
 
 bp = func.Blueprint()
 
+# Statuses for which a JobResults row exists. Stage 1 writes that row and leaves the
+# job Identified, so the result is available well before any recipe is generated.
+_STATUSES_WITH_RESULT = (JobStatus.IDENTIFIED, JobStatus.GENERATING, JobStatus.COMPLETED)
+
 
 def _fetch_job(job_id: str, conn) -> dict | None:
     cursor = conn.cursor()
@@ -105,9 +109,15 @@ def run(job_id: str, user_oid: str) -> dict:
             "is_saved": job["is_saved"],
             "created_at": job["created_at"],
         }
-        if job["status"] == JobStatus.FAILED:
+        # An Identified job carries an error message when a previous reverse-engineer
+        # attempt failed - it stays retryable, so surface the error without the job
+        # being Failed.
+        if job["error_message"]:
             response_body["error_message"] = job["error_message"]
-        if job["status"] == JobStatus.COMPLETED:
+        # `result` exists from stage 1 onward, not just when a recipe has been
+        # generated, so the frontend can show the dish, restaurant and confidence
+        # badge while `result.elements` is still empty.
+        if job["status"] in _STATUSES_WITH_RESULT:
             response_body["result"] = _fetch_result(job_id, conn)
 
         return {"status_code": 200, "body": response_body}

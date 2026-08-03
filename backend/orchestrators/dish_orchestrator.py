@@ -1,8 +1,18 @@
+"""Stage 1 of the pipeline: identify the dish and match it against a real menu.
+
+Runs automatically when a photo is uploaded, and stops at Identified - the dish is
+in the user's cookbook with a restaurant, a matched menu item and a confidence
+outcome, but no recipe. Recipe generation is stage 2
+(`orchestrators/recipe_orchestrator.py`), which the user triggers explicitly, because
+it is the heaviest and most expensive call in the pipeline and nobody wants to wait
+on it while sitting in the restaurant.
+"""
+
 import azure.durable_functions as df
 
-bp = df.Blueprint()
+from shared.models import JobStatus
 
-ORCHESTRATOR_NAME = "dish_orchestrator"
+bp = df.Blueprint()
 
 
 def dish_orchestrator(context: df.DurableOrchestrationContext):
@@ -54,25 +64,17 @@ def dish_orchestrator(context: df.DurableOrchestrationContext):
             },
         )
 
-        query_text = match_result.get("dish_name") or vision_guess.get("dish_name_guess")
-        embeddings = yield context.call_activity(
-            "query_culinary_embeddings", {"query_text": query_text, "top_k": 5}
-        )
-
-        recreation = yield context.call_activity(
-            "generate_recreation",
+        # vision_guess is persisted alongside the match so stage 2 can use it as
+        # input - nothing else in the schema records it until a recipe exists.
+        yield context.call_activity(
+            "persist_match_result",
             {
-                "matched_menu_item": match_result,
+                "job_id": job_input["job_id"],
+                "match_result": match_result,
                 "vision_guess": vision_guess,
-                "embeddings_context": embeddings,
             },
         )
-
-        yield context.call_activity(
-            "persist_job_result",
-            {"job_id": job_input["job_id"], "match_result": match_result, "recreation": recreation},
-        )
-        return {"job_id": job_input["job_id"], "status": "Completed"}
+        return {"job_id": job_input["job_id"], "status": JobStatus.IDENTIFIED}
 
     except Exception as ex:
         yield context.call_activity(

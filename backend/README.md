@@ -91,10 +91,14 @@ func start
 Exposed endpoints:
 
 - `POST /api/jobs` — upload metadata + GPS **or** a manually-selected restaurant, returns a
-  Blob SAS URL + job ID, queues the job
-- `GET /api/jobs/{jobId}` — job status/result (includes a readable `image_url` and `is_saved`)
+  Blob SAS URL + job ID, queues the job (starts stage 1)
+- `GET /api/jobs/{jobId}` — job status/result (includes a readable `image_url` and `is_saved`).
+  `result` is present from status `Identified` onward, with `elements: []` until a recipe exists
+- `POST /api/jobs/{jobId}/reverse-engineer` — starts stage 2 (recipe generation) for an
+  `Identified` dish; `202` + status `Generating`, or `409` if the job isn't `Identified`
 - `GET /api/jobs` — list the caller's jobs, newest first (`?saved=true` to filter, `?limit=`)
-- `PATCH /api/jobs/{jobId}/save` — body `{"saved": true|false}`, toggles a job's saved state
+- `PATCH /api/jobs/{jobId}/save` — body `{"saved": true|false}`, sets a job's saved state.
+  Stage 1 auto-saves, so this is mainly how a dish gets removed from the cookbook
 - `GET /api/restaurants/search?query=...&latitude=&longitude=` — real Google Places text
   search (`latitude`/`longitude` are an optional ranking bias, not a hard filter). Used by
   the frontend's manual restaurant-search flow when an uploaded photo has no EXIF GPS.
@@ -112,6 +116,14 @@ curl -X POST http://localhost:7071/api/jobs \
   -d '{"latitude": 40.7128, "longitude": -74.0060}'
 
 curl http://localhost:7071/api/jobs/{jobId} -H "X-Debug-User-Oid: 11111111-1111-1111-1111-111111111111"
+```
+
+Once that job reports `"status": "Identified"`, generate the recipe (stage 2):
+
+```bash
+curl -X POST http://localhost:7071/api/jobs/{jobId}/reverse-engineer \
+  -H "X-Debug-User-Oid: 11111111-1111-1111-1111-111111111111"
+# -> 202 {"job_id": "...", "status": "Generating"}; poll GET /api/jobs/{jobId} until Completed
 ```
 
 **Restaurant search + manual selection** (the fallback path when an uploaded photo has no
@@ -179,26 +191,50 @@ pytest -m integration   # integration tests - requires Azurite + SQL Server runn
 | `ENTRA_TENANT_ID`, `ENTRA_API_CLIENT_ID`, `ENTRA_AUTHORITY_URL`, `ENTRA_JWKS_URI` | **Phase 3 placeholders** — names only, not read by any Phase 1 code. `ENTRA_API_CLIENT_ID` is the **API** app registration (the token audience), *not* the SPA client ID the frontend uses as `VITE_ENTRA_CLIENT_ID` |
 | `YELP_API_KEY` | Unused placeholder for a possible Yelp Fusion fallback |
 
-## Architecture: what's real vs. stubbed
+## Architecture: two stages, not one pipeline
 
-The orchestrator (`orchestrators/dish_orchestrator.py`) models a dependency chain, not flat
-fan-out: vision analysis runs concurrently with the geocode→menu-fetch chain, then both join
-at the menu-matching fan-in step. A job either arrives with GPS coordinates (device or photo
-EXIF) or with a manually-selected restaurant (`Jobs.SelectedRestaurantId`, set when an
-uploaded photo has no EXIF GPS); the orchestrator branches to `geocode_restaurant_candidates`
-or `select_restaurant_candidate` accordingly, but the two activities return an identical
-shape so everything downstream is unaffected by which path a job took.
+The pipeline is split across **two separately-triggered Durable orchestrations**:
 
-| Activity | Real | Stubbed |
-|---|---|---|
-| `geocode_restaurant_candidates` | Writes to `JobRestaurantCandidates` | Candidate lookup (canned list) — GPS reverse-geocode stays stubbed this pass |
-| `select_restaurant_candidate` | Fully real — loads the manually-selected `Restaurants` row, writes `JobRestaurantCandidates` | — |
-| `fetch_restaurant_menu` | Fully real — Claude API + native web-search tool, cache check via `MenuLastFetchedAt`, upserts `Restaurants`/`MenuItems`. On extraction failure, degrades to an empty menu (`source: "fetch_failed"`) rather than failing the job | — |
-| `vision_guess` | — | Entirely stub |
-| `match_menu_item` | Real `difflib`-based matching → one of 3 confidence outcomes | — (this is the anti-hallucination mechanism, never skipped) |
-| `query_culinary_embeddings` | Real `VECTOR_DISTANCE` SQL query | Query-text → pseudo-embedding (deterministic hash, not a real embedding call) |
-| `generate_recreation` | — | Entirely stub, output shaped for `DishElements`/`ElementIngredients`/`ElementSteps` |
-| `persist_job_result` | Real DB writes | — |
+**Stage 1 — `orchestrators/dish_orchestrator.py`**, started automatically by the queue message
+from `POST /api/jobs`. Models a dependency chain, not flat fan-out: vision analysis runs
+concurrently with the geocode→menu-fetch chain, then both join at the menu-matching fan-in
+step. A job either arrives with GPS coordinates (device or photo EXIF) or with a
+manually-selected restaurant (`Jobs.SelectedRestaurantId`, set when an uploaded photo has no
+EXIF GPS); the orchestrator branches to `geocode_restaurant_candidates` or
+`select_restaurant_candidate` accordingly, but the two activities return an identical shape so
+everything downstream is unaffected by which path a job took. It ends at `persist_match_result`,
+leaving the job **`Identified`** and auto-saved into the user's cookbook — no recipe yet.
+
+**Stage 2 — `orchestrators/recipe_orchestrator.py`**, started by
+`POST /api/jobs/{jobId}/reverse-engineer` when the user explicitly asks for the recipe. Runs
+`query_culinary_embeddings` → `generate_recreation` → `persist_recipe_result`, ending at
+`Completed`. Recipe generation is the heaviest and most expensive call in the pipeline, which is
+why it isn't on the upload path — see `docs/decisions.md`.
+
+Two things about the split that are easy to get wrong:
+
+- Stage 2's input is rebuilt from the database by the HTTP starter, so the vision guess has to
+  survive stage 1 — hence `JobResults.VisionGuessJson`. Nothing else records it until a recipe
+  exists.
+- The two orchestrations use **different instance ids** (`{job_id}` and `{job_id}:recipe`).
+  Reusing the bare job id would collide with the completed stage-1 instance.
+
+A stage-1 failure marks the job `Failed`. A **stage-2** failure reverts it to `Identified` with
+an error message, so a transient generator error can't discard a good menu match.
+
+### What's real vs. stubbed
+
+| Activity | Stage | Real | Stubbed |
+|---|---|---|---|
+| `geocode_restaurant_candidates` | 1 | Writes to `JobRestaurantCandidates` | Candidate lookup (canned list) — GPS reverse-geocode stays stubbed this pass |
+| `select_restaurant_candidate` | 1 | Fully real — loads the manually-selected `Restaurants` row, writes `JobRestaurantCandidates` | — |
+| `fetch_restaurant_menu` | 1 | Fully real — Claude API + native web-search tool, cache check via `MenuLastFetchedAt`, upserts `Restaurants`/`MenuItems`. On extraction failure, degrades to an empty menu (`source: "fetch_failed"`) rather than failing the job | — |
+| `vision_guess` | 1 | — | Entirely stub |
+| `match_menu_item` | 1 | Real `difflib`-based matching → one of 3 confidence outcomes | — (this is the anti-hallucination mechanism, never skipped) |
+| `persist_match_result` | 1 | Real DB writes — `JobResults` + `VisionGuessJson`, sets `Identified` and `IsSaved` | — |
+| `query_culinary_embeddings` | 2 | Real `VECTOR_DISTANCE` SQL query | Query-text → pseudo-embedding (deterministic hash, not a real embedding call) |
+| `generate_recreation` | 2 | — | Entirely stub, output shaped for `DishElements`/`ElementIngredients`/`ElementSteps` |
+| `persist_recipe_result` | 2 | Real DB writes — deletes any previous recipe first, so re-running is idempotent | — |
 
 Everything under "Stubbed" is where Phase 3 plugs in a real API call — the interfaces and
 data shapes are already correct.

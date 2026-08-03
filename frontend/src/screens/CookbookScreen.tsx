@@ -21,6 +21,14 @@ export function CookbookScreen() {
   // only chip guaranteed meaningful until a real category field exists.
   const visibleJobs = jobs;
 
+  // Dishes are saved automatically at capture time, so the cookbook holds a mix of
+  // reverse-engineered recipes and dishes still waiting to be.
+  const reverseEngineered = jobs.filter((job) => job.status === 'Completed').length;
+  const summary =
+    jobs.length === 0
+      ? 'No dishes yet'
+      : `${jobs.length} ${jobs.length === 1 ? 'dish' : 'dishes'} · ${reverseEngineered} reverse-engineered`;
+
   async function handleToggleSaved(jobId: string, saved: boolean) {
     await setJobSaved(jobId, saved, authHeaders);
     refetch();
@@ -30,7 +38,7 @@ export function CookbookScreen() {
     <div className={styles.screen}>
       <div className={styles.header}>
         <div className={styles.title}>My Cookbook</div>
-        <div className={styles.subhead}>{jobs.length} recipes reverse-engineered</div>
+        <div className={styles.subhead}>{summary}</div>
       </div>
 
       <div className={styles.filters}>
@@ -48,7 +56,9 @@ export function CookbookScreen() {
         {isLoading && <LoadingState label="Loading your cookbook…" />}
         {error && <ErrorState message={error} onRetry={refetch} />}
         {!isLoading && !error && visibleJobs.length === 0 && (
-          <div className={styles.empty}>Nothing saved yet — tap the heart on a recipe to add it here.</div>
+          <div className={styles.empty}>
+            Nothing here yet — snap a dish and it'll be saved to your cookbook automatically.
+          </div>
         )}
         {!isLoading && !error && visibleJobs.length > 0 && (
           <div className={styles.grid}>

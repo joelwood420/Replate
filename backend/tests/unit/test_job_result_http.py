@@ -112,3 +112,81 @@ def test_returns_full_nested_result_when_completed(monkeypatch):
     assert len(result["body"]["result"]["elements"]) == 1
     assert result["body"]["result"]["elements"][0]["name"] == "Crust"
     assert result["body"]["result"]["elements"][0]["role"] == "Base"
+
+
+def test_returns_result_with_empty_elements_when_identified(monkeypatch):
+    """Stage 1 output is available before any recipe exists.
+
+    The frontend needs the dish name, restaurant and confidence badge to render the
+    "Reverse engineer" screen, so `result` can't wait for status Completed.
+    """
+    conn = MagicMock()
+    cursor = conn.cursor.return_value
+    job_row = MagicMock(
+        JobId="job-1",
+        UserId="owner-oid",
+        Status=JobStatus.IDENTIFIED,
+        ErrorMessage=None,
+        ImageBlobUrl="https://x/uploads/photo.jpg",
+        IsSaved=1,
+        CreatedAt=CREATED_AT,
+    )
+    result_row = MagicMock(
+        DishName="Margherita Pizza",
+        Cuisine="Italian",
+        Confidence=0.8,
+        MatchedRestaurantId="stub-1",
+        RestaurantName="Marchetti",
+        MatchedMenuItemId=None,
+        MatchConfidence=0.9,
+        MatchMethod="menu_matched",
+    )
+    cursor.fetchone.side_effect = [job_row, result_row]
+    cursor.fetchall.side_effect = [[]]
+
+    monkeypatch.setattr(job_result_http.db, "get_connection", lambda: _ConnectionCtx(conn))
+    monkeypatch.setattr(job_result_http.blob, "generate_read_sas_url", lambda url: f"{url}?sig=abc")
+
+    result = job_result_http.run("job-1", "owner-oid")
+
+    assert result["body"]["status"] == JobStatus.IDENTIFIED
+    assert result["body"]["is_saved"] is True
+    assert result["body"]["result"]["dish_name"] == "Margherita Pizza"
+    assert result["body"]["result"]["match_method"] == "menu_matched"
+    assert result["body"]["result"]["elements"] == []
+
+
+def test_surfaces_error_message_on_an_identified_job(monkeypatch):
+    """A failed reverse-engineer attempt reverts to Identified, not Failed."""
+    conn = MagicMock()
+    cursor = conn.cursor.return_value
+    job_row = MagicMock(
+        JobId="job-1",
+        UserId="owner-oid",
+        Status=JobStatus.IDENTIFIED,
+        ErrorMessage="generator exploded",
+        ImageBlobUrl="https://x/uploads/photo.jpg",
+        IsSaved=1,
+        CreatedAt=CREATED_AT,
+    )
+    result_row = MagicMock(
+        DishName="Pad Thai",
+        Cuisine="Thai",
+        Confidence=0.7,
+        MatchedRestaurantId=None,
+        RestaurantName=None,
+        MatchedMenuItemId=None,
+        MatchConfidence=0.0,
+        MatchMethod="vision_only_low",
+    )
+    cursor.fetchone.side_effect = [job_row, result_row]
+    cursor.fetchall.side_effect = [[]]
+
+    monkeypatch.setattr(job_result_http.db, "get_connection", lambda: _ConnectionCtx(conn))
+    monkeypatch.setattr(job_result_http.blob, "generate_read_sas_url", lambda url: f"{url}?sig=abc")
+
+    result = job_result_http.run("job-1", "owner-oid")
+
+    assert result["body"]["status"] == JobStatus.IDENTIFIED
+    assert result["body"]["error_message"] == "generator exploded"
+    assert result["body"]["result"] is not None

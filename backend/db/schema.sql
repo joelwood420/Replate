@@ -122,3 +122,21 @@ CREATE TABLE CulinaryEmbeddings (
     CreatedAt    DATETIME2 DEFAULT SYSUTCDATETIME()
 );
 GO
+
+-- ---------------------------------------------------------------------------
+-- Additive column changes.
+--
+-- These live below the CREATE TABLE block rather than inside it on purpose.
+-- Each CREATE TABLE above is wrapped in IF OBJECT_ID(...) IS NULL, so once a
+-- table exists that whole statement is a no-op - editing a column into the
+-- table body would silently do nothing on every database that already exists.
+-- Adding columns therefore needs its own separately-guarded batch.
+-- ---------------------------------------------------------------------------
+
+-- Stage 1 of the pipeline (identify + menu match) persists the vision model's
+-- raw guess so stage 2 (recipe generation, triggered later by the user pressing
+-- "Reverse engineer") can use it as input. Before the pipeline was split, the
+-- guess only ever survived as DishElements rows written by the generator.
+IF COL_LENGTH('dbo.JobResults', 'VisionGuessJson') IS NULL
+    ALTER TABLE JobResults ADD VisionGuessJson NVARCHAR(MAX) NULL;
+GO

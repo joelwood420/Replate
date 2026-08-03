@@ -21,8 +21,11 @@ The backend must be running locally for any of this to talk to real data — see
 npm run dev
 ```
 
-Opens on `http://localhost:5173` by default. Sign in with the mocked "Sign in with
-Microsoft" button (see Auth below) to reach Home.
+Opens on `http://localhost:5173`. The port is pinned with `strictPort` in `vite.config.ts`, so
+if something else is already on 5173 the dev server **fails loudly** rather than quietly moving
+to 5174 — which previously meant opening the wrong app's dev server without noticing.
+
+Sign in with the mocked "Sign in with Microsoft" button (see Auth below) to reach Home.
 
 ## Auth (mocked locally)
 
@@ -55,9 +58,17 @@ npm run lint     # tsc --noEmit only
   properties, values sourced verbatim from the design handoff). Mobile-first — the app shell
   is width-constrained to a phone column even in a desktop browser (see `#root` in
   `src/styles/global.css`), since this is a phone-app UI, not a responsive marketing site.
+- **Two-stage job flow**: capturing a photo only *identifies* the dish — the backend
+  auto-saves it to the cookbook at status `Identified` with no recipe. `JobScreen` then shows a
+  **Reverse engineer** button, and only that generates the ingredients and method (status
+  `Generating` → `Completed`). Recipe generation is the most expensive call in the pipeline, so
+  it's opt-in per dish; see `docs/decisions.md`. Both stages share the same full-screen
+  `ProcessingOrb` loading view.
 - **Real-time seam**: `src/lib/jobs/useJobPolling.ts` polls `GET /api/jobs/{jobId}` today.
   This is the seam Phase 3 swaps for a SignalR/Web PubSub subscription — consumers
-  (`JobScreen`) don't need to change when that happens.
+  (`JobScreen`) don't need to change when that happens. It stops polling on terminal statuses
+  (including `Identified`) and exposes `refetch()`, which `JobScreen` calls after pressing
+  Reverse engineer to resume polling once the job is back in flight.
 - **Camera**: `src/lib/camera/useCamera.ts` uses `getUserMedia` for a live in-app viewfinder
   (per the Capture design), not an OS-camera handoff via `<input capture>`.
 - **Cookbook filter chips**: only "All" is functionally wired — the other chips

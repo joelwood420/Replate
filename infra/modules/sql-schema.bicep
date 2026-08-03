@@ -141,6 +141,15 @@ resource applySchema 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
         END
         ELSE
           PRINT 'All 10 tables present.';
+
+        -- Additive columns need checking separately: the CREATE TABLE statements are
+        -- guarded on the table not existing, so a column added to a table body would be
+        -- a silent no-op here. A missing VisionGuessJson only surfaces as a stage-2
+        -- failure at runtime, which is far more expensive to diagnose than failing now.
+        IF COL_LENGTH('dbo.JobResults', 'VisionGuessJson') IS NULL
+          RAISERROR('JobResults.VisionGuessJson is missing after schema apply', 16, 1);
+        ELSE
+          PRINT 'Additive columns present.';
       "
 
       echo "Schema applied successfully."

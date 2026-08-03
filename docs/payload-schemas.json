@@ -5,7 +5,20 @@
   "$defs": {
     "JobStatus": {
       "type": "string",
-      "enum": ["Queued", "Processing", "Completed", "Failed"]
+      "enum": ["Queued", "Processing", "Identified", "Generating", "Completed", "Failed"],
+      "description": "The pipeline runs in two stages. Queued/Processing = stage 1 (identify restaurant, fetch menu, vision guess, menu match). Identified = stage 1 done: the dish is auto-saved to the cookbook with a match and confidence outcome, but has no recipe - a terminal state until the user asks for one. Generating = stage 2 (recipe generation) running after POST /jobs/{jobId}/reverse-engineer. Completed = recipe available. Failed means stage 1 failed; a stage-2 failure reverts to Identified instead."
+    },
+    "RestaurantCandidate": {
+      "type": "object",
+      "properties": {
+        "place_id": { "type": "string", "description": "Google Places place_id, used as Restaurants.RestaurantId." },
+        "name": { "type": "string" },
+        "address": { "type": ["string", "null"] },
+        "latitude": { "type": "number", "minimum": -90, "maximum": 90 },
+        "longitude": { "type": "number", "minimum": -180, "maximum": 180 }
+      },
+      "required": ["place_id", "name", "latitude", "longitude"],
+      "additionalProperties": false
     },
     "MatchMethod": {
       "type": "string",
@@ -106,13 +119,26 @@
       "auth": "X-Debug-User-Oid header required",
       "request": {
         "body": {
-          "type": "object",
-          "properties": {
-            "latitude": { "type": "number", "minimum": -90, "maximum": 90 },
-            "longitude": { "type": "number", "minimum": -180, "maximum": 180 }
-          },
-          "required": ["latitude", "longitude"],
-          "additionalProperties": false
+          "description": "Exactly one of the two location sources - GPS coordinates (device location for a live capture, or the photo's EXIF for an upload), or a manually-selected restaurant when an uploaded photo has no EXIF GPS. Supplying both, or neither, is a 400.",
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "latitude": { "type": "number", "minimum": -90, "maximum": 90 },
+                "longitude": { "type": "number", "minimum": -180, "maximum": 180 }
+              },
+              "required": ["latitude", "longitude"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "selected_restaurant": { "$ref": "#/$defs/RestaurantCandidate" }
+              },
+              "required": ["selected_restaurant"],
+              "additionalProperties": false
+            }
+          ]
         }
       },
       "response": {
@@ -151,11 +177,11 @@
             "created_at": { "type": ["string", "null"], "format": "date-time" },
             "error_message": {
               "type": "string",
-              "description": "Present only when status is \"Failed\"."
+              "description": "Present whenever the job has one. On a \"Failed\" job, why stage 1 failed. On an \"Identified\" job, why a previous reverse-engineer attempt failed - the action stays retryable."
             },
             "result": {
               "allOf": [{ "$ref": "#/$defs/JobResult" }],
-              "description": "Present only when status is \"Completed\"."
+              "description": "Present from \"Identified\" onward, not only when \"Completed\" - the matched dish, restaurant and confidence badge are available before any recipe exists. \"elements\" is an empty array until stage 2 has run."
             }
           },
           "required": ["job_id", "status", "image_url", "is_saved", "created_at"],
@@ -182,8 +208,31 @@
       }
     },
 
+    "POST /jobs/{jobId}/reverse-engineer": {
+      "auth": "X-Debug-User-Oid header required; must match the job's owner",
+      "description": "Starts stage 2 - generating the per-element ingredients and method. Only runs on explicit request because it is the heaviest and most expensive call in the pipeline. No request body.",
+      "response": {
+        "202": {
+          "type": "object",
+          "properties": {
+            "job_id": { "type": "string", "format": "uuid" },
+            "status": { "type": "string", "const": "Generating" }
+          },
+          "required": ["job_id", "status"],
+          "additionalProperties": false
+        },
+        "403": { "$ref": "#/$defs/ErrorResponse" },
+        "404": { "$ref": "#/$defs/ErrorResponse" },
+        "409": {
+          "allOf": [{ "$ref": "#/$defs/ErrorResponse" }],
+          "description": "The job is not in the \"Identified\" state - covers stage 1 not finished, generation already in flight, and a recipe already generated. Also returned for jobs created before the pipeline was split, which have no stored vision analysis."
+        }
+      }
+    },
+
     "PATCH /jobs/{jobId}/save": {
       "auth": "X-Debug-User-Oid header required; must match the job's owner",
+      "description": "Sets saved state. Jobs are auto-saved into the cookbook when stage 1 completes, so this is now mainly how a dish is removed.",
       "request": {
         "body": {
           "type": "object",
@@ -206,6 +255,36 @@
         },
         "403": { "$ref": "#/$defs/ErrorResponse" },
         "404": { "$ref": "#/$defs/ErrorResponse" }
+      }
+    },
+
+    "GET /restaurants/search": {
+      "auth": "X-Debug-User-Oid header required",
+      "description": "Restaurant name typeahead backing the manual-selection flow, used when an uploaded photo has no EXIF GPS. Proxies Google Places Text Search server-side so the client never holds the Places API key. A place_id returned here is what goes into POST /jobs's selected_restaurant.",
+      "request": {
+        "query": {
+          "query": { "type": "string", "minLength": 1, "description": "Required. Blank or whitespace-only is a 400." },
+          "latitude": { "type": "number", "minimum": -90, "maximum": 90, "description": "Optional. Only biases result ranking - not a hard filter, and never becomes the job's location. Applied only when longitude is also supplied." },
+          "longitude": { "type": "number", "minimum": -180, "maximum": 180, "description": "Optional. See latitude." }
+        }
+      },
+      "response": {
+        "200": {
+          "type": "object",
+          "properties": {
+            "restaurants": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/RestaurantCandidate" }
+            }
+          },
+          "required": ["restaurants"],
+          "additionalProperties": false
+        },
+        "400": { "$ref": "#/$defs/ErrorResponse" },
+        "502": {
+          "allOf": [{ "$ref": "#/$defs/ErrorResponse" }],
+          "description": "The Places API was unreachable or returned an error status."
+        }
       }
     }
   }

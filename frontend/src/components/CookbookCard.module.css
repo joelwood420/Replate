@@ -54,6 +54,20 @@
   padding: 0;
 }
 
+/* Marks a dish that's identified but not yet reverse-engineered. */
+.pendingBadge {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-heart-badge-bg);
+  color: var(--color-muted-light);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .name {
   font-size: 13px;
   font-weight: 600;

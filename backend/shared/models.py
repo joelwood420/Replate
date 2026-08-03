@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import struct
-from dataclasses import dataclass, field
 
 EMBEDDING_DIM = 1536
 
@@ -14,43 +13,29 @@ class MatchMethod:
 
 
 class JobStatus:
+    """Job lifecycle states.
+
+    The pipeline runs in two stages. Stage 1 (identify the restaurant, fetch its
+    menu, guess the dish, match the guess against the menu) runs automatically on
+    upload and ends at IDENTIFIED - the dish is in the user's cookbook, but has no
+    recipe yet. Stage 2 (recipe generation) only runs when the user asks for it,
+    passing through GENERATING to COMPLETED.
+
+    FAILED means stage 1 failed. A stage-2 failure reverts to IDENTIFIED with an
+    error message instead, so a transient generator error never discards a good
+    menu match - see activities/persist_job_result.mark_recipe_failed.
+
+    Values are stored in Jobs.Status, an unconstrained NVARCHAR(20) - so they must
+    stay under 20 characters, and must be mirrored in frontend/src/lib/apiClient.ts
+    and docs/payload-schemas.json.
+    """
+
     QUEUED = "Queued"
     PROCESSING = "Processing"
+    IDENTIFIED = "Identified"
+    GENERATING = "Generating"
     COMPLETED = "Completed"
     FAILED = "Failed"
-
-
-@dataclass
-class DishElementGuess:
-    name: str
-    description: str
-    confidence: float
-
-
-@dataclass
-class VisionGuess:
-    dish_name_guess: str
-    cuisine_guess: str
-    elements: list[DishElementGuess] = field(default_factory=list)
-
-
-@dataclass
-class RestaurantCandidate:
-    restaurant_id: str
-    name: str
-    address: str
-    latitude: float
-    longitude: float
-    distance_m: int
-    menu_source_url: str
-
-
-@dataclass
-class MenuItem:
-    menu_item_id: str
-    item_name: str
-    item_description: str
-    price: str | None = None
 
 
 def pseudo_embedding(text: str, dim: int = EMBEDDING_DIM) -> list[float]:

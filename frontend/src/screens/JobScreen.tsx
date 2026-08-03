@@ -7,7 +7,7 @@ import { MethodStep } from '../components/MethodStep';
 import { PillButton } from '../components/PillButton';
 import { ProcessingOrb } from '../components/ProcessingOrb';
 import { RecipeHero } from '../components/RecipeHero';
-import { setJobSaved } from '../lib/apiClient';
+import { reverseEngineerJob, setJobSaved } from '../lib/apiClient';
 import { useAuth } from '../lib/auth/useAuth';
 import { formatQuantity, timeAgo } from '../lib/format';
 import { useJobPolling } from '../lib/jobs/useJobPolling';
@@ -25,9 +25,11 @@ export function JobScreen() {
   const { jobId } = useParams<{ jobId: string }>();
   const navigate = useNavigate();
   const { authHeaders } = useAuth();
-  const { job, error, isLoading } = useJobPolling(jobId);
+  const { job, error, isLoading, refetch } = useJobPolling(jobId);
   const [isSaved, setIsSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isStartingRecipe, setIsStartingRecipe] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
 
   useEffect(() => {
     if (job) setIsSaved(job.is_saved);
@@ -45,8 +47,24 @@ export function JobScreen() {
     }
   }
 
+  async function handleReverseEngineer() {
+    if (!jobId || isStartingRecipe) return;
+    setIsStartingRecipe(true);
+    setStartError(null);
+    try {
+      await reverseEngineerJob(jobId, authHeaders);
+      // The job has moved from the terminal Identified state back into flight, so
+      // polling has to be restarted to see it reach Completed.
+      refetch();
+    } catch (err) {
+      setStartError(err instanceof Error ? err.message : 'Could not start reverse engineering.');
+    } finally {
+      setIsStartingRecipe(false);
+    }
+  }
+
   if (error) {
-    return <ErrorState message={error} onRetry={() => window.location.reload()} />;
+    return <ErrorState message={error} onRetry={refetch} />;
   }
 
   if (isLoading || !job) {
@@ -57,7 +75,9 @@ export function JobScreen() {
     return <ErrorState message={job.error_message ?? 'This scan failed. Try another photo.'} />;
   }
 
-  if (job.status === 'Queued' || job.status === 'Processing') {
+  // Stage 1 (identifying the dish) and stage 2 (generating the recipe) share the same
+  // full-screen loading experience.
+  if (job.status === 'Queued' || job.status === 'Processing' || job.status === 'Generating') {
     return <ProcessingShell />;
   }
 
@@ -66,8 +86,11 @@ export function JobScreen() {
     return <ErrorState message="This dish finished processing but no result was found." />;
   }
 
-  const mode: 'new' | 'cookbook' = isSaved ? 'cookbook' : 'new';
+  const awaitingRecipe = job.status === 'Identified';
   const restaurantMeta = `${result.restaurant_name ?? 'Unknown restaurant'} · identified ${timeAgo(job.created_at)}`;
+  // A failed generation reverts the job to Identified and records why, so the error
+  // shows inline next to a button the user can press again.
+  const recipeError = startError ?? (awaitingRecipe ? job.error_message : undefined);
 
   return (
     <div className={styles.screen}>
@@ -77,52 +100,65 @@ export function JobScreen() {
           dishName={result.dish_name ?? 'Your dish'}
           restaurantMeta={restaurantMeta}
           matchMethod={result.match_method}
-          mode={mode}
+          mode="cookbook"
           isSaved={isSaved}
           onBack={() => navigate(-1)}
           onToggleSaved={handleToggleSaved}
         />
 
-        <div className={styles.section}>
-          <div className={styles.sectionLabel}>The Components</div>
-          <div className={styles.componentsGrid}>
-            {result.elements.map((element) => (
-              <ComponentCard key={element.name} role={element.role} name={element.name} />
-            ))}
+        {awaitingRecipe ? (
+          <div className={styles.reverseEngineerPrompt}>
+            <div className={styles.promptTitle}>Saved to your cookbook</div>
+            <p className={styles.promptBody}>
+              We know what this dish is. Reverse engineer it to get the ingredients and
+              method for every component.
+            </p>
+            {recipeError && <div className={styles.promptError}>{recipeError}</div>}
           </div>
-        </div>
+        ) : (
+          <>
+            <div className={styles.section}>
+              <div className={styles.sectionLabel}>The Components</div>
+              <div className={styles.componentsGrid}>
+                {result.elements.map((element) => (
+                  <ComponentCard key={element.name} role={element.role} name={element.name} />
+                ))}
+              </div>
+            </div>
 
-        <div className={styles.section}>
-          <div className={styles.sectionLabel}>Ingredients</div>
-          <div className={styles.ingredientsList}>
-            {result.elements.flatMap((element) =>
-              element.ingredients.map((ingredient, index) => (
-                <IngredientRow
-                  key={`${element.name}-${index}`}
-                  name={ingredient.ingredient_name}
-                  qty={formatQuantity(ingredient.amount, ingredient.unit)}
-                />
-              )),
-            )}
-          </div>
-        </div>
+            <div className={styles.section}>
+              <div className={styles.sectionLabel}>Ingredients</div>
+              <div className={styles.ingredientsList}>
+                {result.elements.flatMap((element) =>
+                  element.ingredients.map((ingredient, index) => (
+                    <IngredientRow
+                      key={`${element.name}-${index}`}
+                      name={ingredient.ingredient_name}
+                      qty={formatQuantity(ingredient.amount, ingredient.unit)}
+                    />
+                  )),
+                )}
+              </div>
+            </div>
 
-        <div className={styles.section}>
-          <div className={styles.sectionLabel}>Method</div>
-          <div className={styles.stepsList}>
-            {result.elements.flatMap((element) =>
-              element.steps.map((step) => (
-                <MethodStep key={`${element.name}-${step.step_number}`} number={step.step_number} text={step.instruction} />
-              )),
-            )}
-          </div>
-        </div>
+            <div className={styles.section}>
+              <div className={styles.sectionLabel}>Method</div>
+              <div className={styles.stepsList}>
+                {result.elements.flatMap((element) =>
+                  element.steps.map((step) => (
+                    <MethodStep key={`${element.name}-${step.step_number}`} number={step.step_number} text={step.instruction} />
+                  )),
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
-      {mode === 'new' && (
+      {awaitingRecipe && (
         <div className={styles.footer}>
-          <PillButton variant="footer" onClick={handleToggleSaved} disabled={isSaving}>
-            + Add to My Cookbook
+          <PillButton variant="footer" onClick={handleReverseEngineer} disabled={isStartingRecipe}>
+            {isStartingRecipe ? 'Starting…' : 'Reverse engineer this dish'}
           </PillButton>
         </div>
       )}
