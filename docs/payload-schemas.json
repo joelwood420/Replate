@@ -33,6 +33,16 @@
       "required": ["error"],
       "additionalProperties": false
     },
+    "RateLimitedResponse": {
+      "type": "object",
+      "description": "429 body. Sent with a Retry-After header carrying the same number of seconds. Scanning and recipe generation have separate quotas - see docs/api.md.",
+      "properties": {
+        "error": { "type": "string" },
+        "retry_after_seconds": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["error", "retry_after_seconds"],
+      "additionalProperties": false
+    },
     "Ingredient": {
       "type": "object",
       "properties": {
@@ -117,6 +127,7 @@
 
     "POST /jobs": {
       "auth": "X-Debug-User-Oid header required",
+      "description": "Reserves an upload slot and creates the job row. Does NOT start the pipeline - POST /jobs/{jobId}/uploaded does, once the photo is actually in Blob Storage.",
       "request": {
         "body": {
           "description": "Exactly one of the two location sources - GPS coordinates (device location for a live capture, or the photo's EXIF for an upload), or a manually-selected restaurant when an uploaded photo has no EXIF GPS. Supplying both, or neither, is a 400.",
@@ -156,7 +167,30 @@
           "required": ["job_id", "upload_url", "blob_url"],
           "additionalProperties": false
         },
-        "400": { "$ref": "#/$defs/ErrorResponse" }
+        "400": { "$ref": "#/$defs/ErrorResponse" },
+        "429": { "$ref": "#/$defs/RateLimitedResponse" }
+      }
+    },
+
+    "POST /jobs/{jobId}/uploaded": {
+      "auth": "X-Debug-User-Oid header required; must match the job's owner",
+      "description": "Signals that the PUT to upload_url finished, which is what starts stage 1. POST /jobs cannot do this itself: the client only uploads after that call returns the SAS URL, so enqueuing there raced the upload and the orchestrator could read the blob before it existed. No request body.",
+      "response": {
+        "202": {
+          "type": "object",
+          "properties": {
+            "job_id": { "type": "string", "format": "uuid" },
+            "status": { "type": "string", "const": "Queued" }
+          },
+          "required": ["job_id", "status"],
+          "additionalProperties": false
+        },
+        "403": { "$ref": "#/$defs/ErrorResponse" },
+        "404": { "$ref": "#/$defs/ErrorResponse" },
+        "409": {
+          "allOf": [{ "$ref": "#/$defs/ErrorResponse" }],
+          "description": "The job is past \"Queued\" - its photo was already submitted. Makes the call safe to retry."
+        }
       }
     },
 
@@ -226,6 +260,10 @@
         "409": {
           "allOf": [{ "$ref": "#/$defs/ErrorResponse" }],
           "description": "The job is not in the \"Identified\" state - covers stage 1 not finished, generation already in flight, and a recipe already generated. Also returned for jobs created before the pipeline was split, which have no stored vision analysis."
+        },
+        "429": {
+          "allOf": [{ "$ref": "#/$defs/RateLimitedResponse" }],
+          "description": "The caller's recipe-generation quota is spent. The job stays \"Identified\" so it can be retried once the window reopens."
         }
       }
     },

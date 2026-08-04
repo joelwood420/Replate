@@ -14,7 +14,7 @@ import json
 import azure.durable_functions as df
 import azure.functions as func
 
-from shared import db
+from shared import db, rate_limit
 from shared.auth import get_user_oid
 from shared.models import JobStatus
 
@@ -89,6 +89,18 @@ def build_recipe_input(job_id: str, user_oid: str) -> dict:
                 "body": {"error": "This dish is missing its vision analysis and cannot be reverse engineered"},
             }
 
+        # Last, after every rejection above: a request that was never going to
+        # generate anything should not spend the user's generation quota. This is
+        # the heaviest call in the pipeline, hence its own quota separate from
+        # scanning - see shared/rate_limit.py.
+        quota = rate_limit.check_and_consume(user_oid, rate_limit.Action.RECIPE, conn)
+        if not quota["allowed"]:
+            return {
+                "status_code": 429,
+                "body": {"error": quota["error"], "retry_after_seconds": quota["retry_after_seconds"]},
+                "headers": {"Retry-After": str(quota["retry_after_seconds"])},
+            }
+
         _mark_generating(job_id, conn)
 
     return {
@@ -117,5 +129,8 @@ async def handle_request(job_id: str, user_oid: str, client) -> dict:
 async def recipe_starter_http(req: func.HttpRequest, client) -> func.HttpResponse:
     outcome = await handle_request(req.route_params.get("jobId"), get_user_oid(req), client)
     return func.HttpResponse(
-        json.dumps(outcome["body"]), status_code=outcome["status_code"], mimetype="application/json"
+        json.dumps(outcome["body"]),
+        status_code=outcome["status_code"],
+        mimetype="application/json",
+        headers=outcome.get("headers"),
     )

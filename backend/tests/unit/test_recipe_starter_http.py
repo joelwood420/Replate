@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import json
 from unittest.mock import MagicMock
 
@@ -132,6 +133,49 @@ def test_handle_request_starts_orchestration_on_a_distinct_instance_id(monkeypat
     # Stage 1 already used the bare job id, so reusing it would collide.
     assert started["instance_id"] == "job-1:recipe"
     assert outcome == {"status_code": 202, "body": {"job_id": "job-1", "status": JobStatus.GENERATING}}
+
+
+def _spend_recipe_quota(conn, call_count):
+    """Make the rate limiter see `call_count` generations already used this hour."""
+    bucket = datetime.datetime.now(datetime.timezone.utc).replace(
+        tzinfo=None, minute=0, second=0, microsecond=0
+    )
+    conn.cursor.return_value.fetchall.return_value = [MagicMock(WindowStart=bucket, CallCount=call_count)]
+
+
+def test_returns_429_when_the_generation_quota_is_spent(monkeypatch):
+    monkeypatch.setenv("RECIPE_RATE_LIMIT_PER_HOUR", "2")
+    conn = _patch_conn(monkeypatch, _row())
+    _spend_recipe_quota(conn, 2)
+
+    outcome = starter.build_recipe_input("job-1", _OWNER)
+
+    assert outcome["status_code"] == 429
+    assert "2 recipe generations" in outcome["body"]["error"]
+    assert outcome["headers"]["Retry-After"] == str(outcome["body"]["retry_after_seconds"])
+    # The job must stay Identified so the user can retry once the window reopens.
+    assert not [c for c in conn.cursor().execute.call_args_list if "UPDATE Jobs" in c.args[0]]
+
+
+def test_a_rejected_request_does_not_spend_the_quota(monkeypatch):
+    """404/403/409 all come before the quota check - being told 'no' should not
+    cost the user one of their generations."""
+    monkeypatch.setenv("RECIPE_RATE_LIMIT_PER_HOUR", "2")
+    conn = _patch_conn(monkeypatch, _row(status=JobStatus.COMPLETED))
+
+    assert starter.build_recipe_input("job-1", _OWNER)["status_code"] == 409
+    assert not [c for c in conn.cursor().execute.call_args_list if "RateLimitCounters" in c.args[0]]
+
+
+def test_a_successful_start_consumes_one_generation(monkeypatch):
+    conn = _patch_conn(monkeypatch, _row())
+    _spend_recipe_quota(conn, 0)
+
+    outcome = starter.build_recipe_input("job-1", _OWNER)
+
+    assert "orchestration_input" in outcome
+    merges = [c for c in conn.cursor().execute.call_args_list if c.args[0].startswith("MERGE RateLimitCounters")]
+    assert len(merges) == 1
 
 
 def test_handle_request_does_not_start_orchestration_when_validation_fails(monkeypatch):

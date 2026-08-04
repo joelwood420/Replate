@@ -226,6 +226,23 @@ Then check the portal's **Key Vault references** blade under the Function App's
 Configuration — every entry should show `Resolved`, not `Failed`. Allow ~5 minutes after
 deployment for role propagation.
 
+### 5. Confirm image moderation is actually running
+
+This one fails **silently**. `shared/content_safety.py` fails open on any error it cannot
+attribute to the image itself — a wrong endpoint, an unresolved `CONTENT_SAFETY_KEY`
+reference or an exhausted F0 allowance all come back as `unchecked` and the photo goes
+through. Nothing looks broken; moderation has just stopped happening.
+
+There is no way to tell from the app's behaviour, so check the logs:
+
+```bash
+az webapp log tail --name <functionAppName> --resource-group rg-replate-prod \
+  | grep -i "content safety"
+```
+
+A healthy deploy logs nothing here. Any `Content Safety check did not complete` line names
+the real cause. Scan one photo after deploying and confirm the log stays quiet.
+
 ---
 
 ## Deploy the applications

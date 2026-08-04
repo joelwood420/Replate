@@ -42,17 +42,35 @@ def generate_upload_sas_url(blob_name: str | None = None) -> dict:
     }
 
 
+def _blob_name_from_url(blob_url: str) -> str:
+    container = config.blob_container_uploads()
+    prefix = f"/{container}/"
+    path = urlparse(blob_url).path
+    if prefix not in path:
+        raise ValueError(f"blob_url {blob_url!r} does not reference the {container!r} container")
+    return path.split(prefix, 1)[1]
+
+
+def blob_exists(blob_url: str) -> bool:
+    """Whether the client has actually uploaded to a blob URL we handed out.
+
+    generate_upload_sas_url only reserves a name - the blob itself does not exist
+    until the client PUTs to it, and it may never do so if the upload fails or the
+    app is closed mid-upload.
+    """
+    blob_client = _service_client().get_blob_client(
+        container=config.blob_container_uploads(), blob=_blob_name_from_url(blob_url)
+    )
+    return blob_client.exists()
+
+
 def generate_read_sas_url(blob_url: str) -> str:
     """Mint a short-lived read-only SAS URL for a blob previously returned by
     generate_upload_sas_url. The upload SAS is write-only, so a stored
     ImageBlobUrl is not itself browser-readable without this.
     """
     container = config.blob_container_uploads()
-    prefix = f"/{container}/"
-    path = urlparse(blob_url).path
-    if prefix not in path:
-        raise ValueError(f"blob_url {blob_url!r} does not reference the {container!r} container")
-    blob_name = path.split(prefix, 1)[1]
+    blob_name = _blob_name_from_url(blob_url)
 
     service_client = _service_client()
     account_name = service_client.account_name

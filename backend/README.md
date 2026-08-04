@@ -187,7 +187,9 @@ pytest -m integration   # integration tests - requires Azurite + SQL Server runn
 | `ANTHROPIC_API_KEY`, `MENU_FETCH_MODEL`, `MENU_FETCH_TIMEOUT_SECONDS`, `MENU_FETCH_MAX_RETRIES` | Real — powers `fetch_restaurant_menu`'s Claude + web-search call. `MENU_FETCH_MODEL` defaults to `claude-sonnet-5`, not the API-wide default, per this project's cost-discipline rule for a repeated, cache-gated extraction task — see `docs/decisions.md` |
 | `CLAUDE_BASE_URL`, `VISION_MODEL_DEPLOYMENT` | **Phase 3** — Microsoft Foundry endpoint and Claude deployment name. Set by `infra/`; not read by any code yet. Note that on Foundry the `model` parameter must be a *deployment name*, not a model id |
 | `AZURE_OPENAI_ENDPOINT`, `EMBEDDING_DEPLOYMENT_NAME` | **Phase 3** — Azure OpenAI `text-embedding-3-small` (1536-dim, matching `CulinaryEmbeddings`). Set by `infra/`; not read by any code yet |
-| `CONTENT_SAFETY_ENDPOINT`, `CONTENT_SAFETY_KEY` | **Phase 3** — image moderation. Set by `infra/`; not read by any code yet |
+| `RATE_LIMIT_ENABLED`, `SCAN_RATE_LIMIT_PER_HOUR/DAY`, `RECIPE_RATE_LIMIT_PER_HOUR/DAY` | Per-user quotas (`shared/rate_limit.py`). Scans and recipe generations are counted separately. Defaults 10/30 and 5/15; set `RATE_LIMIT_ENABLED=false` to switch quotas off locally |
+| `CONTENT_SAFETY_ENDPOINT`, `CONTENT_SAFETY_KEY` | Image moderation, set by `infra/`. **Leave blank locally** — with no account configured `shared/content_safety.py` reports every image as `unchecked` and lets it through, which is what keeps local dev working. It could not work locally anyway: the service fetches the image by URL, and Azurite's `127.0.0.1` endpoint isn't reachable from Azure |
+| `CONTENT_SAFETY_REJECT_SEVERITY`, `CONTENT_SAFETY_TIMEOUT_SECONDS`, `CONTENT_SAFETY_MAX_RETRIES` | Moderation tunables. Severities are 0/2/4/6; the default rejects at 4 ("medium") so plausible food photos reading low on a category aren't failed |
 | `ENTRA_TENANT_ID`, `ENTRA_API_CLIENT_ID`, `ENTRA_AUTHORITY_URL`, `ENTRA_JWKS_URI` | **Phase 3 placeholders** — names only, not read by any Phase 1 code. `ENTRA_API_CLIENT_ID` is the **API** app registration (the token audience), *not* the SPA client ID the frontend uses as `VITE_ENTRA_CLIENT_ID` |
 | `YELP_API_KEY` | Unused placeholder for a possible Yelp Fusion fallback |
 
@@ -195,10 +197,13 @@ pytest -m integration   # integration tests - requires Azurite + SQL Server runn
 
 The pipeline is split across **two separately-triggered Durable orchestrations**:
 
-**Stage 1 — `orchestrators/dish_orchestrator.py`**, started automatically by the queue message
-from `POST /api/jobs`. Models a dependency chain, not flat fan-out: vision analysis runs
-concurrently with the geocode→menu-fetch chain, then both join at the menu-matching fan-in
-step. A job either arrives with GPS coordinates (device or photo EXIF) or with a
+**Stage 1 — `orchestrators/dish_orchestrator.py`**, started by the queue message from
+`POST /api/jobs/{jobId}/uploaded` — *not* from `POST /api/jobs`, which cannot enqueue
+anything because the client only uploads the photo after that call returns the SAS URL.
+It opens with `moderate_image` on its own, ahead of everything else, so a rejected photo
+costs one Content Safety call and no AI spend. After that it models a dependency chain, not
+flat fan-out: vision analysis runs concurrently with the geocode→menu-fetch chain, then both
+join at the menu-matching fan-in step. A job either arrives with GPS coordinates (device or photo EXIF) or with a
 manually-selected restaurant (`Jobs.SelectedRestaurantId`, set when an uploaded photo has no
 EXIF GPS); the orchestrator branches to `geocode_restaurant_candidates` or
 `select_restaurant_candidate` accordingly, but the two activities return an identical shape so

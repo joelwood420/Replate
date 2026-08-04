@@ -150,6 +150,19 @@ export async function uploadPhotoToBlob(uploadUrl: string, file: Blob): Promise<
   }
 }
 
+/**
+ * Tells the backend the photo has finished uploading, which is what actually starts
+ * the pipeline. `createJob` only reserves the upload slot: it cannot enqueue the job
+ * itself, because at that point the blob it names does not exist yet and the
+ * orchestrator would race the PUT above.
+ */
+export function markUploadComplete(
+  jobId: string,
+  authHeaders: AuthHeaders,
+): Promise<{ job_id: string; status: JobStatusValue }> {
+  return request(`/jobs/${jobId}/uploaded`, { method: 'POST' }, authHeaders);
+}
+
 export function getJob(jobId: string, authHeaders: AuthHeaders): Promise<JobDetail> {
   return request(`/jobs/${jobId}`, { method: 'GET' }, authHeaders);
 }

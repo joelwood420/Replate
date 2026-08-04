@@ -24,6 +24,22 @@ Thumbs.db
 local.settings.json
 backend/local.settings.json
 
+# Azure Functions build/publish artifacts
+# .python_packages/ is produced by a remote build; bin/ and obj/ by Core Tools;
+# the zip is what `func azure functionapp publish` packs up.
+.python_packages/
+backend/.python_packages/
+bin/
+obj/
+*.zip
+
+# Compiled Bicep output.
+# `az bicep build-params` RESOLVES readEnvironmentVariable(), writing the real
+# SQL admin password and API keys into the generated JSON - never commit it.
+# `az bicep build` output is harmless but still just a build artifact.
+infra/*.json
+infra/**/*.json
+
 # Local Azurite emulator data
 azurite/
 

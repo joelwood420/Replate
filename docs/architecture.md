@@ -37,7 +37,7 @@ flowchart TB
     end
 
     subgraph Data["Data"]
-        SQL["Azure SQL Database (free-offer tier)<br/>Jobs / Restaurants / MenuItems /<br/>JobResults / DishElements<br/>CulinaryEmbeddings (native VECTOR column)"]
+        SQL["Azure SQL Database (free-offer tier)<br/>Jobs / Restaurants / MenuItems /<br/>JobResults / DishElements<br/>CulinaryEmbeddings (native VECTOR column)<br/>RateLimitCounters (per-user quotas)"]
     end
 
     subgraph Security["Security"]
@@ -60,7 +60,7 @@ flowchart TB
 
     Browser -- "sign in (OIDC)" --> EntraID
     Browser -- "loads app" --> SWA
-    Browser -- "POST /api/jobs, GET /api/jobs/{id} (polled),<br/>POST /api/jobs/{id}/reverse-engineer<br/>— bearer token" --> FuncApp
+    Browser -- "POST /api/jobs, POST /api/jobs/{id}/uploaded,<br/>GET /api/jobs/{id} (polled),<br/>POST /api/jobs/{id}/reverse-engineer<br/>— bearer token" --> FuncApp
     Browser -- "PUT photo direct (write-only SAS)" --> StorageAcct
 
     FuncApp -- "validates token" --> EntraID
@@ -88,13 +88,17 @@ see `docs/decisions.md`.
 
 1. Browser signs in via Entra External ID (MSAL), loads the React app from Static Web Apps.
 2. `POST /api/jobs` (GPS or a manually-selected restaurant) → Function App creates a `Jobs`
-   row, returns a write-only SAS URL.
+   row, returns a write-only SAS URL, and charges the caller's scan quota. It deliberately
+   does **not** enqueue anything: the photo does not exist yet.
 3. Browser `PUT`s the photo directly to Blob Storage with that SAS URL — never through the
    Function App.
-4. A queue message starts `dish_orchestrator`: geocode (or select the chosen restaurant) →
-   menu fetch (cached per restaurant) runs alongside the vision-model guess, then both join at
-   the menu-match fan-in step (the anti-hallucination check). The orchestration **stops there**.
-5. `persist_match_result` writes the `JobResults` row — including the raw vision guess as JSON,
+4. `POST /api/jobs/{id}/uploaded` enqueues the job, now that there is an image to read.
+5. The queue message starts `dish_orchestrator`. First, and alone, `moderate_image` gates
+   everything below it, so a rejected photo costs one Content Safety call and no AI spend.
+   Then geocode (or select the chosen restaurant) → menu fetch (cached per restaurant) runs
+   alongside the vision-model guess, and both join at the menu-match fan-in step (the
+   anti-hallucination check). The orchestration **stops there**.
+6. `persist_match_result` writes the `JobResults` row — including the raw vision guess as JSON,
    which stage 2 needs as input — sets the job to `Identified` and marks it saved, putting the
    dish in the user's cookbook automatically. The client picks it up on its next poll of
    `GET /api/jobs/{id}`, which returns the matched dish and confidence badge with an empty
@@ -102,12 +106,13 @@ see `docs/decisions.md`.
 
 **Stage 2 — only when the user presses "Reverse engineer":**
 
-6. `POST /api/jobs/{id}/reverse-engineer` sets the job to `Generating` and starts
-   `recipe_orchestrator` on a separate instance id (`{job_id}:recipe`).
-7. A `VECTOR_DISTANCE` lookup against `CulinaryEmbeddings` grounds the structured recipe
+7. `POST /api/jobs/{id}/reverse-engineer` charges the caller's separate recipe quota, sets the
+   job to `Generating` and starts `recipe_orchestrator` on a separate instance id
+   (`{job_id}:recipe`).
+8. A `VECTOR_DISTANCE` lookup against `CulinaryEmbeddings` grounds the structured recipe
    generator, whose output is persisted as `DishElements`/`ElementIngredients`/`ElementSteps`
    and the job set to `Completed`.
-8. If generation fails the job reverts to `Identified` with an error message rather than
+9. If generation fails the job reverts to `Identified` with an error message rather than
    `Failed`, so a transient model error doesn't discard a good menu match.
 
 ## Resource free-tier notes (Global Rule 1 — re-verify before provisioning, pricing changes)

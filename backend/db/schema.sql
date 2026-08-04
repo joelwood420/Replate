@@ -123,6 +123,21 @@ CREATE TABLE CulinaryEmbeddings (
 );
 GO
 
+-- Per-user call quotas (shared/rate_limit.py), capping AI spend from any single
+-- user. One row per (user, action, hour): the hourly limit reads the current
+-- bucket and the daily limit sums the last 24, so both windows are derived from
+-- one bucket granularity rather than two counters that can drift out of step.
+-- Rows older than the daily window are deleted on the owning user's next call.
+IF OBJECT_ID(N'dbo.RateLimitCounters', N'U') IS NULL
+CREATE TABLE RateLimitCounters (
+    UserId       UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES Users(UserId),
+    Action       NVARCHAR(30) NOT NULL,
+    WindowStart  DATETIME2 NOT NULL,
+    CallCount    INT NOT NULL,
+    PRIMARY KEY (UserId, Action, WindowStart)
+);
+GO
+
 -- ---------------------------------------------------------------------------
 -- Additive column changes.
 --

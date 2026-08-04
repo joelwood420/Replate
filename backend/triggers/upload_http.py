@@ -1,9 +1,17 @@
+"""POST /api/jobs - reserve an upload slot and create the job row.
+
+Deliberately does NOT enqueue the job. The client only uploads the photo after this
+call returns the SAS URL, so enqueuing here raced the upload - the orchestrator could
+start, and try to read the blob, before the image existed. The client signals it has
+finished via POST /api/jobs/{jobId}/uploaded instead (triggers/job_uploaded_http.py).
+"""
+
 import json
 import uuid
 
 import azure.functions as func
 
-from shared import blob, db, queue, restaurants
+from shared import blob, db, rate_limit, restaurants
 from shared.auth import get_user_oid
 from shared.models import JobStatus
 
@@ -74,8 +82,6 @@ def _insert_job(
 
 
 def _create_job(user_oid: str, body: dict, blob_url: str, conn) -> str:
-    _ensure_user(user_oid, conn)
-
     if "selected_restaurant" in body:
         selected = body["selected_restaurant"]
         latitude = float(selected["latitude"])
@@ -95,16 +101,37 @@ def _create_job(user_oid: str, body: dict, blob_url: str, conn) -> str:
 def run(body: dict, user_oid: str) -> dict:
     error = validate_body(body)
     if error:
-        return {"error": error}
+        return {"status_code": 400, "body": {"error": error}}
 
+    # Minted before the quota check so the SAS call stays outside the transaction the
+    # rate limiter locks rows in. It costs nothing to throw away on a throttled
+    # request - a SAS token is generated locally from the account key, and the blob
+    # it names is never created unless the client uploads to it.
     upload_info = blob.generate_upload_sas_url()
 
     with db.get_connection() as conn:
+        # Before the quota check: RateLimitCounters.UserId is a foreign key to Users,
+        # so the row has to exist before a counter can reference it.
+        _ensure_user(user_oid, conn)
+
+        quota = rate_limit.check_and_consume(user_oid, rate_limit.Action.SCAN, conn)
+        if not quota["allowed"]:
+            return {
+                "status_code": 429,
+                "body": {"error": quota["error"], "retry_after_seconds": quota["retry_after_seconds"]},
+                "headers": {"Retry-After": str(quota["retry_after_seconds"])},
+            }
+
         job_id = _create_job(user_oid, body, upload_info["blob_url"], conn)
 
-    queue.send_job_message(job_id)
-
-    return {"job_id": job_id, "upload_url": upload_info["sas_url"], "blob_url": upload_info["blob_url"]}
+    return {
+        "status_code": 201,
+        "body": {
+            "job_id": job_id,
+            "upload_url": upload_info["sas_url"],
+            "blob_url": upload_info["blob_url"],
+        },
+    }
 
 
 @bp.route(route="jobs", methods=["POST"])
@@ -114,8 +141,11 @@ def upload_http(req: func.HttpRequest) -> func.HttpResponse:
     except ValueError:
         body = {}
 
-    result = run(body, get_user_oid(req))
+    outcome = run(body, get_user_oid(req))
 
-    if "error" in result:
-        return func.HttpResponse(json.dumps(result), status_code=400, mimetype="application/json")
-    return func.HttpResponse(json.dumps(result), status_code=201, mimetype="application/json")
+    return func.HttpResponse(
+        json.dumps(outcome["body"]),
+        status_code=outcome["status_code"],
+        mimetype="application/json",
+        headers=outcome.get("headers"),
+    )

@@ -139,6 +139,30 @@ param placesTimeoutSeconds string = '8'
 param menuFetchTimeoutSeconds string = '60'
 param menuFetchMaxRetries int = 2
 
+// --- Per-user quotas (shared/rate_limit.py) ----------------------------------------
+@description('Master switch for per-user quotas. Leave true in prod - this is the only cap on AI spend from a single user.')
+param rateLimitEnabled bool = true
+
+@description('Photo scans allowed per user per hour. Stage 1: vision + menu fetch.')
+param scanRateLimitPerHour int = 10
+
+@description('Photo scans allowed per user per day, over a sliding 24-hour window.')
+param scanRateLimitPerDay int = 30
+
+@description('Recipe generations allowed per user per hour. Counted separately from scans because stage 2 is the heaviest call in the pipeline.')
+param recipeRateLimitPerHour int = 5
+
+@description('Recipe generations allowed per user per day, over a sliding 24-hour window.')
+param recipeRateLimitPerDay int = 15
+
+@description('Content Safety severity at which an image is rejected. Image severities are 0/2/4/6; 4 ("medium") avoids failing plausible food photos that read low on a category.')
+@allowed([
+  2
+  4
+  6
+])
+param contentSafetyRejectSeverity int = 4
+
 @description('Origins allowed to call the Function App - the Static Web App URL. The SWA Free tier has no linked backends, so the SPA calls this host cross-origin.')
 param allowedCorsOrigins array
 
@@ -243,6 +267,13 @@ resource appSettings 'Microsoft.Web/sites/config@2025-03-01' = {
       MENU_MATCH_CONFIDENCE_THRESHOLD: menuMatchConfidenceThreshold
       VECTOR_SEARCH_TOP_K: string(vectorSearchTopK)
 
+      // --- Per-user quotas ---
+      RATE_LIMIT_ENABLED: string(rateLimitEnabled)
+      SCAN_RATE_LIMIT_PER_HOUR: string(scanRateLimitPerHour)
+      SCAN_RATE_LIMIT_PER_DAY: string(scanRateLimitPerDay)
+      RECIPE_RATE_LIMIT_PER_HOUR: string(recipeRateLimitPerHour)
+      RECIPE_RATE_LIMIT_PER_DAY: string(recipeRateLimitPerDay)
+
       // --- Google Places ---
       GOOGLE_PLACES_API_KEY: googlePlacesRef
       PLACES_TIMEOUT_SECONDS: placesTimeoutSeconds
@@ -261,8 +292,12 @@ resource appSettings 'Microsoft.Web/sites/config@2025-03-01' = {
       EMBEDDING_DEPLOYMENT_NAME: embeddingDeploymentName
 
       // --- Content moderation ---
+      // Both must resolve, or shared/content_safety.py reports every image as
+      // "unchecked" and lets it through - moderation silently stops happening.
+      // Check the Key Vault references blade after deploying.
       CONTENT_SAFETY_ENDPOINT: contentSafetyEndpoint
       CONTENT_SAFETY_KEY: contentSafetyRef
+      CONTENT_SAFETY_REJECT_SEVERITY: string(contentSafetyRejectSeverity)
 
       // --- Auth ---
       // STUB_AUTH_HEADER_NAME and STUB_DEFAULT_USER_OID are deliberately NOT set in prod.

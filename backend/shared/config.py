@@ -87,3 +87,46 @@ def menu_fetch_timeout_seconds() -> float:
 
 def menu_fetch_max_retries() -> int:
     return int(os.environ.get("MENU_FETCH_MAX_RETRIES", "2"))
+
+
+def rate_limit_enabled() -> bool:
+    return os.environ.get("RATE_LIMIT_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+
+
+def scan_rate_limit_per_hour() -> int:
+    return int(os.environ.get("SCAN_RATE_LIMIT_PER_HOUR", "10"))
+
+
+def scan_rate_limit_per_day() -> int:
+    return int(os.environ.get("SCAN_RATE_LIMIT_PER_DAY", "30"))
+
+
+def recipe_rate_limit_per_hour() -> int:
+    return int(os.environ.get("RECIPE_RATE_LIMIT_PER_HOUR", "5"))
+
+
+def recipe_rate_limit_per_day() -> int:
+    return int(os.environ.get("RECIPE_RATE_LIMIT_PER_DAY", "15"))
+
+
+def content_safety_endpoint() -> str:
+    # Optional, unlike the other service endpoints: blank means "no moderation
+    # configured", which shared/content_safety.py reports as unchecked rather than
+    # raising. Keeps local dev running without a Content Safety account.
+    return os.environ.get("CONTENT_SAFETY_ENDPOINT", "")
+
+
+def content_safety_key() -> str:
+    return os.environ.get("CONTENT_SAFETY_KEY", "")
+
+
+def content_safety_reject_severity() -> int:
+    return int(os.environ.get("CONTENT_SAFETY_REJECT_SEVERITY", "4"))
+
+
+def content_safety_timeout_seconds() -> float:
+    return float(os.environ.get("CONTENT_SAFETY_TIMEOUT_SECONDS", "10"))
+
+
+def content_safety_max_retries() -> int:
+    return int(os.environ.get("CONTENT_SAFETY_MAX_RETRIES", "2"))

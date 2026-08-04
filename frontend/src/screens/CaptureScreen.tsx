@@ -3,7 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { CaptureViewfinder } from '../components/CaptureViewfinder';
 import { ErrorState } from '../components/ErrorState';
 import { RestaurantSearchPanel } from '../components/RestaurantSearchPanel';
-import { createJob, uploadPhotoToBlob, type CreateJobInput, type SelectedRestaurant } from '../lib/apiClient';
+import {
+  createJob,
+  markUploadComplete,
+  uploadPhotoToBlob,
+  type CreateJobInput,
+  type SelectedRestaurant,
+} from '../lib/apiClient';
 import { useAuth } from '../lib/auth/useAuth';
 import { useCamera } from '../lib/camera/useCamera';
 import { useExifLocation, type ExifLocationState } from '../lib/camera/useExifLocation';
@@ -101,6 +107,8 @@ export function CaptureScreen() {
 
       const { job_id: jobId, upload_url: uploadUrl } = await createJob(input, authHeaders);
       await uploadPhotoToBlob(uploadUrl, photo);
+      // Only now is the photo actually there for the pipeline to read.
+      await markUploadComplete(jobId, authHeaders);
       navigate(`/jobs/${jobId}`);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Something went wrong. Try again.');

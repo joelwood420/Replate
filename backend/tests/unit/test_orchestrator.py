@@ -5,6 +5,8 @@ import pytest
 from orchestrators.dish_orchestrator import dish_orchestrator
 from shared.models import JobStatus
 
+_MODERATION_PASSED = {"allowed": True, "verdict": "safe", "categories": [], "reason": None}
+
 
 def _job_input(**overrides):
     base = {"job_id": "job-1", "image_blob_url": "https://example.com/photo.jpg", "latitude": 1.0, "longitude": 2.0}
@@ -16,14 +18,78 @@ def _call_names(context):
     return [c.args[0] for c in context.call_activity.call_args_list]
 
 
-def test_vision_task_created_before_first_yield():
+def _start(context):
+    """Advance the orchestrator past the moderation gate with a passing verdict.
+
+    Moderation is the first thing stage 1 does, so every test that exercises
+    anything else has to clear it first.
+    """
+    gen = dish_orchestrator(context)
+    next(gen)  # yields moderate_image
+    gen.send(_MODERATION_PASSED)  # yields the geocode/select task
+    return gen
+
+
+def test_moderation_runs_before_any_other_activity():
     context = MagicMock()
     context.get_input.return_value = _job_input()
 
     gen = dish_orchestrator(context)
     next(gen)
 
-    assert _call_names(context)[:2] == ["vision_guess", "geocode_restaurant_candidates"]
+    # Nothing else has been scheduled yet - the whole point is that a rejected
+    # photo costs one moderation call and no AI spend.
+    assert _call_names(context) == ["moderate_image"]
+    moderate_call = context.call_activity.call_args_list[0]
+    assert moderate_call.args[1] == {"image_blob_url": "https://example.com/photo.jpg"}
+
+
+def test_rejected_image_fails_the_job_and_skips_the_pipeline():
+    context = MagicMock()
+    context.get_input.return_value = _job_input()
+
+    gen = dish_orchestrator(context)
+    next(gen)
+    gen.send(
+        {
+            "allowed": False,
+            "verdict": "unsafe",
+            "categories": ["Violence"],
+            "reason": "This photo was rejected by image moderation (Violence).",
+        }
+    )  # yields mark_job_failed
+
+    with pytest.raises(StopIteration) as excinfo:
+        gen.send(None)
+    assert excinfo.value.value == {"job_id": "job-1", "status": JobStatus.FAILED}
+
+    assert _call_names(context) == ["moderate_image", "mark_job_failed"]
+    assert context.call_activity.call_args_list[-1].args[1] == {
+        "job_id": "job-1",
+        "error_message": "This photo was rejected by image moderation (Violence).",
+    }
+
+
+def test_unchecked_image_is_allowed_through():
+    """A Content Safety outage must not stop the pipeline - see shared/content_safety.py."""
+    context = MagicMock()
+    context.get_input.return_value = _job_input()
+
+    gen = dish_orchestrator(context)
+    next(gen)
+    gen.send({"allowed": True, "verdict": "unchecked", "categories": [], "reason": None})
+
+    assert "mark_job_failed" not in _call_names(context)
+    assert "vision_guess" in _call_names(context)
+
+
+def test_vision_task_created_before_first_yield():
+    context = MagicMock()
+    context.get_input.return_value = _job_input()
+
+    _start(context)
+
+    assert _call_names(context) == ["moderate_image", "vision_guess", "geocode_restaurant_candidates"]
 
 
 def test_happy_path_full_call_sequence():
@@ -31,9 +97,7 @@ def test_happy_path_full_call_sequence():
     context = MagicMock()
     context.get_input.return_value = _job_input()
 
-    gen = dish_orchestrator(context)
-
-    next(gen)  # yields geocode task
+    gen = _start(context)
     gen.send(
         [{"restaurant_id": "stub-1", "name": "Trattoria Roma", "address": "100 Sample Ave", "menu_source_url": "https://x"}]
     )  # yields task_all([vision, menu])
@@ -50,6 +114,7 @@ def test_happy_path_full_call_sequence():
     assert excinfo.value.value == {"job_id": "job-1", "status": JobStatus.IDENTIFIED}
 
     assert _call_names(context) == [
+        "moderate_image",
         "vision_guess",
         "geocode_restaurant_candidates",
         "fetch_restaurant_menu",
@@ -58,7 +123,7 @@ def test_happy_path_full_call_sequence():
     ]
     assert context.task_all.call_count == 1
 
-    menu_call = context.call_activity.call_args_list[2]
+    menu_call = context.call_activity.call_args_list[3]
     assert menu_call.args[0] == "fetch_restaurant_menu"
     assert menu_call.args[1] == {
         "restaurant_id": "stub-1",
@@ -82,8 +147,7 @@ def test_never_generates_a_recipe():
     context = MagicMock()
     context.get_input.return_value = _job_input()
 
-    gen = dish_orchestrator(context)
-    next(gen)
+    gen = _start(context)
     gen.send([{"restaurant_id": "stub-1", "name": "R", "address": "A", "menu_source_url": None}])
     gen.send([{"dish_name_guess": "Pizza", "elements": []}, {"items": []}])
     gen.send({"dish_name": "Pizza", "match_method": "menu_matched"})
@@ -100,8 +164,7 @@ def test_skips_fetch_menu_when_no_candidates_found():
     context = MagicMock()
     context.get_input.return_value = _job_input(latitude=0.0, longitude=0.0)
 
-    gen = dish_orchestrator(context)
-    next(gen)  # yields geocode task
+    gen = _start(context)
     gen.send([])  # candidates empty -> yields vision_task directly, no new call
 
     vision_guess_stub = {"dish_name_guess": "Pizza", "cuisine_guess": "Italian", "elements": []}
@@ -122,11 +185,10 @@ def test_selected_restaurant_routes_to_select_restaurant_candidate_activity():
     context = MagicMock()
     context.get_input.return_value = _job_input(selected_restaurant_id="place-1")
 
-    gen = dish_orchestrator(context)
-    next(gen)
+    _start(context)
 
-    assert _call_names(context)[:2] == ["vision_guess", "select_restaurant_candidate"]
-    select_call = context.call_activity.call_args_list[1]
+    assert _call_names(context) == ["moderate_image", "vision_guess", "select_restaurant_candidate"]
+    select_call = context.call_activity.call_args_list[-1]
     assert select_call.args[1] == {"job_id": "job-1", "restaurant_id": "place-1"}
 
 
@@ -134,8 +196,7 @@ def test_selected_restaurant_never_calls_geocode():
     context = MagicMock()
     context.get_input.return_value = _job_input(selected_restaurant_id="place-1")
 
-    gen = dish_orchestrator(context)
-    next(gen)
+    gen = _start(context)
     gen.send([{"restaurant_id": "place-1", "name": "Luigi's", "address": "123 Main St", "menu_source_url": None}])
 
     assert "geocode_restaurant_candidates" not in _call_names(context)
@@ -145,8 +206,7 @@ def test_exception_triggers_mark_job_failed_and_reraises():
     context = MagicMock()
     context.get_input.return_value = _job_input()
 
-    gen = dish_orchestrator(context)
-    next(gen)  # yields geocode task
+    gen = _start(context)
     gen.throw(RuntimeError("boom"))  # simulates geocode activity failure; yields mark_job_failed task
 
     with pytest.raises(RuntimeError, match="boom"):

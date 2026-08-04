@@ -6,6 +6,86 @@ reasoning first, then adds an entry here — newest first.
 
 ---
 
+## 2026-08-05 — Rate limiting: separate quotas per pipeline stage, not one shared cap
+
+**Decision:** Cap `POST /jobs` (scan) and `POST /jobs/{jobId}/reverse-engineer` (recipe
+generation) with independent per-user quotas — 10/hour and 30/day for scans, 5/hour and
+15/day for generations — counted in a new `RateLimitCounters` table rather than by counting
+`Jobs` rows.
+
+**Why:** The owner's description of the intended flow settled it: a photo is matched to the
+menu and saved to the cookbook automatically, but is only reverse-engineered when the user
+opens the cookbook and presses the button. Those are two different user actions with
+different cost and frequency profiles — scanning is casual and happens on every plate, while
+generation is deliberate and is the heaviest AI call in the app. One shared limit would have
+to be either too tight to scan freely or too loose to cap generation spend.
+
+**Context worth recording:**
+
+- CLAUDE.md Phase 3 step 5 says "rate limiting on the upload endpoint", which was written
+  before the pipeline was split into two stages. Following it literally would have left the
+  most expensive call in the app uncapped.
+- Counting `Jobs` rows would have avoided a new table, but only stage 1 inserts a job — there
+  is no row to count for a generation, and no way to distinguish the two actions.
+- Counters are bucketed by hour: the hourly limit reads the current bucket and the daily
+  limit sums the last 24, so both windows come from one bucket granularity and cannot drift
+  apart. The daily window slides at hour resolution rather than resetting at midnight.
+- A rejected request consumes nothing. Incrementing on rejection would let a client that
+  retries into a closed window push its own reset out indefinitely.
+
+---
+
+## 2026-08-05 — Image moderation fails closed on a verdict, open on an error
+
+**Decision:** An explicit "unsafe" verdict from Azure AI Content Safety fails the job. A
+service error, timeout, missing configuration or exhausted quota does **not** — it logs a
+warning and lets the scan continue.
+
+**Why:** "This image is unsafe" and "I could not check this image" are different answers and
+should not produce the same outcome. The Content Safety free tier rejects requests outright
+once its 5,000 images/month allowance is used, so treating a failed check as unsafe would
+take scanning offline for the rest of the calendar month on the busiest month of the year.
+
+**Context worth recording:**
+
+- Moderation runs as the first activity in stage 1, ahead of the vision call and the menu
+  fetch, so a rejected photo costs one moderation call and no AI spend at all.
+- A **missing** blob is deliberately outside the fail-open rule: it means the client never
+  finished uploading, not that the service was unavailable, and passing it downstream would
+  fail the vision call a step later with a much less obvious error.
+- The rejection threshold is severity 4 ("medium") of the 0/2/4/6 scale, configurable via
+  `CONTENT_SAFETY_REJECT_SEVERITY`. Rejecting at 2 ("low") risks failing plausible food
+  photos that read low on a category.
+- The failure mode is invisible by design, so it has to be watched: if the endpoint or key is
+  wrong, everything passes and nothing looks broken. Check the Key Vault references blade
+  after deploying.
+
+---
+
+## 2026-08-05 — Start the pipeline from an explicit upload-complete call
+
+**Decision:** `POST /jobs` no longer enqueues the job. A new `POST /jobs/{jobId}/uploaded`,
+called by the client after its blob `PUT` succeeds, is what starts stage 1.
+
+**Why:** The old sequence had a race: the queue message was sent while creating the job row,
+but the client can only upload the photo after that call returns the SAS URL, so the
+orchestrator could start — and open the blob — before the image existed. Nothing caught it
+because the vision step was still canned and never read the image. Image moderation reads it,
+and so will the real vision call, so the choice was to fix the sequencing or to have the
+first activity poll for the blob and pay for the wait on every scan.
+
+**Context worth recording:**
+
+- The owner chose the extra round trip over papering over the race, accepting a small
+  frontend change (`CaptureScreen.tsx`) in what was otherwise a backend-only task.
+- A side benefit: an abandoned upload now costs nothing. The job sits at `Queued` and no
+  orchestration is ever started.
+- The endpoint is idempotent by status — only a `Queued` job enqueues — and
+  `orchestrator_starter_queue` starts the orchestration with `instance_id=job_id`, so even a
+  duplicated message cannot double-process.
+
+---
+
 ## 2026-08-04 — Delete the unused payload dataclasses instead of adopting them
 
 **Decision:** Remove `DishElementGuess`, `VisionGuess`, `RestaurantCandidate` and `MenuItem`

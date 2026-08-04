@@ -10,7 +10,8 @@ Health check. No auth. Returns `pong`.
 
 ## `POST /jobs`
 
-Starts a new scan (stage 1).
+Reserves an upload slot and creates the job row. **This does not start the pipeline** —
+`POST /jobs/{jobId}/uploaded` does, once the photo is actually in Blob Storage.
 
 **Body:** exactly one of the two location sources —
 
@@ -35,6 +36,28 @@ Function App.
 
 **400** if `latitude`/`longitude` are missing or not numbers, if `selected_restaurant` is
 missing a required field, or if both location sources (or neither) are supplied.
+
+**429** if the caller's scan quota is spent — see [Rate limits](#rate-limits). No job row is
+created.
+
+## `POST /jobs/{jobId}/uploaded`
+
+Signals that the `PUT` to `upload_url` finished. **This is what starts stage 1.**
+
+It exists because `POST /jobs` cannot start the pipeline itself: the client only uploads the
+photo after that call returns the SAS URL, so enqueuing there raced the upload and the
+orchestrator could try to read the blob before it existed.
+
+No body.
+
+**202 response:** `{ "job_id": "...", "status": "Queued" }`
+
+**409** if the job is past `Queued` — its photo was already submitted. Makes the call safe to
+retry.
+
+**403/404** same ownership rules as `GET /jobs/{jobId}`.
+
+A job whose client never calls this simply stays `Queued` forever and costs nothing.
 
 ## `GET /jobs/{jobId}`
 
@@ -101,6 +124,9 @@ Returns as soon as the orchestration is queued. Poll `GET /jobs/{jobId}` to watc
 returned for jobs created before the pipeline was split, which have no stored vision
 analysis to generate from.
 
+**429** if the caller's recipe-generation quota is spent — see [Rate limits](#rate-limits).
+The job stays `Identified`, so it can be retried once the window reopens.
+
 **403/404** same ownership rules as `GET /jobs/{jobId}`.
 
 ## `GET /jobs`
@@ -142,25 +168,61 @@ A `place_id` from here is what goes into `POST /jobs`'s `selected_restaurant`.
 
 **400** if `query` is missing or blank. **502** if the Places API is unreachable.
 
+## Rate limits
+
+Per-user quotas cap AI spend from any single account. The two pipeline stages are counted
+**separately**, because scanning happens automatically on every photo while recipe generation
+is a deliberate button press and the most expensive call in the app.
+
+| Action | Endpoint | Default per hour | Default per day |
+|---|---|---|---|
+| `scan` | `POST /jobs` | 10 | 30 |
+| `recipe` | `POST /jobs/{jobId}/reverse-engineer` | 5 | 15 |
+
+Both defaults are app settings (`SCAN_RATE_LIMIT_PER_HOUR` and friends — see
+`backend/.env.example`), and `RATE_LIMIT_ENABLED=false` turns quotas off for local dev.
+
+A throttled call returns **429** with a `Retry-After` header and:
+
+```json
+{ "error": "You have used all 10 scans allowed per hour. Try again in 23 minutes.", "retry_after_seconds": 1380 }
+```
+
+The daily window slides at hour resolution rather than resetting at midnight, so capacity
+returns gradually. A rejected request consumes nothing — neither a 429 nor a 403/404/409 —
+so retrying into a closed window can't push the reset further out.
+
+## Image moderation
+
+Uploaded photos go through Azure AI Content Safety as the very first step of stage 1, before
+any AI call is made, so a rejected image costs one moderation call and nothing else. A
+rejected photo lands in `Failed` with an `error_message` naming the categories.
+
+If the check itself can't complete — service error, timeout, or the free tier's monthly
+allowance exhausted — the scan **proceeds** and a warning is logged. "This image is unsafe"
+and "I couldn't check this image" are treated as different answers on purpose; see
+`docs/decisions.md`.
+
 ## Typical flow
 
 Stage 1 — automatic, on upload:
 
 1. `POST /jobs` → get `job_id` + `upload_url`.
 2. `PUT` the photo to `upload_url`.
-3. Poll `GET /jobs/{jobId}` until `status` is `Identified` (or `Failed`). The job is now in
+3. `POST /jobs/{jobId}/uploaded` → the pipeline starts.
+4. Poll `GET /jobs/{jobId}` until `status` is `Identified` (or `Failed`). The job is now in
    the user's cookbook with `is_saved: true` — no save call needed.
 
 Stage 2 — only when the user asks for the recipe:
 
-4. `POST /jobs/{jobId}/reverse-engineer` → `202`, status becomes `Generating`.
-5. Resume polling `GET /jobs/{jobId}` until `Completed`, then read `result.elements`.
+5. `POST /jobs/{jobId}/reverse-engineer` → `202`, status becomes `Generating`.
+6. Resume polling `GET /jobs/{jobId}` until `Completed`, then read `result.elements`.
 
 Either way:
 
-6. `GET /jobs` (optionally `?saved=true`) to populate the Home/Cookbook list screens. The
+7. `GET /jobs` (optionally `?saved=true`) to populate the Home/Cookbook list screens. The
    summary's `status` distinguishes dishes that still need reverse-engineering.
-7. `PATCH /jobs/{jobId}/save` with `{"saved": false}` to remove one from the cookbook.
+8. `PATCH /jobs/{jobId}/save` with `{"saved": false}` to remove one from the cookbook.
 
 ## Local dev CORS
 

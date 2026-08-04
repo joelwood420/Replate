@@ -4,6 +4,7 @@ from activities.fetch_restaurant_menu import bp as fetch_restaurant_menu_bp
 from activities.generate_recreation import bp as generate_recreation_bp
 from activities.geocode_restaurant_candidates import bp as geocode_restaurant_candidates_bp
 from activities.match_menu_item import bp as match_menu_item_bp
+from activities.moderate_image import bp as moderate_image_bp
 from activities.persist_job_result import bp as persist_job_result_bp
 from activities.query_culinary_embeddings import bp as query_culinary_embeddings_bp
 from activities.select_restaurant_candidate import bp as select_restaurant_candidate_bp
@@ -12,6 +13,7 @@ from orchestrators.dish_orchestrator import bp as dish_orchestrator_bp
 from orchestrators.recipe_orchestrator import bp as recipe_orchestrator_bp
 from triggers.job_result_http import bp as job_result_http_bp
 from triggers.job_save_http import bp as job_save_http_bp
+from triggers.job_uploaded_http import bp as job_uploaded_http_bp
 from triggers.jobs_list_http import bp as jobs_list_http_bp
 from triggers.orchestrator_starter_queue import bp as orchestrator_starter_queue_bp
 from triggers.recipe_starter_http import bp as recipe_starter_http_bp
@@ -26,6 +28,7 @@ def ping(req: func.HttpRequest) -> func.HttpResponse:
     return func.HttpResponse("pong", status_code=200)
 
 
+app.register_blueprint(moderate_image_bp)
 app.register_blueprint(vision_guess_bp)
 app.register_blueprint(geocode_restaurant_candidates_bp)
 app.register_blueprint(select_restaurant_candidate_bp)
@@ -39,6 +42,7 @@ app.register_blueprint(dish_orchestrator_bp)
 app.register_blueprint(recipe_orchestrator_bp)
 
 app.register_blueprint(upload_http_bp)
+app.register_blueprint(job_uploaded_http_bp)
 app.register_blueprint(restaurant_search_http_bp)
 app.register_blueprint(orchestrator_starter_queue_bp)
 app.register_blueprint(recipe_starter_http_bp)

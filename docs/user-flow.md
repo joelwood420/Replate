@@ -28,14 +28,14 @@ flowchart TD
         Search --> SelectRestaurant["Tap a result to select it"]
     end
 
-    LiveGPS --> Submit["Submit: photo + location<br/>POST /api/jobs, PUT photo to Blob"]
+    LiveGPS --> Submit["Submit: photo + location<br/>POST /api/jobs → PUT photo to Blob<br/>→ POST /api/jobs/{id}/uploaded"]
     ExifGPS --> Submit
     SelectRestaurant --> Submit
 
-    Submit --> Job["Job screen — Processing<br/>stage 1: restaurant + menu + vision + match<br/>polls GET /api/jobs/{id}"]
+    Submit --> Job["Job screen — Processing<br/>stage 1: moderation → restaurant + menu + vision + match<br/>polls GET /api/jobs/{id}"]
 
     Job -->|Identified| Identified["Dish identified<br/>matched dish + confidence badge<br/>auto-saved to Cookbook<br/>'Reverse engineer' button"]
-    Job -->|Failed| Failed["Failed state<br/>with retry"]
+    Job -->|Failed| Failed["Failed state<br/>with retry<br/>incl. photo rejected by moderation"]
 
     Identified --> Cookbook
     Cookbook --> ViewSaved["Open a saved dish"]
