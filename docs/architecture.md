@@ -1,155 +1,206 @@
-# Azure Target Architecture
+# AWS Target Architecture
 
-The Phase 3 architecture for Replate. **The Bicep for everything below is written and lives
-in `infra/`, but has not been deployed yet** — Phase 1 (backend) and Phase 2 (frontend) still
-run entirely against local emulators (Azurite, a local SQL Server, mocked auth). See
-`infra/README.md` for the deploy sequence and the manual prerequisites.
+The Phase 3 architecture for Replate. **Nothing here is deployed yet, and the backend code
+has not been ported yet either** — Phase 1 (backend) and Phase 2 (frontend) were built on
+Azure and still run against Azure emulators. Porting them is **Phase 0**, the current phase;
+see `CLAUDE.md`. The project moved from Azure to AWS on 2026-08-14 because that is where the
+owner's study is focused — `docs/decisions.md` has the full reasoning, and the pre-migration
+Bicep is recoverable from git history at commit `07354af`.
 
-Two deviations from the original CLAUDE.md resource list, both logged in `docs/decisions.md`:
+Three deviations from a by-the-book AWS design, all logged in `docs/decisions.md`:
 
-- **AI models come from Microsoft Foundry**, not the first-party Anthropic API or Azure
-  OpenAI vision — Claude Haiku 4.5 for the vision guess and menu extraction, plus Azure
-  OpenAI `text-embedding-3-small` for culinary-technique vectors, both deployed on one
-  Foundry account.
-- **SignalR / Web PubSub is not provisioned.** The client polls `GET /api/jobs/{id}`;
-  `useJobPolling.ts` remains the documented swap seam.
+- **No relational database and no vector index.** A single DynamoDB table holds everything,
+  and the few hundred culinary-technique embeddings are scanned brute-force with numpy inside
+  the Lambda. This is what the Azure design was already doing with an unindexed
+  `VECTOR_DISTANCE` — it just moves from the database into the process.
+- **Menu lookup is search → fetch → extract**, not one tool-using model call. Bedrock does not
+  expose Anthropic's server-side `web_search` tool, so a third-party SERP API does the search.
+- **No push channel.** The client polls `GET /api/jobs/{id}`; `useJobPolling.ts` remains the
+  documented swap seam.
 
 ```mermaid
 flowchart TB
     subgraph Client["Client"]
-        Browser["React SPA (mobile-first)<br/>MSAL for auth"]
+        Browser["React SPA (mobile-first)<br/>OIDC client for auth"]
     end
 
     subgraph Identity["Identity"]
-        EntraID["Microsoft Entra External ID<br/>(SPA + API app registrations)"]
+        Cognito["Amazon Cognito<br/>user pool + SPA app client"]
     end
 
     subgraph Hosting["Frontend Hosting"]
-        SWA["Azure Static Web Apps<br/>(React build)"]
+        CF["CloudFront + S3<br/>(React build, Origin Access Control)"]
+    end
+
+    subgraph Edge["API"]
+        APIGW["API Gateway HTTP API<br/>Cognito JWT authorizer"]
     end
 
     subgraph Compute["Compute"]
-        FuncApp["Azure Functions<br/>(Consumption / Flex Consumption)<br/>HTTP triggers + Durable Functions orchestrator"]
+        HttpFns["Lambda — HTTP handlers<br/>create job · uploaded · get job<br/>list · save · search · reverse-engineer"]
+        Starter["Lambda — SQS starter<br/>StartExecution"]
+        SFN["Step Functions (Standard)<br/>dish-identify · dish-recipe"]
+        TaskFns["Lambda — 12 task handlers<br/>moderate · geocode · vision · menu<br/>match · embed · generate · persist"]
+    end
+
+    subgraph Messaging["Messaging"]
+        SQS["SQS jobs queue<br/>+ dead-letter queue"]
     end
 
     subgraph Storage["Storage"]
-        StorageAcct["Storage Account<br/>Blob: uploads container · Queue: jobs<br/>+ Durable Functions task hub state"]
+        S3U["S3 uploads bucket<br/>presigned PUT/GET · lifecycle expiry"]
     end
 
     subgraph Data["Data"]
-        SQL["Azure SQL Database (free-offer tier)<br/>Jobs / Restaurants / MenuItems /<br/>JobResults / DishElements<br/>CulinaryEmbeddings (native VECTOR column)<br/>RateLimitCounters (per-user quotas)"]
+        DDB["DynamoDB — single table<br/>USER# · JOB# · REST# · RATE# (TTL)<br/>EMBEDDINGS partition (1024-d, scanned)"]
     end
 
     subgraph Security["Security"]
-        KeyVault["Key Vault<br/>LLM/API keys, Entra client secret"]
+        SSM["SSM Parameter Store<br/>SERP + Places keys (SecureString)"]
     end
 
-    subgraph AI["AI (Microsoft Foundry)"]
-        Foundry["Foundry account (AIServices)<br/>Claude Haiku 4.5 — vision guess + menu extraction<br/>text-embedding-3-small — technique vectors"]
-        ContentSafety["Azure AI Content Safety (F0)<br/>image moderation"]
+    subgraph AI["AI"]
+        Bedrock["Amazon Bedrock<br/>Claude Haiku 4.5 — vision, extraction, generation<br/>Titan Embeddings V2 — technique vectors"]
+        Rek["Amazon Rekognition<br/>DetectModerationLabels"]
     end
 
     subgraph Observability["Observability"]
-        AppInsights["Application Insights<br/>+ Log Analytics (1 GB/day cap)"]
+        CW["CloudWatch Logs + Metrics<br/>(explicit retention)"]
     end
 
-    subgraph External["External APIs (3rd-party, non-Azure)"]
+    subgraph External["External APIs (3rd-party)"]
         Places["Google Places<br/>restaurant lookup + typeahead"]
-        WebSearch["Claude web_search server tool<br/>menu scraping/extraction"]
+        Serp["SERP API<br/>find the menu page"]
     end
 
-    Browser -- "sign in (OIDC)" --> EntraID
-    Browser -- "loads app" --> SWA
-    Browser -- "POST /api/jobs, POST /api/jobs/{id}/uploaded,<br/>GET /api/jobs/{id} (polled),<br/>POST /api/jobs/{id}/reverse-engineer<br/>— bearer token" --> FuncApp
-    Browser -- "PUT photo direct (write-only SAS)" --> StorageAcct
+    Browser -- "sign in (OIDC)" --> Cognito
+    Browser -- "loads app" --> CF
+    Browser -- "POST /api/jobs, POST /api/jobs/{id}/uploaded,<br/>GET /api/jobs/{id} (polled),<br/>POST /api/jobs/{id}/reverse-engineer<br/>— bearer token" --> APIGW
+    Browser -- "PUT photo direct (presigned URL)" --> S3U
 
-    FuncApp -- "validates token" --> EntraID
-    FuncApp -- "SAS URLs, blob read/write, queue msg,<br/>Durable task hub state" --> StorageAcct
-    FuncApp -- "reads secrets via Key Vault references" --> KeyVault
-    FuncApp -- "restaurant lookup" --> Places
-    FuncApp -- "dish/element guess, menu extraction,<br/>embed technique text" --> Foundry
-    Foundry -- "web search" --> WebSearch
-    FuncApp -- "moderate upload" --> ContentSafety
-    FuncApp -- "read/write job + result rows,<br/>VECTOR_DISTANCE query" --> SQL
-    FuncApp -- "telemetry" --> AppInsights
+    APIGW -- "validates JWT" --> Cognito
+    APIGW --> HttpFns
+    HttpFns -- "presigned URLs" --> S3U
+    HttpFns -- "enqueue job" --> SQS
+    HttpFns -- "read/write items, charge quota" --> DDB
+    HttpFns -- "start dish-recipe" --> SFN
+    HttpFns -- "restaurant typeahead" --> Places
+
+    SQS --> Starter
+    Starter -- "start dish-identify" --> SFN
+    SFN --> TaskFns
+
+    TaskFns -- "moderate upload" --> Rek
+    TaskFns -- "dish/element guess, menu extraction,<br/>recipe generation, embed text" --> Bedrock
+    TaskFns -- "find menu page" --> Serp
+    TaskFns -- "restaurant lookup" --> Places
+    TaskFns -- "read blob, read/write items,<br/>scan EMBEDDINGS partition" --> DDB
+    TaskFns -- "read photo" --> S3U
+    TaskFns -- "read API keys" --> SSM
+    TaskFns -- "telemetry" --> CW
+    HttpFns -- "telemetry" --> CW
 ```
 
-> No SignalR / Web PubSub: the client polls `GET /api/jobs/{id}` every 3 seconds.
-> `frontend/src/lib/jobs/useJobPolling.ts` is the seam to swap if that changes.
+> No push channel: the client polls `GET /api/jobs/{id}` every 3 seconds.
+> `frontend/src/lib/jobs/useJobPolling.ts` is the seam to swap if that changes — on AWS the
+> alternatives are API Gateway WebSockets or AWS IoT Core over MQTT.
+
+**Everything except Bedrock, Rekognition, Google Places and the SERP API authenticates via
+IAM.** Only two stored credentials exist in the whole system — the SERP API key and the Google
+Places key — and both live in Parameter Store as `SecureString` parameters. There is no VPC
+and therefore no NAT Gateway, which is the most common way a nominally serverless AWS project
+starts costing real money.
 
 ## Request flow (happy path)
 
-The pipeline runs as **two separately-triggered Durable orchestrations**, not one. Stage 1 is
-automatic; stage 2 only runs when the user asks for the recipe, because it is the most
+The pipeline runs as **two separately-triggered Step Functions executions**, not one. Stage 1
+is automatic; stage 2 only runs when the user asks for the recipe, because it is the most
 expensive call in the pipeline and isn't wanted while the user is still at the restaurant —
 see `docs/decisions.md`.
 
 **Stage 1 — automatic, on upload:**
 
-1. Browser signs in via Entra External ID (MSAL), loads the React app from Static Web Apps.
-2. `POST /api/jobs` (GPS or a manually-selected restaurant) → Function App creates a `Jobs`
-   row, returns a write-only SAS URL, and charges the caller's scan quota. It deliberately
-   does **not** enqueue anything: the photo does not exist yet.
-3. Browser `PUT`s the photo directly to Blob Storage with that SAS URL — never through the
-   Function App.
-4. `POST /api/jobs/{id}/uploaded` enqueues the job, now that there is an image to read.
-5. The queue message starts `dish_orchestrator`. First, and alone, `moderate_image` gates
-   everything below it, so a rejected photo costs one Content Safety call and no AI spend.
-   Then geocode (or select the chosen restaurant) → menu fetch (cached per restaurant) runs
-   alongside the vision-model guess, and both join at the menu-match fan-in step (the
-   anti-hallucination check). The orchestration **stops there**.
-6. `persist_match_result` writes the `JobResults` row — including the raw vision guess as JSON,
-   which stage 2 needs as input — sets the job to `Identified` and marks it saved, putting the
-   dish in the user's cookbook automatically. The client picks it up on its next poll of
+1. Browser signs in via Cognito, loads the React app from CloudFront.
+2. `POST /api/jobs` (GPS or a manually-selected restaurant) → Lambda writes the job item,
+   returns a **presigned PUT URL**, and charges the caller's scan quota. It deliberately does
+   **not** enqueue anything: the photo does not exist yet.
+3. Browser `PUT`s the photo directly to S3 with that presigned URL — never through Lambda.
+4. `POST /api/jobs/{id}/uploaded` enqueues to SQS, now that there is an image to read.
+5. The SQS message triggers the starter Lambda, which begins the `dish-identify` execution.
+   First, and alone, `ModerateImage` gates everything below it, so a rejected photo costs one
+   Rekognition call and no model spend. Then geocode (or select the chosen restaurant) → menu
+   fetch (cached per restaurant) runs in a `Parallel` state alongside the vision-model guess,
+   and both join at the menu-match step (the anti-hallucination check). The execution **stops
+   there**.
+6. `PersistMatchResult` writes the result item — including the raw vision guess, which stage 2
+   needs as input — sets the job to `Identified` and marks it saved, putting the dish in the
+   user's cookbook automatically. The client picks it up on its next poll of
    `GET /api/jobs/{id}`, which returns the matched dish and confidence badge with an empty
    `elements` array.
 
 **Stage 2 — only when the user presses "Reverse engineer":**
 
 7. `POST /api/jobs/{id}/reverse-engineer` charges the caller's separate recipe quota, sets the
-   job to `Generating` and starts `recipe_orchestrator` on a separate instance id
-   (`{job_id}:recipe`).
-8. A `VECTOR_DISTANCE` lookup against `CulinaryEmbeddings` grounds the structured recipe
-   generator, whose output is persisted as `DishElements`/`ElementIngredients`/`ElementSteps`
-   and the job set to `Completed`.
+   job to `Generating` and starts a `dish-recipe` execution.
+8. A cosine-similarity scan over the `EMBEDDINGS` partition grounds the structured recipe
+   generator, whose output is persisted as `ELEMENT#` items and the job set to `Completed`.
 9. If generation fails the job reverts to `Identified` with an error message rather than
    `Failed`, so a transient model error doesn't discard a good menu match.
 
-## Resource free-tier notes (Global Rule 1 — re-verify before provisioning, pricing changes)
+## Resource free-tier notes
 
-| Resource | Free tier | On overage | Fixed hourly cost |
-|---|---|---|---|
-| Static Web Apps (Free) | 100 GB bandwidth/mo, 500 MB total, 10 per subscription | Site stops being served, no bill | No |
-| Functions — Flex Consumption (FC1) | 250k executions + 100k GB-s/mo; **zero if `alwaysReady` > 0** | Per-execution + per-GB-s | No |
-| *(alternative)* Consumption (Y1) | 1M executions + 400k GB-s/mo — 4× more generous | Same model | No |
-| Storage Account | **None** | Per-GB-month + per-10k-transactions | No |
-| Azure SQL Database (free offer) | 100k vCore-s + 32 GB data + 32 GB backup/mo, 10 DBs/subscription | `AutoPause` — database offline until next calendar month, no bill | No |
-| Key Vault (standard) | **None** | Per-10k-operations, negligible here | No |
-| Foundry account (AIServices S0) | Account free; models pay-per-use | — | No |
-| Claude Haiku 4.5 (GlobalStandard) | **None.** Rate-limited, not granted. **Free-trial / student / credit-only subscriptions get 0 RPM and cannot use Claude at all** | Azure Marketplace, billed in Claude Consumption Units | No — but *provisioned throughput would be*, so don't |
-| `text-embedding-3-small` | **None** | Per-1k-tokens | No |
-| AI Content Safety (F0) | 5,000 images + 5,000 text records/mo | Requests rejected; overage impossible | No |
-| Log Analytics + App Insights | Ingestion grant, then per-GB | Per-GB ingestion — **the sleeper cost**; capped at 1 GB/day | No |
-| Entra External ID | MAU-based (CLAUDE.md cites 50,000 — re-verify) | Per-MAU | No |
-| Google Places | Provider-specific | Billed by Google | — |
+Per Global Rule 5 — **re-verify all of this before provisioning; AWS pricing and free-tier
+terms change.** The column that matters most is the middle one: AWS mixes *always-free*
+monthly grants with 12-month trial grants, and the difference only shows up a year in.
 
-**Nothing in the deployed design carries a fixed hourly cost**, provided `alwaysReady` stays
-unset, `freeLimitExhaustionBehavior` stays `AutoPause`, Foundry deployments stay on
-`GlobalStandard`, and Static Web Apps stays on Free.
+| Resource | Free tier | Always-free or 12-month? | On overage | Fixed hourly cost |
+|---|---|---|---|---|
+| Lambda | 1M requests + 400k GB-s/month | **Always** | Per-request + per-GB-s | No |
+| DynamoDB | 25 GB + 25 provisioned RCU + 25 WCU | **Always** | Per-RCU/WCU-hour — **on-demand tables are not covered at all** | No |
+| SQS | 1M requests/month | **Always** | Per-request | No |
+| Step Functions (Standard) | 4,000 state transitions/month | **Always** | Per-transition | No |
+| CloudFront | 1 TB out + 10M requests/month | **Always** | Per-GB + per-request | No |
+| CloudWatch Logs | 5 GB ingestion + 5 GB storage/month | **Always** | Per-GB ingestion — the sleeper cost; set retention | No |
+| SSM Parameter Store (Standard) | Unlimited standard parameters | **Always** | — | No |
+| Cognito | MAU-based free tier | **Always** | Per-MAU above the grant | No |
+| S3 | 5 GB + 20k GET + 2k PUT/month | **12 months** | ~per-GB-month; lifecycle-expire uploads | No |
+| API Gateway (HTTP API) | 1M requests/month | **12 months** | Per-million requests | No |
+| Rekognition | 5,000 images/month | **12 months** | Per-image | No |
+| Amazon Bedrock | **None** — pay per token | — | Per input/output token | No |
+| Google Places | Provider-specific | — | Billed by Google | — |
+| SERP API | Provider-specific (varies by vendor) | — | Per-query | — |
 
-**Most likely to actually cost money:** Claude token spend on the recipe generator (the
-heaviest-output call in the pipeline), Application Insights ingestion, and Azure SQL
-vCore-seconds if `autoPauseDelay` is tuned badly.
+**Nothing in this design carries a fixed hourly cost**, provided DynamoDB stays on provisioned
+capacity at or below 25 RCU/WCU, no VPC (and therefore no NAT Gateway) is introduced, and no
+vector index service is added. That last one matters: OpenSearch Serverless has a minimum
+billed capacity and would, on its own, cost more than everything else here combined.
+
+**Most likely to actually cost money:** Bedrock token spend on the recipe generator (the
+heaviest-output call in the pipeline), then CloudWatch log ingestion if retention is left at
+the "never expire" default, then S3 storage once the 12-month grant lapses if uploads are
+never expired.
 
 Splitting the pipeline in two directly targets that first item: the generator no longer runs
-on every uploaded photo, only on the dishes a user explicitly asks to reverse engineer. Stage 1
-(vision guess + menu extraction) still runs per photo, so it remains the per-upload cost floor.
+on every uploaded photo, only on the dishes a user explicitly asks to reverse engineer. Stage
+1 (vision guess + menu extraction) still runs per photo, so it remains the per-upload cost
+floor. Note that Step Functions' 4,000-transition grant works out to roughly 500 scans a month
+at ~7 transitions per stage-1 execution — comfortable at MVP scale, but it is the grant most
+likely to bind first.
 
 ## Deployment
 
-Bicep lives in `infra/` — `main.bicep` plus one module per resource, deployed manually with
-`az deployment group create` (see `infra/README.md`). Automating it via GitHub Actions with
-OIDC federated credentials is Phase 4. Two things Bicep cannot do and that stay manual: the
-Entra External ID tenant (its ARM type requires a delegated user token) and the SPA/API app
-registrations (Graph objects that must live in a different tenant than the deployment
-authenticates against).
+Infrastructure lives in `infra/` as an **AWS SAM** template — which is to say a CloudFormation
+stack, since SAM is a template transform. Deployed manually with `sam build && sam deploy
+--guided` in Phase 3; automating it via GitHub Actions with **OIDC federated credentials to an
+IAM role** (no long-lived access keys) is Phase 4.
+
+Two things the template cannot do, which stay manual:
+
+- **Bedrock model access** must be granted per-model, per-region in the console before the
+  first call.
+- **Cognito's hosted-UI domain and the SPA callback URLs** need the CloudFront distribution
+  domain, which doesn't exist until the first deploy — so the SPA client config is a two-pass
+  step, exactly as the Entra app registration was.
+
+Step Functions definitions live in standalone `.asl.json` files referenced by `DefinitionUri`,
+rather than inline in the template, so they stay readable and diffable on their own.

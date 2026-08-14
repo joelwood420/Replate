@@ -4,6 +4,169 @@ A log of decisions the project owner has made about how Replate is built, and wh
 CLAUDE.md's global rules, whenever a decision like this comes up Claude asks for the
 reasoning first, then adds an entry here — newest first.
 
+Entries are never deleted. When a later decision reverses an earlier one, the earlier entry
+is marked **superseded** and left in place — a log that hides its own reversals is worth
+less than one that shows where the thinking changed.
+
+---
+
+## 2026-08-14 — Move the whole project from Azure to AWS
+
+**Decision:** Rebuild Replate on AWS — Lambda + Step Functions, DynamoDB, S3, SQS, Cognito,
+Bedrock — replacing Azure Functions, Durable Functions, Azure SQL, Blob/Queue Storage, Entra
+External ID and Microsoft Foundry. The product design, the two-stage pipeline and the API
+contract are unchanged; only the platform underneath moves.
+
+**Why:** AWS is where the owner's study is currently focused. Replate doubles as a portfolio
+and interview artifact, so it should be built on the cloud they are actively learning — the
+project is worth more when the platform it demonstrates is the one they can talk about in
+depth.
+
+**Context worth recording:**
+
+- **Nothing had been deployed to Azure.** Phase 3's Bicep was written but never executed, and
+  Phases 1-2 ran entirely against local emulators. So there was no data to migrate, no DNS to
+  cut and no users to move — this was the cheapest moment the migration would ever have.
+- The original constraints carry over unchanged: **serverless everywhere, stay in the free
+  tier.** AWS arguably serves them better, since Lambda, DynamoDB, SQS, Step Functions and
+  CloudFront all have *always-free* monthly grants rather than 12-month trials.
+- The pipeline shape survives the move almost exactly. The two Durable orchestrators map 1:1
+  onto two Step Functions state machines, including the parallel vision/menu branch and the
+  menu-match fan-in.
+- Cost of the move, honestly: the entire data layer is rewritten (see the next entry), the
+  orchestrators are re-expressed in ASL, and `fetch_restaurant_menu` loses the tool it was
+  built on (see the Bedrock and SERP entries). Roughly 133 tests need repointing, though most
+  mock at the `shared/` boundary and survive.
+- The port is tracked as **Phase 0** in `CLAUDE.md` and must have a green test suite before
+  Phase 3 (real infrastructure) begins.
+
+---
+
+## 2026-08-14 — DynamoDB single-table, with vector search moved into the Lambda
+
+**Decision:** Replace Azure SQL — 11 relational tables plus a native `VECTOR(1536)` column —
+with a single DynamoDB table. Culinary-technique embeddings live in their own partition and
+are scanned brute-force with numpy inside the Lambda rather than by the database.
+
+**Why:** It is the only option that stays inside an *always-free* tier. DynamoDB grants 25 GB
+plus 25 provisioned RCU/WCU with no 12-month cliff, whereas every relational option on AWS
+either expires (RDS free tier, 12 months, then a fixed hourly instance) or never had a free
+tier at all (Aurora Serverless v2). Given that the free-tier constraint was explicit, a
+relational engine would have meant paying to keep a database idle.
+
+**Context worth recording:**
+
+- **Every access pattern in the app was already a key lookup** — job by id, jobs by user,
+  restaurant by place id, rate counters by user and hour bucket. Nothing needed a join, which
+  is why single-table design fits without a GSI, and is the reason this was a viable choice
+  rather than a forced one.
+- Two things get **better** than the SQL version. Rate limiting becomes an atomic `UpdateItem`
+  with `ADD` plus native TTL expiry — no read-modify-write race and no counter cleanup job,
+  which the `RateLimitCounters` table needed. And the newest-first job listing falls out of a
+  `JOB#<ts>#<jobId>` sort key, replacing `ORDER BY` plus the `IX_Jobs_UserId` index.
+- Moving the vector scan into the process is **less of a change than it looks**. CLAUDE.md
+  already specified brute-force `VECTOR_DISTANCE` with no index, because the corpus is a few
+  hundred rows; DiskANN was never in play. The scan just moves from the database to the
+  Lambda. If the corpus ever outgrows that, a real index is a Future item.
+- Embedding dimension changes 1536 → 1024 with the move to Titan V2. This stopped being a
+  schema concern the moment vectors left the database — it is now just a constant.
+- **The capacity mode is the trap.** The free tier covers *provisioned* capacity only;
+  on-demand tables bill per request from the first request. This is written into CLAUDE.md's
+  Global Rule 1 because it is silent, easy to get wrong, and only visible on the bill.
+- Rejected: Aurora Serverless v2 + pgvector (no free tier; scale-to-zero still bills on any
+  sustained traffic) and RDS Postgres free tier (12 months, and an always-on instance is not
+  serverless — it broke both stated constraints).
+
+---
+
+## 2026-08-14 — Model calls go through Amazon Bedrock
+
+**Decision:** Route all Claude calls — vision guess, menu extraction, recipe generation — and
+the embedding calls through Amazon Bedrock, rather than the first-party Anthropic API.
+Supersedes the 2026-07-28 Microsoft Foundry decision.
+
+**Why:** The same reasoning that chose Foundry on Azure: one cloud, one bill, one identity
+story. Bedrock authenticates through the Lambda's IAM execution role, so there is **no API
+key to store, rotate or leak** — one fewer `SecureString` in Parameter Store and one fewer
+thing that can be committed by accident.
+
+**Context worth recording:**
+
+- This choice has a **real cost**, accepted knowingly: Bedrock does not expose Anthropic's
+  server-side `web_search` tool, which `fetch_restaurant_menu` was built on and which
+  currently works. See the next entry for what replaces it.
+- Bedrock has **no free tier** — it is pay-per-token. The recipe generator remains the
+  heaviest-output call in the pipeline and therefore the most likely line item to actually
+  cost money, which is exactly what the two-stage split (2026-07-30) and the separate recipe
+  quota (2026-08-05) were designed to contain.
+- Model access must be granted per-model, per-region in the Bedrock console before the first
+  call — a manual step CloudFormation cannot perform, so it is called out in Phase 3.
+- Embeddings move to Titan Text Embeddings V2 (1024-d) for the same IAM-not-keys reason,
+  superseding `text-embedding-3-small`.
+- The Azure version of this decision was also partly forced: Foundry's Claude deployments are
+  unavailable on free-trial, student and credit-only subscriptions, which was live friction.
+  Bedrock has no equivalent eligibility gate.
+
+---
+
+## 2026-08-14 — Menu search: third-party SERP API, splitting one tool call into three steps
+
+**Decision:** `fetch_restaurant_menu` becomes **search** (a third-party SERP API) → **fetch**
+(HTTP GET the top result) → **extract** (Bedrock Claude, structured output), replacing the
+single Claude call that used the native `web_search` server tool. Supersedes the 2026-07-23
+menu-fetch decision.
+
+**Why:** Forced by the Bedrock decision above — the native tool simply isn't available there.
+Given that the step had to be rebuilt anyway, an explicit search/fetch/extract chain is the
+better shape: each step is independently testable and mockable, the search provider is
+swappable, and the per-call cost is visible per step instead of hidden inside one opaque
+tool-using call.
+
+**Context worth recording:**
+
+- **The extraction prompt survives nearly unchanged** — it was already "turn this page text
+  into structured menu items". Only the acquisition of the page text is new code.
+- The 24-hour `MenuLastFetchedAt` cache gate is unaffected and matters more now, since a cache
+  miss costs a search call plus a fetch plus a model call rather than one call.
+- The SERP API key is the **only** new stored credential the AWS migration introduces;
+  everything else moved to IAM. It goes in Parameter Store as a `SecureString`.
+- Rejected: keeping the Anthropic API for this one activity (would have preserved a working
+  implementation, but left a lingering API key and a split model story that undercuts the
+  whole reason for choosing Bedrock), and a Bedrock Knowledge Base web crawler (built for
+  known seed URLs rather than ad-hoc lookups, and needs a vector store with real fixed cost).
+
+---
+
+## 2026-08-14 — Infrastructure as code: AWS SAM, not CDK
+
+**Decision:** Replace the Bicep tree with an AWS SAM template. The Bicep is deleted, not
+ported — it is recoverable from git history at commit `07354af`.
+
+**Why:** Study alignment, the same reason behind the migration itself. **SAM *is*
+CloudFormation** — a template transform producing an ordinary CloudFormation stack — so it
+teaches the stacks, change sets, intrinsic functions and drift concepts that AWS
+certification tracks actually test. CDK largely abstracts those away.
+
+**Context worth recording:**
+
+- **Why not CDK**, which was the initial recommendation on "same language as the backend"
+  grounds: it weights developer ergonomics over the stated reason for being on AWS at all.
+  CDK also needs a Node.js toolchain and a bootstrap stack in the account just to deploy
+  Python, and adds a synth step between the source and the deployed artifact.
+- **Step Functions is genuinely better under SAM.** The ASL lives in its own `.asl.json` file
+  referenced by `DefinitionUri`, so the state machine stays readable and diffable, instead of
+  being reconstructed through a Python DSL.
+- **Why not raw CloudFormation**, which was the owner's initial instinct and is entirely
+  viable at this size: the 12 Lambda handlers would mean 12 copy-pasted function + IAM role +
+  log group blocks with no loop construct. SAM's `Globals:` and policy templates collapse that
+  while leaving every non-serverless resource — CloudFront, Cognito, DynamoDB — as plain
+  CloudFormation in the same file. Nothing is given up.
+- `sam local start-api` / `sam local invoke` also replaces `func start` in the dev loop, which
+  matters more than it sounds: LocalStack Community does not emulate Bedrock, Rekognition or
+  Cognito, so a good local invoke story fills a real gap.
+- One packaging gotcha to remember: `sam build` produces a separate zip per function, so
+  shared dependencies belong in a `LayerVersion`, not the function package.
+
 ---
 
 ## 2026-08-05 — Rate limiting: separate quotas per pipeline stage, not one shared cap
@@ -161,6 +324,9 @@ that dish and presses **Reverse engineer**. The explicit "save to cookbook?" cho
 
 ## 2026-07-28 — AI models served through Microsoft Foundry rather than the first-party Anthropic API
 
+> **Superseded by the 2026-08-14 Bedrock entry.** The reasoning below — one cloud, one bill,
+> one identity story — is exactly what carried over to Bedrock; only the cloud changed.
+
 **Decision:** Deploy Claude through Microsoft Foundry (Azure AI Foundry) — a
 `Microsoft.CognitiveServices/accounts` resource of kind `AIServices` with an Anthropic-format
 model deployment — instead of calling `api.anthropic.com` with a first-party key. The
@@ -202,6 +368,10 @@ cost/latency contributor.
 
 ## 2026-07-28 — Embeddings from Azure OpenAI `text-embedding-3-small`
 
+> **Superseded by the 2026-08-14 Bedrock entry.** Now Titan Text Embeddings V2 at 1024
+> dimensions. The dimension-matching argument below no longer applies: vectors left the
+> database with the move to DynamoDB, so the width is a constant rather than a column type.
+
 **Decision:** Generate culinary-technique embeddings with Azure OpenAI
 `text-embedding-3-small`, deployed under the same Foundry account as the Claude model.
 
@@ -222,6 +392,10 @@ Phase 3 Part B work.
 
 ## 2026-07-28 — Skip SignalR/Web PubSub this phase; keep polling
 
+> **Still current, amended 2026-08-14.** The decision holds — the client still polls, and
+> `useJobPolling.ts` is still the seam. Only the named alternative changes: on AWS the push
+> option would be API Gateway WebSockets or AWS IoT Core over MQTT, not SignalR.
+
 **Decision:** Do not provision SignalR Service or Web PubSub in Phase 3, despite CLAUDE.md
 listing it. The frontend continues to poll `GET /api/jobs/{id}` every 3 seconds.
 
@@ -237,6 +411,11 @@ wiring.
 ---
 
 ## 2026-07-28 — One storage account, not the separate Durable Functions account CLAUDE.md specifies
+
+> **Superseded by the 2026-08-14 migration entry — moot rather than reversed.** Step Functions
+> keeps its own execution state, so there is no orchestration-state store to co-locate or
+> separate. S3 holds uploads, SQS holds the job queue, and the shared-key concern that drove
+> this entry disappears with presigned URLs signed by the Lambda's role.
 
 **Decision:** Provision a single storage account serving the `uploads` blob container, the
 `jobs` queue, Durable Functions orchestration state, and the Flex Consumption deployment
@@ -258,6 +437,10 @@ which removes the shared key entirely.
 ---
 
 ## 2026-07-23 — `fetch_restaurant_menu` real implementation: Claude API + native web-search tool
+
+> **Superseded by the 2026-08-14 SERP API entry.** Bedrock does not expose the native
+> `web_search` server tool, so this became search → fetch → extract. This is the one place
+> where the migration cost working functionality.
 
 **Decision:** Implement the real `fetch_restaurant_menu` activity using the Claude API with
 the native `web_search_20260209` server tool, prompted to find and extract a restaurant's

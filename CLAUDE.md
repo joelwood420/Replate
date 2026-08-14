@@ -11,217 +11,381 @@ against the real menu** (this match is the primary anti-hallucination mechanism 
 item's real name/description is trusted over the vision model's unaided guess), then
 generates a full, reproducible **method to recreate each element of the dish at home**
 (not just "what is this dish" — a per-component ingredient list + step-by-step technique).
-Result is pushed back to the client over a real-time channel.
+Result is returned to the client (polled today; a real-time channel is a future option).
 
 Pipeline is a dependency chain, not just parallel fan-out:
 `GPS → nearby restaurant candidates → fetch/scrape that restaurant's menu` runs alongside
 `photo → vision model's preliminary dish/element guess`, then both feed into a
 `match guess against real menu items` step, then a `generate per-element recipe` step
-that also grounds itself against a vector DB of culinary technique/recipe embeddings.
+that also grounds itself against culinary technique/recipe embeddings.
 
 **Stack**
-- Frontend: React
-- Backend: Python (Azure Functions, Durable Functions for orchestration)
-- Database: Azure SQL Database (free-offer tier), including its native VECTOR data type for
-  culinary-technique embeddings — no separate vector DB
-- Auth: Microsoft Entra External ID (consumer user pool)
-- Infra: Bicep
+- Frontend: React (Vite + TypeScript)
+- Backend: Python on **AWS Lambda**, with **AWS Step Functions** (Standard workflows) for
+  orchestration
+- Database: **Amazon DynamoDB**, single-table design. Culinary-technique embeddings live in
+  the same table and are scanned brute-force in the Lambda — no separate vector database
+- Auth: **Amazon Cognito** user pool
+- AI: **Amazon Bedrock** (Claude for vision/extraction/generation, Titan for embeddings)
+- Infra: **AWS SAM** (a CloudFormation transform — the deployed artifact is a CloudFormation
+  stack)
 - CI/CD: GitHub Actions
+
+> **This project moved from Azure to AWS on 2026-08-14.** Phases 1 and 2 were originally
+> built on Azure Functions + Azure SQL and have not been ported yet — see **Phase 0** below,
+> which is the current active phase. `docs/decisions.md` records the migration and its
+> reasoning; the pre-migration Bicep is recoverable from git history at commit `07354af`.
 
 ## Global rules (apply in every phase)
 
-1. **Azure cost discipline.** Before adding or provisioning any Azure resource, check whether
-   it has a free tier / free monthly grant, and call out (in the PR description or commit
-   message) what happens once free tier is exceeded. Prefer serverless / consumption-based
-   SKUs over anything with a fixed hourly cost. If a resource has no free tier and no
-   consumption-based option (e.g. Redis, SignalR Standard), flag it explicitly before adding
-   it rather than assuming it's fine.
+1. **AWS cost discipline.** Before adding or provisioning any AWS resource, check whether it
+   has a free tier / free monthly grant, **and whether that grant is always-free or expires
+   after 12 months** — this distinction matters more on AWS than it did on Azure. Call out
+   (in the PR description or commit message) what happens once the free tier is exceeded.
+   Prefer serverless / per-request pricing over anything with a fixed hourly cost. If a
+   resource has no free tier and no per-request option (e.g. OpenSearch Serverless, NAT
+   Gateway, ElastiCache), flag it explicitly before adding it rather than assuming it's fine.
+
+   Three specific traps, because they are easy to get wrong and expensive to discover late:
+   - **DynamoDB must use provisioned capacity, not on-demand.** The perpetual free tier
+     covers 25 GB storage + 25 provisioned RCU + 25 provisioned WCU. On-demand tables bill
+     per request from the very first request. Cap any autoscaling at or below 25 so a bug
+     cannot scale past the grant.
+   - **API Gateway's free tier expires after 12 months.** If per-request cost becomes a
+     concern, Lambda Function URLs cost nothing beyond the Lambda invocation — the tradeoff
+     is validating the Cognito JWT inside the handler instead of getting an API Gateway JWT
+     authorizer for free.
+   - **No VPC unless something genuinely requires one.** A NAT Gateway is a fixed hourly
+     charge with no free tier and is the single most common way a "serverless" AWS project
+     starts costing real money. Nothing in this design needs a VPC.
 2. **Prod only for now.** We are building a single **production** environment first. Do not
-   create staging/dev Bicep parameter files, GitHub environments, or duplicate resource
-   groups yet — that comes later, once prod is stable. Structure code so adding a staging
-   env later is straightforward (parameterized Bicep, environment variables, no hardcoded
-   resource names), but don't build the staging plumbing itself yet.
-3. **One phase at a time.** Implement strictly in phase order (below). Don't start Phase 2
-   work while Phase 1 is incomplete, and don't reach ahead into a later phase's resources
-   (e.g. don't provision infra in Phase 1 — assume local emulators/mocks until Phase 3).
-4. **No secrets in code or Bicep params.** API keys (Claude/OpenAI, Google Places/Yelp, etc.)
-   and connection strings go in Azure Key Vault (provisioned in Phase 3) and are referenced,
-   never hardcoded or committed.
-5. **Don't fabricate Azure pricing.** Pricing changes; if a cost claim matters for a decision,
-   note that it should be re-verified against the current Azure/Anthropic pricing pages
-   rather than asserting a possibly-stale number as fact.
+   create staging/dev SAM parameter overrides, GitHub environments, or duplicate stacks yet —
+   that comes later, once prod is stable. Structure code so adding a staging env later is
+   straightforward (parameterized templates, environment variables, no hardcoded resource
+   names), but don't build the staging plumbing itself yet.
+3. **One phase at a time.** Implement strictly in phase order (below). Don't start Phase 3
+   work while Phase 0 is incomplete, and don't reach ahead into a later phase's resources
+   (e.g. don't provision cloud infra during the port — assume LocalStack/mocks until Phase 3).
+4. **No secrets in code or SAM templates.** API keys (SERP API, Google Places, etc.) go in
+   **AWS Systems Manager Parameter Store** as `SecureString` parameters and are read at
+   runtime or referenced from the template — never hardcoded or committed. Prefer Parameter
+   Store over Secrets Manager: Standard-tier parameters are free, whereas Secrets Manager
+   bills per secret per month. Anything that can use **IAM instead of a key should** —
+   Bedrock, S3, DynamoDB, SQS and Rekognition all authenticate via the Lambda execution role,
+   so they need no stored credential at all.
+5. **Don't fabricate AWS pricing.** Pricing and free-tier terms change; if a cost claim
+   matters for a decision, note that it should be re-verified against the current AWS /
+   third-party pricing pages rather than asserting a possibly-stale number as fact.
 6. **Document the user's engineering/architecture decisions.** Whenever the user makes an
    engineering or architecture decision — a stack/library choice, a structural or scope
    call, picking between competing approaches, etc. (not routine/trivial choices) — ask them
    for the reasoning behind it before proceeding, then record the decision and their stated
    reason in `docs/decisions.md`. Keep entries dated, concise, and reason-first (decision,
-   why, brief context) — not a transcript of the conversation.
+   why, brief context) — not a transcript of the conversation. When a new decision reverses
+   an old one, **mark the old entry superseded rather than deleting it.**
 
 ---
 
-## Phase 1 — Backend only
+## Phase 0 — Port the existing Azure code to AWS *(current phase)*
 
-**Goal:** working backend code, runnable locally against emulators, no cloud resources yet.
+**Goal:** the Phase 1 backend and Phase 2 frontend run locally against AWS emulators and AWS
+SDKs, with behaviour unchanged. This is a port, not a redesign — resist the urge to improve
+logic while moving it, so that a failing test means the port broke something.
 
-Steps:
-1. Scaffold an Azure Functions app (Python) with:
-   - HTTP-triggered function: accept image upload metadata + GPS coordinates, generate a
-     Blob Storage SAS URL for direct client upload, push a job message to a queue.
-   - Queue-triggered function (or Durable Functions orchestrator) that picks up the job.
-2. Implement the orchestration engine as a **Durable Functions** orchestrator. This is a
-   dependency chain, not simple parallel fan-out — model it accordingly:
-   - Activity: reverse-geocode the uploaded GPS coordinates → candidate restaurant(s) nearby
-     (Google Places/Yelp Fusion) — mock/stub for now.
-   - Activity: fetch/scrape the top candidate restaurant's menu (web search + fetch + LLM
+Nothing was ever deployed to Azure, so there is no data to migrate and no cutover. The work
+is entirely code and local tooling.
+
+### Service mapping
+
+| Azure (current code) | AWS (target) |
+|---|---|
+| Azure Functions HTTP triggers | Lambda + API Gateway HTTP API (Cognito JWT authorizer) |
+| Durable Functions orchestrators | Step Functions **Standard** state machines |
+| Queue Storage + queue trigger | SQS + Lambda event source mapping |
+| Blob Storage + SAS URLs | S3 + presigned PUT/GET URLs |
+| Azure SQL + native `VECTOR(1536)` | DynamoDB single table + in-Lambda cosine scan |
+| Microsoft Entra External ID | Amazon Cognito user pool |
+| Azure Static Web Apps | S3 + CloudFront (Origin Access Control) |
+| Key Vault | SSM Parameter Store (`SecureString`) |
+| Azure AI Content Safety | Amazon Rekognition `DetectModerationLabels` |
+| Microsoft Foundry (Claude Haiku 4.5) | Amazon Bedrock (Claude Haiku 4.5) |
+| `text-embedding-3-small` (1536-d) | Bedrock Titan Text Embeddings V2 (**1024-d**) |
+| Anthropic `web_search` server tool | SERP API + HTTP fetch + Bedrock extraction |
+| App Insights + Log Analytics | CloudWatch Logs + Metrics |
+| Bicep | AWS SAM |
+| Azurite + SQL Server 2025 container | LocalStack + `sam local` |
+
+### Steps
+
+1. **Data layer first — everything else depends on it.** Replace `backend/shared/db.py` and
+   all raw T-SQL (spread across every trigger and the persistence/query activities) with a
+   DynamoDB access module built on `boto3`. Single-table design:
+
+   ```
+   PK                 SK                      access pattern
+   USER#<oid>         PROFILE                 user by oid
+   USER#<oid>         JOB#<ts>#<jobId>        jobs by user, newest first (GET /api/jobs)
+   JOB#<jobId>        META | RESULT           job status + result
+   JOB#<jobId>        ELEMENT#<n>             dish elements, ingredients, steps
+   REST#<placeId>     META                    restaurant + MenuLastFetchedAt cache gate
+   REST#<placeId>     MENUITEM#<n>            menu items for matching
+   RATE#<oid>         SCAN#<hourBucket>       atomic ADD + TTL
+   RATE#<oid>         RECIPE#<hourBucket>     atomic ADD + TTL
+   EMBEDDINGS         TECHNIQUE#<n>           small corpus, scanned whole
+   ```
+
+   Every access pattern in the app is already a key lookup, which is why this fits without a
+   GSI. Two things get *better* than the SQL version and should be taken advantage of, not
+   ported literally:
+   - **Rate limiting** becomes an atomic `UpdateItem` with `ADD` plus native TTL expiry — no
+     read-modify-write race and no counter cleanup. The hourly-bucket scheme from the
+     2026-08-05 decision maps directly onto the sort key; keep both the hourly and daily
+     windows and keep the rule that a rejected request consumes nothing.
+   - **Sorted job listing** falls out of the `JOB#<ts>#<jobId>` sort key, replacing the
+     `ORDER BY` + `IX_Jobs_UserId` index.
+
+   Delete `backend/db/schema.sql` and `backend/scripts/apply_schema.py`; the table is defined
+   in the SAM template from Phase 3 onward, and locally by a small setup script.
+2. **Vector search.** `query_culinary_embeddings` loads the `EMBEDDINGS` partition and
+   computes cosine similarity with numpy in-process. This is the same brute-force approach
+   `VECTOR_DISTANCE` was doing — it just moves from the database into the Lambda. Embedding
+   dimension changes from 1536 to **1024** (Titan V2); it is now only a constant, since the
+   vectors are no longer typed by a database column. Re-seed via `backend/db/seed_embeddings.py`.
+3. **HTTP layer.** Convert the 7 HTTP triggers from `azure.functions` blueprints to Lambda
+   handlers taking an API Gateway v2 (payload format 2.0) event. Keep the handlers thin
+   adapters over `shared/` — that is already the shape of the code and it is what keeps the
+   tests portable. Routes, request/response bodies and status codes must not change;
+   `docs/api.md` and `docs/payload-schemas.json` are the contract and the frontend is built
+   against them.
+4. **Orchestration.** Convert both Durable orchestrators to Step Functions ASL, stored as
+   standalone `.asl.json` files (not embedded in the template, so they stay readable and
+   diffable). Stage 1, from `orchestrators/dish_orchestrator.py`:
+
+   ```
+   ModerateImage → Choice(safe?) ─false→ MarkJobFailed
+                 └true→ Choice(has selected_restaurant?)
+                          ├true → SelectRestaurantCandidate
+                          └false→ GeocodeRestaurantCandidates
+                        → Parallel[ VisionGuess | FetchRestaurantMenu ]
+                        → MatchMenuItem → PersistMatchResult → (Identified)
+   Catch(States.ALL) → MarkJobFailed
+   ```
+
+   Stage 2, from `orchestrators/recipe_orchestrator.py`: `QueryCulinaryEmbeddings →
+   GenerateRecreation → PersistRecipeResult`, with `Catch → MarkRecipeFailed` preserving the
+   revert-to-`Identified` behaviour rather than `Failed`.
+
+   **Standard workflows, not Express**: the menu fetch (search + fetch + LLM) can plausibly
+   exceed the 5-minute Express ceiling, and exactly-once execution suits a pipeline where
+   every step costs money.
+5. **Queue + starter.** `shared/queue.py` → SQS via `boto3`. The queue-triggered
+   `orchestrator_starter_queue.py` becomes a Lambda with an SQS event source mapping that
+   flips the job to `Processing` and calls `StartExecution`. Keep the two-call upload
+   protocol exactly as-is (`POST /api/jobs` mints the URL and does *not* enqueue;
+   `POST /api/jobs/{id}/uploaded` enqueues) — that shape exists to fix an upload race, per
+   the 2026-08-05 decision.
+6. **Storage.** `shared/blob.py` → S3 presigned URLs. `generate_blob_sas` (write-only, for
+   direct client upload) → `generate_presigned_url("put_object")`; the read SAS used by
+   moderation and `GET /api/jobs/{id}` → `generate_presigned_url("get_object")`. This removes
+   the current dependency on reading `credential.account_key` directly — presigned URLs are
+   signed with the Lambda's role credentials. Configure CORS on the bucket for the browser
+   `PUT`, replacing `scripts/configure_azurite_cors.py`.
+7. **Moderation.** `shared/content_safety.py` → Rekognition `DetectModerationLabels`
+   (`boto3`, no key). **Preserve the existing policy exactly**: an explicit unsafe verdict
+   fails the job; a service error, timeout, missing config or exhausted quota does not; a
+   missing object is *not* covered by fail-open. Map Rekognition's confidence score onto the
+   existing `CONTENT_SAFETY_REJECT_SEVERITY` threshold concept and rename the setting.
+8. **Model calls.** Route Claude calls through Bedrock (`bedrock-runtime` Converse API) using
+   the Lambda execution role — no API key. This affects `vision_guess`, `generate_recreation`
+   and the extraction half of `fetch_restaurant_menu`. Drop the `anthropic` dependency.
+9. **Menu search — the one real behaviour change.** `fetch_restaurant_menu` is currently a
+   *working* implementation built on Anthropic's server-side `web_search` tool. **Bedrock does
+   not expose that tool.** Split the single tool-using call into three steps: **search** (a
+   third-party SERP API — key in Parameter Store), **fetch** (HTTP GET the top result), then
+   **extract** (Bedrock Claude, structured output). The extraction prompt survives nearly
+   unchanged; search and fetch are new code. Keep the 24-hour `MenuLastFetchedAt` cache gate.
+10. **Auth.** `shared/auth.py` keeps returning a stubbed `oid` via `X-Debug-User-Oid` — do not
+    implement real validation here, it belongs in Phase 3. Swap the frontend's
+    `@azure/msal-react` / `@azure/msal-browser` for a Cognito OIDC client behind the same
+    `useAuth()` interface, still mock-by-default. Both sides are stubs today, which is why
+    this is the cheapest possible moment to switch identity providers.
+11. **Local dev loop.** Rewrite `backend/docker-compose.yml` around **LocalStack (Community)**
+    — S3, SQS, DynamoDB, Step Functions and SSM — replacing Azurite and the SQL Server 2025
+    container. Use `sam local start-api` / `sam local invoke` in place of `func start`.
+    Bedrock, Rekognition and Cognito are **not** in LocalStack Community: the first two call
+    the real service (cheap per call), and Cognito stays stubbed. Keep the
+    `docker compose up -d` → run → `pytest` shape.
+12. **Tests.** Most of the ~133 tests mock at the `shared/` boundary and survive largely
+    intact. Two exceptions: `tests/unit/test_orchestrator.py` (10 tests that drive the Durable
+    generator directly) is replaced by ASL definition tests and/or Step Functions Local, and
+    the 4 integration test files repoint from Azurite/SQL Server to LocalStack. **The suite
+    must be green before Phase 3 starts.**
+13. **Docs.** Update `README.md`, `backend/README.md` and `frontend/README.md` last, once the
+    local loop actually works — they currently document a working Azure-based setup, and
+    rewriting them ahead of the code would replace accurate docs with aspirational ones.
+
+**Explicitly out of scope for Phase 0:** any real AWS resource deployment, real auth, the SAM
+template (Phase 3), CI/CD. Behaviour changes beyond the `web_search` split above.
+
+---
+
+## Phase 1 — Backend only *(built on Azure; being ported in Phase 0)*
+
+**Goal:** working backend code, runnable locally against emulators, no cloud resources.
+
+This phase is **complete in substance** — the pipeline, the two-stage split, rate limiting and
+moderation all exist and are tested. What follows is the target-state description; Phase 0 is
+what brings the existing code up to it.
+
+1. Lambda handlers:
+   - HTTP: accept image upload metadata + GPS coordinates, generate an S3 presigned PUT URL
+     for direct client upload; a second endpoint enqueues the job to SQS once the upload
+     completes.
+   - SQS-triggered starter Lambda that begins the Step Functions execution.
+2. Orchestration as **Step Functions Standard workflows**. This is a dependency chain, not
+   simple parallel fan-out — model it accordingly:
+   - Task: reverse-geocode the uploaded GPS coordinates → candidate restaurant(s) nearby
+     (Google Places) — stubbed lookup, real persistence.
+   - Task: fetch/scrape the top candidate restaurant's menu (SERP API + fetch + Bedrock
      extraction into structured menu items — most restaurant APIs don't return full menu
-     text) — mock/stub for now. Cache results keyed by restaurant ID (menus don't need
-     re-fetching every visit).
-   - Activity (runs in parallel with the two above): call the vision model (Claude API or
-     Azure OpenAI vision) with the uploaded image, prompted for a preliminary dish/element
-     breakdown (component names + visual description per element) — this is a *guess*, not
-     the final answer.
-   - Fan-in step: match the vision model's guess against the real scraped menu items (by
+     text). Cache keyed by restaurant, gated on `MenuLastFetchedAt`.
+   - Task (runs in parallel with the two above): call the vision model via Bedrock with the
+     uploaded image, prompted for a preliminary dish/element breakdown (component names +
+     visual description per element) — this is a *guess*, not the final answer.
+   - Fan-in: match the vision model's guess against the real scraped menu items (by
      name/description similarity). Record which of three outcomes occurred: menu item
      matched (high confidence), restaurant/menu found but no item matched (medium — fall
      back to vision-only), no restaurant found near that GPS (low — vision-only). This
      match is the primary anti-hallucination mechanism, so don't skip it even when stubbed.
-   - Activity: query the vector DB (Azure SQL's native `VECTOR` column, brute-force
-     `VECTOR_DISTANCE` at this scale — no separate vector database) for the closest known
-     culinary technique/recipe embeddings relevant to the matched (or guessed) dish —
-     stub against a local SQL Server container for now.
-   - Activity: structured generator — using the matched real menu item (if found) + visual
+   - Task: retrieve the closest culinary technique/recipe embeddings for the matched (or
+     guessed) dish — cosine similarity computed in-process over the `EMBEDDINGS` partition.
+   - Task: structured generator — using the matched real menu item (if found) + visual
      details + retrieved technique embeddings, generate a full per-element recreation
      method: component list, ingredients per component, step-by-step instructions per
      component. This is the heaviest-output step in the pipeline — expect it to be the
      largest single cost/latency contributor, budget accordingly.
-3. Implement the "read result" HTTP-triggered function: given a job ID, return current
-   status/result from Azure SQL Database.
-4. Local dev setup: Azurite (Storage emulator) for Blob/Queue, a local SQL Server container
-   for the database, `local.settings.json` (gitignored) for local secrets/config.
-5. Write unit tests for each activity function and the orchestrator's chained fan-out/fan-in
-   logic (including the menu-matching step and its three confidence outcomes), mocking
-   external API/LLM calls.
-6. Document required environment variables / app settings in `README.md` or `.env.example`
-   (names only, no real values) so Phase 3 knows what to wire into Key Vault / app settings.
+3. "Read result" HTTP Lambda: given a job ID, return current status/result from DynamoDB.
+4. Local dev setup: LocalStack for S3/SQS/DynamoDB/Step Functions/SSM, `.env` (gitignored)
+   for local config.
+5. Unit tests for each task Lambda and the state machine's chained fan-out/fan-in logic
+   (including the menu-matching step and its three confidence outcomes), mocking external
+   API/model calls.
+6. Document required environment variables in `README.md` / `.env.example` (names only, no
+   real values) so Phase 3 knows what to wire into Parameter Store and function config.
 
-**Local testing method (Phase 1):**
-- Install **Azure Functions Core Tools** to run the Function App locally (`func start`).
-- Run **Azurite** locally (Docker container or npm package) to emulate Blob Storage and
-  Queue Storage — point `local.settings.json`'s `AzureWebJobsStorage` at it.
-- Run **SQL Server in Docker** locally — use the `mcr.microsoft.com/mssql/server:2025-latest`
-  image specifically (not `2022-latest`), since the `VECTOR` data type used for culinary
-  technique embeddings requires SQL Server 2025. Point the connection string in
-  `local.settings.json` at the container (SA password local-dev only, never a real secret).
-- Provide a `docker-compose.yml` in the backend folder that spins up Azurite + the SQL Server
-  2025 container together, so `docker compose up` + `func start` is the full local dev loop.
-- Keep a `schema.sql` (or Alembic migrations if using SQLAlchemy) as the single source of
-  truth for table definitions — applied locally by the setup script and later in Phase 3 by
-  the deployment pipeline, so local and prod schemas never drift apart.
-- Connect from Python via `pyodbc` or `SQLAlchemy` (`mssql+pyodbc` dialect). For interactive
-  poking-around during development, use Azure Data Studio or the VS Code `mssql` extension —
-  both connect to the local container the same way they'll connect to the real Azure SQL
-  Database later, so there's no tooling switch between local and prod.
-- Unit tests: `pytest` for the activity functions and orchestrator logic, with external
-  calls (Claude/OpenAI vision, restaurant/menu scraping, menu-matching) mocked — no real API
-  keys or network calls needed to run the test suite.
-- Integration-style local tests: a smaller set of tests that hit the running
-  Azurite/local SQL Server container directly (queue message round-trip, blob SAS URL
-  generation, real INSERT/SELECT and `VECTOR_DISTANCE` queries) to catch issues unit tests
-  with mocks would miss.
-- Document the exact local run commands (e.g. `docker compose up -d`, `func start`,
-  `pytest`) in `README.md` so this is repeatable without re-deriving the setup each time.
+**Local testing method:**
+- **AWS SAM CLI** to run handlers locally (`sam local start-api`, `sam local invoke`).
+- **LocalStack (Community)** via `docker compose` for S3, SQS, DynamoDB, Step Functions and
+  SSM. Point `AWS_ENDPOINT_URL` at it. **DynamoDB Local** is a lighter alternative when only
+  the data layer is needed.
+- Bedrock, Rekognition and Cognito are not emulated by LocalStack Community — Bedrock and
+  Rekognition call the real service, Cognito stays stubbed via `X-Debug-User-Oid`.
+- The DynamoDB table definition lives in the SAM template (single source of truth from Phase
+  3 onward) and is created locally by a setup script, so local and prod never drift apart.
+- Connect from Python via `boto3`. For interactive poking-around, use the AWS CLI against the
+  LocalStack endpoint or NoSQL Workbench — the same tooling works against real DynamoDB later,
+  so there's no switch between local and prod.
+- Unit tests: `pytest` with external calls (Bedrock, SERP API, Google Places, Rekognition)
+  mocked — no real credentials needed to run the suite.
+- Integration-style local tests: a smaller set hitting LocalStack directly (SQS round-trip,
+  presigned URL generation, real DynamoDB writes/queries, the embedding scan) to catch what
+  mocked unit tests would miss.
+- Document the exact run commands (`docker compose up -d`, `sam local start-api`, `pytest`)
+  in `README.md` so this is repeatable without re-deriving the setup.
 
-**Explicitly out of scope for Phase 1:** any real Azure resource deployment, the React
+**Explicitly out of scope for Phase 1:** any real AWS resource deployment, the React
 frontend, auth/token validation (build the endpoints assuming an authenticated `oid` is
 already present on the request — wire real validation in Phase 3), CI/CD.
 
 ---
 
-## Phase 2 — Frontend only
+## Phase 2 — Frontend only *(built; auth layer being ported in Phase 0)*
 
-**Goal:** working React app that talks to the Phase 1 backend (running locally or against
-whatever backend endpoint exists), no infra/CI yet.
+**Goal:** working React app that talks to the Phase 1 backend, no infra/CI yet.
 
-Steps:
-1. Scaffold the React app (Vite or CRA — pick one and stick with it).
-2. Build the core screens: photo capture/upload (with GPS permission prompt), job status
-   view, result view showing the matched restaurant/menu item (with its confidence
-   level/outcome — menu-matched vs. vision-only) plus the per-element recreation: each
-   dish component as its own card/section with an ingredient list and step-by-step method.
-3. Wire photo upload to hit the backend's SAS-URL endpoint, then upload directly to Blob
-   Storage using the returned SAS URL (not through the Function).
-4. Add `@azure/msal-react` for Entra External ID sign-in/sign-out and token acquisition,
-   configured via environment variables (tenant authority URL, client ID) — actual tenant
-   won't exist until Phase 3, so stub/mock auth locally until then, but build the integration
-   points now.
-5. Add a real-time result listener (SignalR/Web PubSub client) — stub against a local mock
-   until the Phase 3 SignalR resource exists.
-6. Basic loading/error states, especially for: upload failure, job still processing, job
-   failed, unauthenticated.
+The app is built — Vite + React 18 + TypeScript, six screens, seventeen components, polling
+job status. The only migration work is step 4 below, handled in Phase 0.
 
-**Explicitly out of scope for Phase 2:** any Azure resource deployment, CI/CD, finalizing the
-AI feature logic (that's Phase 3 — assume the backend contract from Phase 1 is stable enough
-to build against).
+1. React app scaffolded with Vite.
+2. Core screens: photo capture/upload (with GPS permission prompt), job status view, result
+   view showing the matched restaurant/menu item (with its confidence level/outcome —
+   menu-matched vs. vision-only) plus the per-element recreation: each dish component as its
+   own card/section with an ingredient list and step-by-step method.
+3. Photo upload hits the backend's presigned-URL endpoint, then uploads directly to S3 using
+   the returned URL (not through Lambda).
+4. **Amazon Cognito** sign-in/sign-out and token acquisition via an OIDC client, configured
+   through environment variables (user pool domain, client ID) — the real user pool won't
+   exist until Phase 3, so keep the existing mock behind the same `useAuth()` interface.
+5. Result delivery is **polling** (`GET /api/jobs/{id}` every 3s). `lib/jobs/useJobPolling.ts`
+   is the documented seam if a push channel (AWS IoT Core / API Gateway WebSockets) is ever
+   added — see `docs/decisions.md`, 2026-07-28.
+6. Loading/error states, especially for: upload failure, job still processing, job failed,
+   unauthenticated.
+
+**Explicitly out of scope for Phase 2:** any AWS resource deployment, CI/CD, finalizing the
+AI feature logic (that's Phase 3).
 
 ---
 
 ## Phase 3 — Infra only + AI feature
 
-**Goal:** all Azure resources provisioned via Bicep, and the AI feature (GPS→restaurant
-lookup, menu scraping, vision model, menu-matching/grounding, per-element structured
-recipe generator, vector search) fully wired end-to-end against real cloud resources, in
-prod only.
+**Goal:** all AWS resources provisioned via SAM/CloudFormation, and the AI feature (GPS →
+restaurant lookup, menu scraping, vision model, menu-matching/grounding, per-element
+structured recipe generator, embedding retrieval) fully wired end-to-end against real cloud
+resources, in prod only.
 
-Steps:
-1. Write Bicep modules for:
-   - Static Web App (React hosting)
-   - Function App (Consumption or Flex Consumption plan — check current free grant before
-     picking the plan) + its required storage account (including the separate storage
-     account Durable Functions needs for orchestration state)
-   - Azure SQL Database (server + free-offer database — 100,000 vCore-seconds, 32 GB
-     data/backup storage free/month, up to 10 free databases per subscription; set
-     behavior-on-limit to auto-pause, not bill-overage, so a bug/spike can't surprise-bill)
-   - Storage account: Blob container (uploads) + Queue (job queue)
-   - Microsoft Entra External ID tenant + app registrations (SPA + API) — check current
-     50,000 MAU free tier
-   - Key Vault (for LLM API keys, any third-party API keys, Entra client secret if used)
-   - SignalR Service or Web PubSub (start on Free tier; note its connection/message limits)
-   - Azure AI Content Safety (for image moderation) if in scope — check free tier
-2. Wire the Function App's app settings to Key Vault references for all secrets.
-3. Apply `schema.sql` (from Phase 1) to the real Azure SQL Database via a deployment script
-   step or idempotent migration tool — not the Azure Portal — so the schema stays in lockstep
-   with local dev.
+Do not start this phase until Phase 0's test suite is green.
+
+1. Write `infra/template.yaml` (SAM) declaring:
+   - **S3 + CloudFront** for the React build, with Origin Access Control and a lifecycle rule
+     on the uploads bucket so photos don't accumulate forever.
+   - **Lambda functions** — one `CodeUri` shared via `Globals:`, one `Handler:` per function.
+     Note `sam build` produces a separate zip per function, so put third-party dependencies in
+     a shared `AWS::Serverless::LayerVersion` rather than the function package; `boto3` is
+     already present in the runtime and must not be vendored.
+   - **API Gateway HTTP API** with a Cognito JWT authorizer (see Global Rule 1 on the
+     12-month free tier and the Function URL alternative).
+   - **Step Functions** state machines referencing the `.asl.json` files via `DefinitionUri`.
+   - **DynamoDB table** — provisioned 25/25 or below, TTL enabled on the rate-limit attribute.
+   - **SQS** job queue with a dead-letter queue.
+   - **Cognito** user pool + SPA app client (hosted UI or a custom sign-in page).
+   - **SSM Parameter Store** `SecureString` parameters for the SERP API key and Google Places
+     key. Prefer SAM policy templates and `Connectors` over hand-written IAM where possible;
+     everything else (Bedrock, S3, DynamoDB, SQS, Rekognition) authenticates by role.
+   - **CloudWatch** log groups with an explicit retention period — the default is "never
+     expire", which is a slow-burning cost.
+2. Grant model access for the chosen Claude and Titan models in the Bedrock console for the
+   deployment region (a one-time manual step CloudFormation cannot do).
+3. Create the DynamoDB table from the template, not the console, so local and prod stay in
+   lockstep.
 4. Finalize the AI feature against real resources:
-   - Restaurant lookup: real Google Places/Yelp Fusion calls against the uploaded GPS.
-   - Menu fetch/scrape: real web search + fetch + LLM extraction — decide here whether this
-     uses Claude/OpenAI's native web search tool or a third-party SERP API (see Global Rule
-     1 — check per-call cost); avoid Azure AI Foundry Grounding with Bing unless a specific
-     requirement demands it, given its significantly higher per-transaction cost.
-   - Vision model call: Claude API (Sonnet or Haiku) or Azure OpenAI (GPT-4o-mini), whichever
-     was chosen — implement retries, timeouts, and structured-output parsing/validation for
-     the preliminary dish/element breakdown.
-   - Menu-matching step: implement the real matching logic (name/description similarity
-     between the vision model's guess and real `MenuItems` rows) and persist which of the
-     three confidence outcomes occurred — this is the anti-hallucination mechanism, so add
-     specific test coverage for all three outcomes, not just the happy path.
-   - Vector DB integration: real Azure SQL `VECTOR` column queries (`VECTOR_DISTANCE`)
-     against real culinary-technique embeddings (generate embeddings via the chosen model's
-     embedding endpoint) — note DiskANN indexing is still private-preview for Azure SQL, so
-     this is a brute-force scan at MVP scale; revisit if the embeddings table grows large.
-   - Structured generator: final call producing the per-element ingredient lists + steps,
-     grounded in the matched menu item (if any) + retrieved technique embeddings — this is
-     the heaviest-output, highest-cost call in the pipeline, so budget and rate-limit around
-     it specifically (see step 6).
-5. Add basic rate limiting on the upload endpoint (e.g. a per-user counter in Azure SQL) to
-   cap AI-call spend from any single user — important here given the pipeline is now 5+
-   chained AI/API calls per photo, not 3 parallel ones.
-6. Add image content moderation before an uploaded photo is processed.
-7. Cache aggressively: `Restaurants.MenuLastFetchedAt` should gate re-scraping the same
+   - Restaurant lookup: real Google Places calls against the uploaded GPS.
+   - Menu fetch/scrape: real SERP API search + fetch + Bedrock extraction (see Global Rule 1 —
+     check per-call cost of the chosen SERP provider and its free grant).
+   - Vision model call: Bedrock Claude — implement retries, timeouts, and structured-output
+     parsing/validation for the preliminary dish/element breakdown.
+   - Menu-matching step: real matching logic (name/description similarity between the vision
+     guess and the real menu items) and persist which of the three confidence outcomes
+     occurred — this is the anti-hallucination mechanism, so add specific test coverage for
+     all three outcomes, not just the happy path.
+   - Embeddings: real Titan Text Embeddings V2 vectors (1024-d) seeded into the `EMBEDDINGS`
+     partition, retrieved by in-Lambda cosine similarity. Revisit only if the corpus grows
+     large enough that scanning it stops being trivially cheap.
+   - Structured generator: final Bedrock call producing the per-element ingredient lists +
+     steps, grounded in the matched menu item (if any) + retrieved technique embeddings — the
+     heaviest-output, highest-cost call in the pipeline, so budget and rate-limit around it
+     specifically (see step 6).
+5. Real Cognito JWT validation on the API, replacing the `X-Debug-User-Oid` stub on both the
+   backend and the frontend.
+6. Per-user rate limiting already exists in DynamoDB — verify the separate scan and recipe
+   quotas hold against the real table, including the TTL expiry behaviour.
+7. Image content moderation via Rekognition before an uploaded photo is processed.
+8. Cache aggressively: the `MenuLastFetchedAt` gate should prevent re-scraping the same
    restaurant's menu on every visit, not just every job.
-8. Deploy Bicep to prod manually (`az deployment group create`) to validate everything end to
-   end before automating deployment in Phase 4.
-9. For every resource above, note in the PR/commit: does it have a free tier, what's the
-   free-tier limit, and what's the overage rate — per Global Rule 1.
+9. Deploy manually (`sam build && sam deploy --guided`) to validate everything end to end
+   before automating deployment in Phase 4.
+10. For every resource above, note in the PR/commit: does it have a free tier, is that grant
+    always-free or 12-month, and what's the overage rate — per Global Rule 1.
 
 **Explicitly out of scope for Phase 3:** GitHub Actions workflows (deployment stays manual
 this phase), staging environment.
@@ -230,76 +394,81 @@ this phase), staging environment.
 
 ## Phase 4 — CI/CD
 
-**Goal:** automate what Phase 1-3 built manually, still prod-only.
+**Goal:** automate what Phases 0-3 built manually, still prod-only.
 
-Steps:
-1. GitHub Actions workflow: `deploy-infra.yml` — runs `az deployment group create` against
-   `infra/main.bicep` on merge to `main` (or manual trigger), using OIDC federated
-   credentials for Azure login (no long-lived service principal secret stored in GitHub).
-2. GitHub Actions workflow: `deploy-backend.yml` — builds and deploys the Function App
-   (`func azure functionapp publish` or zip deploy) on merge to `main`.
-3. GitHub Actions workflow: `deploy-frontend.yml` — builds the React app and deploys to
-   Static Web Apps (SWA has an official GitHub Action for this).
-4. Add a minimal lint/build-check job that runs on every PR (before merge, not just on
-   `main`) — just enough to catch obvious breakage. Full unit + e2e test automation is
-   deferred to Phase 5, so don't build out the full test suite integration here.
-5. Store non-secret config (resource group name, region, etc.) as GitHub Actions variables;
+1. GitHub Actions workflow: `deploy-infra.yml` — runs `sam build && sam deploy
+   --no-confirm-changeset --no-fail-on-empty-changeset` on merge to `main` (or manual
+   trigger), authenticating via **OIDC federated credentials to an AWS IAM role** (no
+   long-lived access keys stored in GitHub).
+2. GitHub Actions workflow: `deploy-backend.yml` — builds and deploys the Lambda functions on
+   merge to `main`. (With SAM this may reasonably fold into `deploy-infra.yml`, since the
+   functions and their infrastructure are one stack — decide and record which.)
+3. GitHub Actions workflow: `deploy-frontend.yml` — builds the React app, syncs to the S3
+   site bucket, and creates a CloudFront invalidation.
+4. A minimal lint/build-check job that runs on every PR (before merge, not just on `main`) —
+   including `sam validate --lint` — just enough to catch obvious breakage. Full unit + e2e
+   test automation is deferred to Phase 5, so don't build out the full test suite integration
+   here.
+5. Store non-secret config (stack name, region, bucket names) as GitHub Actions variables;
    secrets referenced by the workflows (if any are needed beyond OIDC) go in GitHub Actions
    secrets, never committed.
-6. Add a manually-triggered "teardown" or "scale to zero" workflow to help control cost
-   between active development/demo periods, since this is prod-only with no staging safety
-   net yet.
+6. A manually-triggered "teardown" workflow (`sam delete`) to help control cost between active
+   development/demo periods, since this is prod-only with no staging safety net yet. Note that
+   most of this stack scales to zero on its own — the teardown is for peace of mind, not a
+   standing hourly bill.
 
 **Explicitly out of scope for Phase 4:** staging environment/second GitHub environment,
-blue-green or slot-based deployments (defer until staging exists), full unit/e2e test
-automation in the pipeline (Phase 5).
+blue-green or canary deployments (defer until staging exists), full unit/e2e test automation
+in the pipeline (Phase 5).
 
 ---
 
 ## Phase 5 — Unit testing + e2e testing in CI/CD
 
-**Goal:** the Phase 1 backend unit tests and Phase 2 frontend tests run automatically on
-every PR, plus a proper end-to-end test suite exercising the full flow against prod (or a
-production-like deployed instance), all wired into the GitHub Actions pipeline.
+**Goal:** the backend unit tests and frontend tests run automatically on every PR, plus a
+proper end-to-end test suite exercising the full flow against prod (or a production-like
+deployed instance), all wired into the GitHub Actions pipeline.
 
-Steps:
-1. **Backend unit tests in CI:** add a GitHub Actions job that spins up Azurite + the
-   `mssql/server:2025-latest` SQL Server container as service containers (or via
-   `docker compose up` in the job) and runs the Phase 1 `pytest` suite (both the mocked unit
-   tests and the container-backed integration tests, including the menu-matching outcome
-   tests) on every PR — fail the PR check if tests fail.
-2. **Frontend unit tests in CI:** add a job that runs the React app's test suite (Jest/Vitest
-   + React Testing Library) and lint on every PR.
-3. **E2E test suite:** build an end-to-end test suite (Playwright recommended — good Azure
-   DevOps/GitHub Actions support and handles file upload + async waiting well) that covers
-   the full user journey: sign in (Entra External ID test/demo account) → upload a photo with
-   GPS → poll or listen for the job result → verify structured result is returned and
-   displayed correctly.
-4. **Where e2e runs:** run e2e tests against the deployed prod environment after a deploy (a
-   `post-deploy` job in `deploy-frontend.yml`/a dedicated `e2e.yml` workflow triggered after
-   `deploy-infra.yml`/`deploy-backend.yml`/`deploy-frontend.yml` succeed), since there's no
-   staging environment yet — be mindful this means e2e runs will incur real AI-call cost
-   (vision model + any internet-lookup tool) and consume Entra External ID MAU, so keep the
-   e2e suite lean (happy path + a couple of key failure paths) rather than exhaustive.
+1. **Backend unit tests in CI:** a GitHub Actions job that runs LocalStack as a service
+   container (or via `docker compose up` in the job) and runs the `pytest` suite — both the
+   mocked unit tests and the container-backed integration tests, including the menu-matching
+   outcome tests — on every PR. Fail the PR check if tests fail.
+2. **Frontend unit tests in CI:** a job that runs the React test suite (Vitest + React Testing
+   Library) and lint on every PR. Note the frontend currently has **zero** tests; this phase
+   is where that gets fixed.
+3. **E2E test suite:** Playwright, covering the full user journey: sign in (Cognito test/demo
+   account) → upload a photo with GPS → poll for the job result → press "Reverse engineer" →
+   verify the structured result is returned and displayed correctly.
+4. **Where e2e runs:** against the deployed prod environment after a deploy (a `post-deploy`
+   job, or a dedicated `e2e.yml` triggered after the deploy workflows succeed), since there's
+   no staging environment yet — be mindful this means e2e runs incur real Bedrock and SERP API
+   cost and consume Cognito MAU, so keep the suite lean (happy path + a couple of key failure
+   paths) rather than exhaustive.
 5. **Test data hygiene:** use a dedicated test/demo user account (not a real user) for e2e
-   runs, and clean up any Azure SQL Database rows / Blob Storage files the e2e run creates
-   afterward (or tag them so they're excluded from real usage metrics/analytics).
-6. **Gate deploys on tests where practical:** for the backend/frontend unit test jobs (step
-   1-2), make them required checks before merge to `main`. E2E (step 3-4) runs post-deploy by
-   necessity here (no staging to run it against pre-deploy), so treat e2e failures as an
-   alert/rollback trigger rather than a pre-merge gate for now — this gap closes once a
-   staging environment exists.
+   runs, and clean up any DynamoDB items / S3 objects the run creates afterward (or tag them
+   so they're excluded from real usage metrics). The uploads bucket lifecycle rule helps but
+   is not a substitute.
+6. **Gate deploys on tests where practical:** make the backend/frontend unit test jobs
+   (steps 1-2) required checks before merge to `main`. E2E (steps 3-4) runs post-deploy by
+   necessity here, so treat e2e failures as an alert/rollback trigger rather than a pre-merge
+   gate for now — this gap closes once a staging environment exists.
 
-**Explicitly out of scope for Phase 5:** running e2e against a staging environment
-pre-deploy (not possible yet — no staging exists), load/performance testing.
+**Explicitly out of scope for Phase 5:** running e2e against a staging environment pre-deploy
+(not possible yet — no staging exists), load/performance testing.
 
 ---
 
 ## Future (not yet scoped — do not build ahead of this)
 
-- Staging environment: second resource group, second Entra External ID app registration (or
-  reuse with a different redirect URI), GitHub environment with its own secrets/variables,
-  a promotion workflow (staging → prod), and — once staging exists — running the Phase 5 e2e
-  suite pre-deploy against staging instead of post-deploy against prod.
-- Any premium/paid-tier upgrades once free-tier limits are actually being approached in
-  practice (Azure SQL Database vCore-seconds/storage, SignalR connections, Entra MAU, etc.).
+- Staging environment: second CloudFormation stack, second Cognito app client (or a different
+  callback URL), a GitHub environment with its own secrets/variables, a promotion workflow
+  (staging → prod), and — once staging exists — running the Phase 5 e2e suite pre-deploy
+  against staging instead of post-deploy against prod.
+- Push-based result delivery (API Gateway WebSockets or AWS IoT Core over MQTT) replacing the
+  3-second poll, if polling ever becomes a real cost or UX problem.
+- A vector index (OpenSearch Serverless, Aurora + pgvector, or S3 Vectors) if the culinary
+  embedding corpus outgrows a brute-force in-Lambda scan. Note OpenSearch Serverless has a
+  minimum billed capacity and no free tier — this is a "when it's actually needed" change,
+  per Global Rule 1.
+- Any paid-tier upgrades once free-tier limits are actually being approached in practice
+  (DynamoDB capacity, Cognito MAU, CloudFront transfer, etc.).
