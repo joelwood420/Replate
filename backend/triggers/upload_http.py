@@ -1,9 +1,10 @@
-"""POST /api/jobs - reserve an upload slot and create the job row.
+"""POST /api/jobs - reserve an upload slot and create the job.
 
 Deliberately does NOT enqueue the job. The client only uploads the photo after this
-call returns the SAS URL, so enqueuing here raced the upload - the orchestrator could
-start, and try to read the blob, before the image existed. The client signals it has
-finished via POST /api/jobs/{jobId}/uploaded instead (triggers/job_uploaded_http.py).
+call returns the presigned URL, so enqueuing here raced the upload - the pipeline
+could start, and try to read the object, before the image existed. The client
+signals it has finished via POST /api/jobs/{jobId}/uploaded instead
+(triggers/job_uploaded_http.py).
 """
 
 import json
@@ -11,7 +12,7 @@ import uuid
 
 import azure.functions as func
 
-from shared import blob, rate_limit, repository
+from shared import rate_limit, repository, storage
 from shared.auth import get_user_oid
 from shared.models import JobStatus
 
@@ -93,9 +94,10 @@ def run(body: dict, user_oid: str) -> dict:
         return {"status_code": 400, "body": {"error": error}}
 
     # Minted before the quota check. It costs nothing to throw away on a throttled
-    # request - the URL is signed locally from the caller's own credentials, and the
-    # object it names is never created unless the client uploads to it.
-    upload_info = blob.generate_upload_sas_url()
+    # request - the URL is signed locally from the caller's own credentials (the
+    # Lambda's role), and the object it names is never created unless the client
+    # actually uploads to it.
+    upload_info = storage.generate_upload_url()
 
     repository.ensure_user(user_oid)
 
@@ -107,14 +109,14 @@ def run(body: dict, user_oid: str) -> dict:
             "headers": {"Retry-After": str(quota["retry_after_seconds"])},
         }
 
-    job_id = _create_job(user_oid, body, upload_info["blob_url"])
+    job_id = _create_job(user_oid, body, upload_info["key"])
 
     return {
         "status_code": 201,
         "body": {
             "job_id": job_id,
-            "upload_url": upload_info["sas_url"],
-            "blob_url": upload_info["blob_url"],
+            "upload_url": upload_info["upload_url"],
+            "image_key": upload_info["key"],
         },
     }
 

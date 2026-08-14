@@ -22,7 +22,7 @@ def dish_orchestrator(context: df.DurableOrchestrationContext):
         # First, and on its own: everything below it costs money, and a rejected
         # photo should cost one moderation call and nothing else.
         moderation = yield context.call_activity(
-            "moderate_image", {"image_blob_url": job_input["image_blob_url"]}
+            "moderate_image", {"image_key": job_input["image_key"]}
         )
         if not moderation["allowed"]:
             yield context.call_activity(
@@ -31,7 +31,7 @@ def dish_orchestrator(context: df.DurableOrchestrationContext):
             )
             return {"job_id": job_input["job_id"], "status": JobStatus.FAILED}
 
-        vision_task = context.call_activity("vision_guess", {"image_blob_url": job_input["image_blob_url"]})
+        vision_task = context.call_activity("vision_guess", {"image_key": job_input["image_key"]})
 
         if job_input.get("selected_restaurant_id"):
             candidates = yield context.call_activity(

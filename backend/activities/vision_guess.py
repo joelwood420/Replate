@@ -40,8 +40,8 @@ CANNED_GUESSES = [
 
 
 def run(activity_input: dict) -> dict:
-    image_blob_url = activity_input.get("image_blob_url") or ""
-    digest = hashlib.sha256(image_blob_url.encode("utf-8")).digest()
+    image_key = activity_input.get("image_key") or ""
+    digest = hashlib.sha256(image_key.encode("utf-8")).digest()
     index = digest[0] % len(CANNED_GUESSES)
     return copy.deepcopy(CANNED_GUESSES[index])
 

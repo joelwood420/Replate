@@ -2,7 +2,7 @@ import uuid
 
 import pytest
 
-from shared import blob, config, ddb
+from shared import config, ddb, queue, storage
 
 
 @pytest.fixture
@@ -26,33 +26,42 @@ def ddb_table():
 
 
 @pytest.fixture
+def s3_bucket():
+    """The uploads bucket, created if absent. Skips when S3 is unreachable."""
+    storage.reset_client_cache()
+    bucket = config.s3_bucket_uploads()
+    try:
+        client = storage.get_client()
+        existing = {entry["Name"] for entry in client.list_buckets().get("Buckets", [])}
+        if bucket not in existing:
+            kwargs = {"Bucket": bucket}
+            region = config.aws_region()
+            # us-east-1 is the one region that rejects an explicit location
+            # constraint, so it has to be omitted rather than set.
+            if region != "us-east-1":
+                kwargs["CreateBucketConfiguration"] = {"LocationConstraint": region}
+            client.create_bucket(**kwargs)
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"S3 endpoint not reachable at {config.aws_endpoint_url() or 'default'}: {exc}")
+    return bucket
+
+
+@pytest.fixture
+def sqs_queue():
+    """The jobs queue, created if absent. Skips when SQS is unreachable."""
+    queue.reset_client_cache()
+    try:
+        return queue._ensure_queue()
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"SQS endpoint not reachable at {config.aws_endpoint_url() or 'default'}: {exc}")
+
+
+@pytest.fixture
 def unique_user_oid():
     """A fresh user id per test, so tests sharing one table cannot collide."""
     return str(uuid.uuid4())
 
 
 @pytest.fixture
-def blob_service_client():
-    try:
-        client = blob._service_client()
-        client.get_service_properties()
-    except Exception as exc:
-        pytest.skip(f"Azurite blob endpoint not reachable: {exc}")
-    return client
-
-
-@pytest.fixture
-def queue_client():
-    from shared.queue import _queue_client
-
-    try:
-        client = _queue_client()
-        client.get_queue_properties()
-    except Exception as exc:
-        pytest.skip(f"Azurite queue endpoint not reachable: {exc}")
-    return client
-
-
-@pytest.fixture
-def unique_container_name():
-    return f"test-{uuid.uuid4().hex[:12]}"
+def unique_key():
+    return f"uploads/test-{uuid.uuid4().hex[:12]}.jpg"

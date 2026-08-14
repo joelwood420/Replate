@@ -22,20 +22,22 @@ def ddb_table_name() -> str:
     return os.environ.get("DDB_TABLE_NAME", "replate")
 
 
-def azure_storage_connection_string() -> str:
-    return os.environ["AzureWebJobsStorage"]
+def s3_bucket_uploads() -> str:
+    return os.environ.get("S3_BUCKET_UPLOADS", "replate-uploads")
 
 
-def blob_container_uploads() -> str:
-    return os.environ.get("BLOB_CONTAINER_UPLOADS", "uploads")
+def sqs_queue_url() -> str:
+    # Set from the SAM template in a deployed environment. Blank locally, where
+    # shared/queue.py falls back to creating the queue by name against LocalStack.
+    return os.environ.get("SQS_QUEUE_URL", "").strip()
 
 
-def queue_name_jobs() -> str:
-    return os.environ.get("QUEUE_NAME_JOBS", "jobs")
+def sqs_queue_name() -> str:
+    return os.environ.get("SQS_QUEUE_NAME", "replate-jobs")
 
 
-def sas_token_expiry_minutes() -> int:
-    return int(os.environ.get("SAS_TOKEN_EXPIRY_MINUTES", "15"))
+def presigned_url_expiry_minutes() -> int:
+    return int(os.environ.get("PRESIGNED_URL_EXPIRY_MINUTES", "15"))
 
 
 def menu_cache_ttl_hours() -> int:

@@ -13,7 +13,7 @@ def _load_job(job_id: str) -> dict:
     if job is None:
         raise ValueError(f"Job not found: {job_id}")
     result = {
-        "image_blob_url": job["image_key"],
+        "image_key": job["image_key"],
         "latitude": job.get("latitude"),
         "longitude": job.get("longitude"),
     }
@@ -34,7 +34,7 @@ async def handle_queue_message(message_body: bytes, client) -> None:
     await client.start_new("dish_orchestrator_trigger", instance_id=job_id, client_input=orchestration_input)
 
 
-@bp.queue_trigger(arg_name="msg", queue_name=config.queue_name_jobs(), connection="AzureWebJobsStorage")
+@bp.queue_trigger(arg_name="msg", queue_name=config.sqs_queue_name(), connection="AzureWebJobsStorage")
 @bp.durable_client_input(client_name="client")
 async def orchestrator_starter_queue(msg, client) -> None:
     await handle_queue_message(msg.get_body(), client)

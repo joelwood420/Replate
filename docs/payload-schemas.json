@@ -160,11 +160,11 @@
             "upload_url": {
               "type": "string",
               "format": "uri",
-              "description": "Short-lived, write-only SAS URL. Client PUTs photo bytes directly to Blob Storage with header x-ms-blob-type: BlockBlob."
+              "description": "Short-lived, write-only presigned S3 URL. Client PUTs photo bytes directly to S3 with it. No special headers required."
             },
-            "blob_url": { "type": "string", "format": "uri", "description": "The bare blob URL (no SAS token), stored server-side." }
+            "image_key": { "type": "string", "description": "S3 object key (uploads/<uuid>.jpg) the job was created against. Stored server-side; returned for traceability." }
           },
-          "required": ["job_id", "upload_url", "blob_url"],
+          "required": ["job_id", "upload_url", "image_key"],
           "additionalProperties": false
         },
         "400": { "$ref": "#/$defs/ErrorResponse" },

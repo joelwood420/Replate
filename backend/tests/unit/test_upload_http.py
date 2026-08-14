@@ -11,9 +11,13 @@ _OWNER = "user-oid-1"
 @pytest.fixture(autouse=True)
 def stub_presigned_url(monkeypatch):
     monkeypatch.setattr(
-        upload_http.blob,
-        "generate_upload_sas_url",
-        lambda: {"blob_url": "uploads/blob.jpg", "sas_url": "https://x/uploads/blob.jpg?sig=abc"},
+        upload_http.storage,
+        "generate_upload_url",
+        lambda: {
+            "key": "uploads/photo.jpg",
+            "upload_url": "https://s3/uploads/photo.jpg?sig=abc",
+            "expiry": "2026-08-14T12:00:00+00:00",
+        },
     )
 
 
@@ -36,11 +40,12 @@ def test_generates_upload_url_and_creates_the_job(ddb_table):
     result = upload_http.run({"latitude": 40.7, "longitude": -74.0}, _OWNER)
 
     assert result["status_code"] == 201
-    assert result["body"]["blob_url"] == "uploads/blob.jpg"
-    assert result["body"]["upload_url"] == "https://x/uploads/blob.jpg?sig=abc"
+    assert result["body"]["image_key"] == "uploads/photo.jpg"
+    assert result["body"]["upload_url"] == "https://s3/uploads/photo.jpg?sig=abc"
 
     job = repository.get_job(result["body"]["job_id"])
     assert job["user_id"] == _OWNER
+    assert job["image_key"] == "uploads/photo.jpg"
     assert job["latitude"] == pytest.approx(40.7)
 
 

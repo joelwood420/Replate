@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import json
 from unittest.mock import MagicMock
 
@@ -14,7 +14,7 @@ def _create_job(**overrides):
         "job_id": "job-1",
         "user_oid": "user-1",
         "status": JobStatus.QUEUED,
-        "image_key": "https://x/blob",
+        "image_key": "uploads/photo.jpg",
         "latitude": 40.7,
         "longitude": -74.0,
     }
@@ -27,7 +27,7 @@ def test_build_orchestration_input_marks_processing_and_returns_job_data(ddb_tab
 
     result = starter.build_orchestration_input("job-1")
 
-    assert result == {"job_id": "job-1", "image_blob_url": "https://x/blob", "latitude": 40.7, "longitude": -74.0}
+    assert result == {"job_id": "job-1", "image_key": "uploads/photo.jpg", "latitude": 40.7, "longitude": -74.0}
     assert repository.get_job("job-1")["status"] == JobStatus.PROCESSING
 
 
@@ -38,7 +38,7 @@ def test_build_orchestration_input_includes_selected_restaurant_id_when_set(ddb_
 
     assert result == {
         "job_id": "job-1",
-        "image_blob_url": "https://x/blob",
+        "image_key": "uploads/photo.jpg",
         "latitude": 40.7,
         "longitude": -74.0,
         "selected_restaurant_id": "place-1",
@@ -63,7 +63,7 @@ def test_handle_queue_message_decodes_message_and_starts_orchestration(monkeypat
     monkeypatch.setattr(
         starter,
         "build_orchestration_input",
-        lambda job_id: {"job_id": job_id, "image_blob_url": "u", "latitude": 1.0, "longitude": 2.0},
+        lambda job_id: {"job_id": job_id, "image_key": "u", "latitude": 1.0, "longitude": 2.0},
     )
 
     message_body = json.dumps({"job_id": "job-1"}).encode("utf-8")
@@ -82,4 +82,4 @@ def test_handle_queue_message_decodes_message_and_starts_orchestration(monkeypat
 
     assert started["name"] == "dish_orchestrator_trigger"
     assert started["instance_id"] == "job-1"
-    assert started["client_input"] == {"job_id": "job-1", "image_blob_url": "u", "latitude": 1.0, "longitude": 2.0}
+    assert started["client_input"] == {"job_id": "job-1", "image_key": "u", "latitude": 1.0, "longitude": 2.0}

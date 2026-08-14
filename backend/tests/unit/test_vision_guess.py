@@ -1,8 +1,8 @@
-from activities import vision_guess
+﻿from activities import vision_guess
 
 
 def test_returns_stub_output_matching_expected_shape():
-    result = vision_guess.run({"image_blob_url": "https://example.com/photo.jpg"})
+    result = vision_guess.run({"image_key": "https://example.com/photo.jpg"})
 
     assert set(result.keys()) == {"dish_name_guess", "cuisine_guess", "elements"}
     assert isinstance(result["dish_name_guess"], str) and result["dish_name_guess"]
@@ -13,14 +13,14 @@ def test_returns_stub_output_matching_expected_shape():
 
 
 def test_confidence_values_are_bounded_0_to_1():
-    result = vision_guess.run({"image_blob_url": "https://example.com/another.jpg"})
+    result = vision_guess.run({"image_key": "https://example.com/another.jpg"})
 
     for element in result["elements"]:
         assert 0.0 <= element["confidence"] <= 1.0
 
 
 def test_deterministic_for_same_input():
-    first = vision_guess.run({"image_blob_url": "https://example.com/same.jpg"})
-    second = vision_guess.run({"image_blob_url": "https://example.com/same.jpg"})
+    first = vision_guess.run({"image_key": "https://example.com/same.jpg"})
+    second = vision_guess.run({"image_key": "https://example.com/same.jpg"})
 
     assert first == second

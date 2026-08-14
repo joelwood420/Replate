@@ -1,25 +1,35 @@
-services:
-  azurite:
-    image: mcr.microsoft.com/azure-storage/azurite
-    command: "azurite --location /data --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 --skipApiVersionCheck"
-    ports:
-      - "10000:10000" # Blob
-      - "10001:10001" # Queue
-      - "10002:10002" # Table
-    volumes:
-      - azurite-data:/data
+# Local AWS emulation. Replaces the Azurite + SQL Server 2025 pair.
+#
+# One container instead of two: LocalStack covers S3, SQS, DynamoDB, Step Functions and
+# SSM behind a single endpoint on 4566, so AWS_ENDPOINT_URL is the only setting that
+# differs between local dev and a real deployment.
+#
+# NOT emulated by LocalStack Community: Bedrock, Rekognition and Cognito. Bedrock and
+# Rekognition call the real services (both cheap per call, and moderation sits inside a
+# free grant); Cognito stays stubbed via STUB_AUTH_HEADER_NAME.
+#
+# Note the unit test suite does NOT need this running - it uses moto in-process. This is
+# for `sam local` and the marker-gated integration tests (`pytest -m integration`).
 
-  sqlserver:
-    image: mcr.microsoft.com/mssql/server:2025-latest # 2025, not 2022 - required for native VECTOR type
-    environment:
-      ACCEPT_EULA: "Y"
-      MSSQL_PID: "Developer"
-      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:-ChangeMe_LocalDevOnly!}"
+services:
+  localstack:
+    image: localstack/localstack:latest
     ports:
-      - "1433:1433"
+      - "4566:4566" # single edge endpoint for every service
+    environment:
+      SERVICES: "s3,sqs,dynamodb,stepfunctions,ssm"
+      DEBUG: "${LOCALSTACK_DEBUG:-0}"
+      # Persist between restarts so a seeded table survives `docker compose down`.
+      PERSISTENCE: "1"
     volumes:
-      - sqlserver-data:/var/opt/mssql
+      - localstack-data:/var/lib/localstack
+      # LocalStack runs Lambda containers by talking to the host Docker daemon.
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
 volumes:
-  azurite-data:
-  sqlserver-data:
+  localstack-data:

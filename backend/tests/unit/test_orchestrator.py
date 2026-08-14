@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+﻿from unittest.mock import MagicMock
 
 import pytest
 
@@ -9,7 +9,7 @@ _MODERATION_PASSED = {"allowed": True, "verdict": "safe", "categories": [], "rea
 
 
 def _job_input(**overrides):
-    base = {"job_id": "job-1", "image_blob_url": "https://example.com/photo.jpg", "latitude": 1.0, "longitude": 2.0}
+    base = {"job_id": "job-1", "image_key": "https://example.com/photo.jpg", "latitude": 1.0, "longitude": 2.0}
     base.update(overrides)
     return base
 
@@ -41,7 +41,7 @@ def test_moderation_runs_before_any_other_activity():
     # photo costs one moderation call and no AI spend.
     assert _call_names(context) == ["moderate_image"]
     moderate_call = context.call_activity.call_args_list[0]
-    assert moderate_call.args[1] == {"image_blob_url": "https://example.com/photo.jpg"}
+    assert moderate_call.args[1] == {"image_key": "https://example.com/photo.jpg"}
 
 
 def test_rejected_image_fails_the_job_and_skips_the_pipeline():

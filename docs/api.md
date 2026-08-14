@@ -28,11 +28,13 @@ Used when an uploaded photo has no EXIF GPS and the user picked a restaurant by 
 
 **201 response:**
 ```json
-{ "job_id": "...", "upload_url": "...", "blob_url": "..." }
+{ "job_id": "...", "upload_url": "...", "image_key": "..." }
 ```
-`upload_url` is a short-lived, write-only SAS URL. The client `PUT`s the photo bytes
-directly to Blob Storage with it (header `x-ms-blob-type: BlockBlob`) — never through the
-Function App.
+`upload_url` is a short-lived, write-only **presigned S3 URL**. The client `PUT`s the photo
+bytes directly to S3 with it — never through the backend. No special headers are required.
+
+`image_key` is the S3 object key the job was created against (`uploads/<uuid>.jpg`). It is
+returned for traceability; the client does not need to send it back.
 
 **400** if `latitude`/`longitude` are missing or not numbers, if `selected_restaurant` is
 missing a required field, or if both location sources (or neither) are supplied.

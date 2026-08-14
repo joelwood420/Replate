@@ -17,7 +17,7 @@ _MATCH_RESULT = {
 
 @pytest.fixture(autouse=True)
 def stub_presigned_url(monkeypatch):
-    monkeypatch.setattr(job_result_http.blob, "generate_read_sas_url", lambda key: f"{key}?sig=abc")
+    monkeypatch.setattr(job_result_http.storage, "generate_read_url", lambda key: f"{key}?sig=abc")
 
 
 def _job(status=JobStatus.PROCESSING, owner="owner-oid"):

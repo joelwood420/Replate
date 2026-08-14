@@ -7,7 +7,7 @@ from triggers import jobs_list_http
 
 @pytest.fixture(autouse=True)
 def stub_presigned_url(monkeypatch):
-    monkeypatch.setattr(jobs_list_http.blob, "generate_read_sas_url", lambda key: f"{key}?sig=abc")
+    monkeypatch.setattr(jobs_list_http.storage, "generate_read_url", lambda key: f"{key}?sig=abc")
 
 
 def test_returns_empty_list_when_caller_has_no_jobs(ddb_table):

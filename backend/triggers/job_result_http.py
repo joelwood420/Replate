@@ -2,7 +2,7 @@ import json
 
 import azure.functions as func
 
-from shared import blob, repository
+from shared import repository, storage
 from shared.auth import get_user_oid
 from shared.models import JobStatus
 
@@ -48,7 +48,7 @@ def run(job_id: str, user_oid: str) -> dict:
     response_body = {
         "job_id": job["job_id"],
         "status": job["status"],
-        "image_url": blob.generate_read_sas_url(job["image_key"]),
+        "image_url": storage.generate_read_url(job["image_key"]),
         "is_saved": bool(job.get("is_saved")),
         "created_at": job["created_at"],
     }

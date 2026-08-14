@@ -2,7 +2,7 @@ import json
 
 import azure.functions as func
 
-from shared import blob, repository
+from shared import repository, storage
 from shared.auth import get_user_oid
 
 bp = func.Blueprint()
@@ -34,7 +34,7 @@ def run(user_oid: str, saved: bool | None, limit: int) -> list[dict]:
             "created_at": job["created_at"],
             "dish_name": job.get("dish_name"),
             "restaurant_name": job.get("restaurant_name"),
-            "image_url": blob.generate_read_sas_url(job["image_key"]),
+            "image_url": storage.generate_read_url(job["image_key"]),
         }
         for job in jobs
     ]

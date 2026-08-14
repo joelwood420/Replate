@@ -21,7 +21,8 @@ export type MatchMethod = 'menu_matched' | 'vision_only_medium' | 'vision_only_l
 export interface CreateJobResponse {
   job_id: string;
   upload_url: string;
-  blob_url: string;
+  /** S3 object key the job was created against. Returned for traceability; not sent back. */
+  image_key: string;
 }
 
 export interface RestaurantCandidate {

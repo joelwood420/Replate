@@ -4,7 +4,7 @@ Deliberately runs ahead of every other activity in dish_orchestrator. It gates t
 whole pipeline, so a rejected image costs one Content Safety call and no AI spend -
 which is the entire point of putting it here rather than next to the vision step.
 
-A MISSING blob is reported separately from a failed check and is NOT covered by the
+A MISSING object is reported separately from a failed check and is NOT covered by the
 fail-open rule. "The service could not check this image" is a reason to continue;
 "there is no image" is not - it means the client never finished uploading, and
 passing that downstream just fails the vision call a step later with a far less
@@ -13,24 +13,24 @@ obvious error.
 
 import azure.durable_functions as df
 
-from shared import blob, content_safety
+from shared import content_safety, storage
 
 bp = df.Blueprint()
 
-#: Verdict for a blob URL that was handed out but never uploaded to. Not a Content
-#: Safety verdict - the service is never called in this case.
+#: Verdict for an object key that was handed out but never uploaded to. Not a
+#: moderation verdict - the service is never called in this case.
 MISSING = "missing"
 
 
 def run(activity_input: dict) -> dict:
     """Returns `{"allowed": bool, "verdict": ..., "categories": [...], "reason": ...}`.
 
-    `reason` is written for the user - it lands in Jobs.ErrorMessage and is shown in
-    the app - so it is populated only when the image is rejected.
+    `reason` is written for the user - it lands on the job as `error_message` and is
+    shown in the app - so it is populated only when the image is rejected.
     """
-    blob_url = activity_input["image_blob_url"]
+    image_key = activity_input["image_key"]
 
-    if not blob.blob_exists(blob_url):
+    if not storage.object_exists(image_key):
         return {
             "allowed": False,
             "verdict": MISSING,
@@ -38,7 +38,7 @@ def run(activity_input: dict) -> dict:
             "reason": "The photo was never finished uploading. Try scanning it again.",
         }
 
-    result = content_safety.analyze_image(blob.generate_read_sas_url(blob_url))
+    result = content_safety.analyze_image(storage.generate_read_url(image_key))
 
     if result["verdict"] == content_safety.Verdict.UNSAFE:
         categories = ", ".join(result["categories"]) or "unknown"
