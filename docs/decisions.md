@@ -10,6 +10,97 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-14 — Split Phase 3: deploy the infrastructure with stubs (3a) before wiring the real AI (3b)
+
+**Decision:** Break CLAUDE.md's combined "Phase 3 — Infra + AI feature" into two passes. **3a**
+provisions the full AWS stack via SAM and deploys it with every paid external call stubbed or
+disabled — Bedrock (blank model ids), Rekognition (`MODERATION_ENABLED=false`), SERP + Google
+Places (placeholder keys), Titan embeddings (the existing SHA-256 pseudo-embedding). **3b**
+swaps those stubs for the real integrations. The stub deploy runs the whole two-stage pipeline
+end-to-end in the cloud, returning canned data.
+
+**Why:** Deploying the plumbing before the AI logic isolates failure domains and serves three
+concrete goals: (1) build a working understanding of how the app behaves on real AWS — IAM
+execution roles, Step Functions ↔ Lambda ARN wiring, the Cognito JWT authorizer, API Gateway
+CORS, presigned S3 uploads — the parts that can't be exercised against LocalStack; (2) stand up
+a demoable environment early (the identify → reverse-engineer flow, real screens, real sign-in)
+without spending a token on Bedrock or SERP; and (3) produce the deployed stack that Phase 4's
+CI/CD pipeline needs as a deployment target. A green 3a deploy means any failure in 3b is in the
+model-calling code, not the infrastructure.
+
+**Context worth recording:**
+
+- The line is drawn at **cost, not infra realism**: everything free-tier (Lambda, API Gateway,
+  Step Functions, DynamoDB, SQS, S3, CloudFront, Cognito, IAM) is real in 3a; only
+  pay-per-token / pay-per-call services are held back. Stubbing the money rather than the
+  plumbing keeps the free-tier posture intact while still exercising the great majority of the
+  stack.
+- The stubs already **degrade gracefully** — menu fetch raises `MenuExtractionError` → the
+  vision-only medium-confidence outcome; moderation disabled → every photo `unchecked`/allowed —
+  so the pipeline reaches `Identified` and `Completed` with the paid calls off.
+- CLAUDE.md's Phase 3 step 2 (grant Bedrock model access) and step 4 (finalize the AI feature)
+  move wholesale into 3b; step 5 (real Cognito auth) is pulled *forward* into 3a — see the front
+  door entry below.
+- Teardown is a single `sam delete` (empty the S3 buckets first). Most of the stack scales to
+  zero, so the stub environment carries no standing cost between demos.
+
+---
+
+## 2026-08-14 — Deploy region: ap-southeast-2 (Sydney)
+
+**Decision:** Deploy the production stack to `ap-southeast-2` (Sydney), replacing the `eu-west-2`
+(London) placeholder currently in `backend/.env.example`.
+
+**Why:** Sydney is the closest AWS region to the owner, minimising round-trip latency for the
+live demo. The app is interactive — photo upload, direct-to-S3 PUT, 3-second job polling — and
+reads partly on how responsive it feels when shown, so region proximity is the cheapest latency
+win available and costs nothing.
+
+**Context worth recording:**
+
+- **Verified before committing** (Global Rule 5, don't assume availability): Amazon Bedrock is
+  available in `ap-southeast-2`, and Titan Text Embeddings V2 lists Sydney in its
+  regional-availability table — the embedding model the design depends on is present in-region.
+- **Caveat for 3b:** the newest Claude models are often reached in APAC through a **cross-region
+  inference profile** (`apac.anthropic.*`) rather than a strict in-region endpoint. The exact
+  Claude model id / inference profile for Sydney must be confirmed in the Bedrock console when
+  3b wires real model calls, and model access must be granted per-model in the **Sydney** console
+  (the manual step CloudFormation can't perform).
+- **No cost impact for 3a:** the stub deploy makes no Bedrock/Rekognition calls, so region only
+  determines where the free-tier infra lands. Free-tier grants are per-region-account and
+  identical in Sydney, so nothing about the free-tier posture changes with the move from London.
+
+---
+
+## 2026-08-14 — Phase 3a front door: API Gateway HTTP API with a real Cognito JWT authorizer
+
+**Decision:** The deployed API is an API Gateway **HTTP API** fronted by a **Cognito JWT
+authorizer**, and real Cognito sign-in is wired on both ends from the first (3a) deploy — rather
+than shipping the stub deploy behind the `X-Debug-User-Oid` header, and rather than Lambda
+Function URLs.
+
+**Why:** Cognito is free-tier, so real auth costs nothing and is *infrastructure*, not a paid
+integration — it belongs on the "real plumbing" side of the 3a/3b line. Shipping it in 3a means
+the demo has genuine sign-in and the API is not a public, spoofable, unauthenticated endpoint.
+API Gateway's JWT authorizer validates the token for free (no per-handler JWT code), which is
+exactly the seam the backend was already written against — handlers read `sub` from the
+authorizer claims. Choosing the HTTP API over Function URLs keeps that free authorizer and clean
+path-based routing.
+
+**Context worth recording:**
+
+- **Trade-off accepted (Global Rule 1):** API Gateway's free tier is the **12-month** kind, not
+  always-free. Fine at this stage; if per-request cost ever bites, the documented fallback is
+  Lambda Function URLs with in-handler JWT validation — the cost is losing the free authorizer,
+  noted here so the exit is known.
+- This pulls CLAUDE.md Phase 3 **step 5** (real Cognito JWT validation) *forward* into 3a.
+  `shared/auth.py`'s `NotImplementedError` path (guarded by `COGNITO_ENABLED`) gets its real
+  implementation now, and the frontend flips from the mock to the real OIDC client against the
+  deployed pool.
+- The stub boundary is unaffected: auth being real doesn't make any paid AI call fire.
+
+---
+
 ## 2026-08-14 — Move the whole project from Azure to AWS
 
 **Decision:** Rebuild Replate on AWS — Lambda + Step Functions, DynamoDB, S3, SQS, Cognito,

@@ -1,0 +1,760 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Replate — production stack (prod only, CLAUDE.md Global Rule 2). Phase 3a deploys
+  this with the paid integrations stubbed: Bedrock model ids blank and moderation off,
+  so the whole two-stage pipeline runs end-to-end returning canned data at no per-token
+  cost. Phase 3b fills in the real model calls. See docs/decisions.md (2026-08-14).
+
+# ---------------------------------------------------------------------------------------
+Parameters:
+  BedrockVisionModelId:
+    Type: String
+    Default: ""
+    Description: Bedrock model id / inference profile for the vision guess. Blank = stubbed (3a).
+  BedrockMenuModelId:
+    Type: String
+    Default: ""
+    Description: Bedrock model id for menu extraction. Blank = stubbed (3a).
+  BedrockGeneratorModelId:
+    Type: String
+    Default: ""
+    Description: Bedrock model id for recipe generation. Blank = stubbed (3a).
+  BedrockEmbeddingModelId:
+    Type: String
+    Default: ""
+    Description: Titan Text Embeddings V2 model id. Blank = pseudo-embedding stub (3a).
+  ModerationEnabled:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Rekognition image moderation. Off for the 3a stub deploy.
+  RateLimitEnabled:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Per-user scan/recipe quotas.
+  LocalDevOrigin:
+    Type: String
+    Default: "http://localhost:5173"
+    Description: Vite dev-server origin, allowed through API CORS and Cognito callbacks for local dev.
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    Description: Retention on every Lambda log group — the CloudWatch default is never-expire, a slow cost.
+  UploadRetentionDays:
+    Type: Number
+    Default: 7
+    Description: Days before an uploaded photo is expired from the uploads bucket.
+
+# ---------------------------------------------------------------------------------------
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures: [x86_64]
+    Timeout: 30
+    MemorySize: 512
+    CodeUri: ../backend/
+    Layers:
+      - !Ref DependenciesLayer
+    # Shared config for every function. State-machine ARNs are deliberately NOT here:
+    # they would make an activity function depend on a state machine that depends on
+    # that same function — a cycle. The two starter functions set them individually.
+    Environment:
+      Variables:
+        DDB_TABLE_NAME: !Ref Table
+        S3_BUCKET_UPLOADS: !Ref UploadsBucket
+        SQS_QUEUE_URL: !Ref JobQueue
+        SQS_QUEUE_NAME: !GetAtt JobQueue.QueueName
+        PRESIGNED_URL_EXPIRY_MINUTES: "15"
+        MENU_CACHE_TTL_HOURS: "24"
+        MENU_MATCH_CONFIDENCE_THRESHOLD: "0.6"
+        VECTOR_SEARCH_TOP_K: "5"
+        RATE_LIMIT_ENABLED: !Ref RateLimitEnabled
+        SCAN_RATE_LIMIT_PER_HOUR: "10"
+        SCAN_RATE_LIMIT_PER_DAY: "30"
+        RECIPE_RATE_LIMIT_PER_HOUR: "5"
+        RECIPE_RATE_LIMIT_PER_DAY: "15"
+        # Real Cognito auth from the first deploy (docs/decisions.md). The API Gateway
+        # JWT authorizer validates the token; handlers read `sub` from the claims.
+        COGNITO_ENABLED: "true"
+        COGNITO_USER_POOL_ID: !Ref UserPool
+        COGNITO_APP_CLIENT_ID: !Ref UserPoolClient
+        COGNITO_ISSUER: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
+        STUB_AUTH_HEADER_NAME: "X-Debug-User-Oid"
+        STUB_DEFAULT_USER_OID: "00000000-0000-0000-0000-000000000001"
+        BEDROCK_VISION_MODEL_ID: !Ref BedrockVisionModelId
+        BEDROCK_MENU_MODEL_ID: !Ref BedrockMenuModelId
+        BEDROCK_GENERATOR_MODEL_ID: !Ref BedrockGeneratorModelId
+        BEDROCK_EMBEDDING_MODEL_ID: !Ref BedrockEmbeddingModelId
+        MODERATION_ENABLED: !Ref ModerationEnabled
+        # Read at runtime from SSM in 3b; empty here so restaurant search / menu fetch
+        # degrade instead of KeyError-ing during the stub deploy.
+        GOOGLE_PLACES_API_KEY: ""
+        SERP_API_KEY: ""
+
+# ---------------------------------------------------------------------------------------
+Resources:
+
+  # --- Shared dependency layer ---------------------------------------------------------
+  DependenciesLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub "${AWS::StackName}-deps"
+      Description: httpx, numpy, python-dotenv — third-party runtime deps (boto3 excluded).
+      ContentUri: dependencies/
+      CompatibleRuntimes: [python3.12]
+      RetentionPolicy: Delete
+    Metadata:
+      BuildMethod: python3.12
+
+  # --- DynamoDB single table -----------------------------------------------------------
+  # PROVISIONED, not on-demand: the perpetual free tier covers 25 RCU + 25 WCU only, and
+  # on-demand bills per request from the first request (CLAUDE.md Global Rule 1). TTL on
+  # `expires_at` expires rate-limit counters natively (docs/decisions.md 2026-08-05).
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref AWS::StackName
+      BillingMode: PROVISIONED
+      ProvisionedThroughput:
+        ReadCapacityUnits: 25
+        WriteCapacityUnits: 25
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+
+  # --- Cognito -------------------------------------------------------------------------
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${AWS::StackName}-users"
+      AutoVerifiedAttributes: [email]
+      UsernameAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireUppercase: true
+          RequireSymbols: false
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "${AWS::StackName}-spa"
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, email, profile]
+      SupportedIdentityProviders: [COGNITO]
+      CallbackURLs:
+        - !Sub "https://${CloudFrontDistribution.DomainName}"
+        - !Ref LocalDevOrigin
+      LogoutURLs:
+        - !Sub "https://${CloudFrontDistribution.DomainName}"
+        - !Ref LocalDevOrigin
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      # Hosted-UI domain prefix. Account id keeps it globally unique.
+      Domain: !Sub "replate-${AWS::AccountId}"
+      UserPoolId: !Ref UserPool
+
+  # --- HTTP API + Cognito JWT authorizer ----------------------------------------------
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Auth:
+        Authorizers:
+          CognitoJWT:
+            IdentitySource: "$request.header.Authorization"
+            JwtConfiguration:
+              issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
+              audience:
+                - !Ref UserPoolClient
+        DefaultAuthorizer: CognitoJWT
+      CorsConfiguration:
+        AllowOrigins:
+          - !Sub "https://${CloudFrontDistribution.DomainName}"
+          - !Ref LocalDevOrigin
+        AllowHeaders:
+          - authorization
+          - content-type
+        AllowMethods:
+          - GET
+          - POST
+          - PATCH
+          - OPTIONS
+        AllowCredentials: false
+
+  # --- HTTP handler functions ----------------------------------------------------------
+  UploadFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-upload"
+      Handler: triggers.upload_http.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - S3CrudPolicy:
+            BucketName: !Ref UploadsBucket
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /jobs
+            Method: POST
+
+  JobUploadedFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-job-uploaded"
+      Handler: triggers.job_uploaded_http.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt JobQueue.QueueName
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /jobs/{jobId}/uploaded
+            Method: POST
+
+  JobResultFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-job-result"
+      Handler: triggers.job_result_http.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - S3CrudPolicy:
+            BucketName: !Ref UploadsBucket
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /jobs/{jobId}
+            Method: GET
+
+  JobsListFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-jobs-list"
+      Handler: triggers.jobs_list_http.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - S3CrudPolicy:
+            BucketName: !Ref UploadsBucket
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /jobs
+            Method: GET
+
+  JobSaveFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-job-save"
+      Handler: triggers.job_save_http.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /jobs/{jobId}/save
+            Method: PATCH
+
+  ReverseEngineerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-reverse-engineer"
+      Handler: triggers.recipe_starter_http.handler
+      Environment:
+        Variables:
+          RECIPE_STATE_MACHINE_ARN: !Ref RecipeStateMachine
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt RecipeStateMachine.Name
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /jobs/{jobId}/reverse-engineer
+            Method: POST
+
+  RestaurantSearchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-restaurant-search"
+      Handler: triggers.restaurant_search_http.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - SSMParameterReadPolicy:
+            ParameterName: replate/*
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /restaurants/search
+            Method: GET
+
+  # --- SQS starter (event source, not HTTP) -------------------------------------------
+  OrchestratorStarterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-starter"
+      Handler: triggers.orchestrator_starter_queue.handler
+      Environment:
+        Variables:
+          IDENTIFY_STATE_MACHINE_ARN: !Ref IdentifyStateMachine
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt IdentifyStateMachine.Name
+      Events:
+        Queue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt JobQueue.Arn
+            BatchSize: 1
+
+  # --- Step Functions activities (dish-identify) --------------------------------------
+  ModerateImageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-moderate-image"
+      Handler: activities.moderate_image.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - S3CrudPolicy:
+            BucketName: !Ref UploadsBucket
+        - Statement:
+            - Effect: Allow
+              Action: [rekognition:DetectModerationLabels]
+              Resource: "*"
+
+  VisionGuessFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-vision-guess"
+      Handler: activities.vision_guess.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - S3CrudPolicy:
+            BucketName: !Ref UploadsBucket
+        - Statement:
+            - Effect: Allow
+              Action: [bedrock:InvokeModel]
+              Resource: "*"
+
+  SelectRestaurantFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-select-restaurant"
+      Handler: activities.select_restaurant_candidate.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+
+  GeocodeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-geocode"
+      Handler: activities.geocode_restaurant_candidates.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - SSMParameterReadPolicy:
+            ParameterName: replate/*
+
+  FetchMenuFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-fetch-menu"
+      Handler: activities.fetch_restaurant_menu.handler
+      Timeout: 120
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - SSMParameterReadPolicy:
+            ParameterName: replate/*
+        - Statement:
+            - Effect: Allow
+              Action: [bedrock:InvokeModel]
+              Resource: "*"
+
+  MatchMenuFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-match-menu"
+      Handler: activities.match_menu_item.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+
+  PersistMatchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-persist-match"
+      Handler: activities.persist_job_result.persist_match_result_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+
+  MarkFailedFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-mark-failed"
+      Handler: activities.persist_job_result.mark_job_failed_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+
+  # --- Step Functions activities (dish-recipe) ----------------------------------------
+  QueryEmbeddingsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-query-embeddings"
+      Handler: activities.query_culinary_embeddings.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - Statement:
+            - Effect: Allow
+              Action: [bedrock:InvokeModel]
+              Resource: "*"
+
+  GenerateRecreationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-generate-recreation"
+      Handler: activities.generate_recreation.handler
+      Timeout: 120
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - Statement:
+            - Effect: Allow
+              Action: [bedrock:InvokeModel]
+              Resource: "*"
+
+  PersistRecipeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-persist-recipe"
+      Handler: activities.persist_job_result.persist_recipe_result_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+
+  MarkRecipeFailedFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-mark-recipe-failed"
+      Handler: activities.persist_job_result.mark_recipe_failed_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+
+  # --- SQS job queue + DLQ -------------------------------------------------------------
+  JobDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-jobs-dlq"
+      MessageRetentionPeriod: 1209600
+
+  JobQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-jobs"
+      # >= 6x the starter timeout, the SQS best-practice floor.
+      VisibilityTimeout: 180
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt JobDLQ.Arn
+        maxReceiveCount: 3
+
+  # --- Step Functions state machines ---------------------------------------------------
+  IdentifyStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "${AWS::StackName}-identify"
+      Type: STANDARD
+      DefinitionUri: ../backend/statemachines/dish-identify.asl.json
+      DefinitionSubstitutions:
+        ModerateImageFunctionArn: !GetAtt ModerateImageFunction.Arn
+        MarkJobFailedFunctionArn: !GetAtt MarkFailedFunction.Arn
+        VisionGuessFunctionArn: !GetAtt VisionGuessFunction.Arn
+        SelectRestaurantCandidateFunctionArn: !GetAtt SelectRestaurantFunction.Arn
+        GeocodeRestaurantCandidatesFunctionArn: !GetAtt GeocodeFunction.Arn
+        FetchRestaurantMenuFunctionArn: !GetAtt FetchMenuFunction.Arn
+        MatchMenuItemFunctionArn: !GetAtt MatchMenuFunction.Arn
+        PersistMatchResultFunctionArn: !GetAtt PersistMatchFunction.Arn
+      Policies:
+        - LambdaInvokePolicy: { FunctionName: !Ref ModerateImageFunction }
+        - LambdaInvokePolicy: { FunctionName: !Ref MarkFailedFunction }
+        - LambdaInvokePolicy: { FunctionName: !Ref VisionGuessFunction }
+        - LambdaInvokePolicy: { FunctionName: !Ref SelectRestaurantFunction }
+        - LambdaInvokePolicy: { FunctionName: !Ref GeocodeFunction }
+        - LambdaInvokePolicy: { FunctionName: !Ref FetchMenuFunction }
+        - LambdaInvokePolicy: { FunctionName: !Ref MatchMenuFunction }
+        - LambdaInvokePolicy: { FunctionName: !Ref PersistMatchFunction }
+
+  RecipeStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "${AWS::StackName}-recipe"
+      Type: STANDARD
+      DefinitionUri: ../backend/statemachines/dish-recipe.asl.json
+      DefinitionSubstitutions:
+        QueryCulinaryEmbeddingsFunctionArn: !GetAtt QueryEmbeddingsFunction.Arn
+        GenerateRecreationFunctionArn: !GetAtt GenerateRecreationFunction.Arn
+        PersistRecipeResultFunctionArn: !GetAtt PersistRecipeFunction.Arn
+        MarkRecipeFailedFunctionArn: !GetAtt MarkRecipeFailedFunction.Arn
+      Policies:
+        - LambdaInvokePolicy: { FunctionName: !Ref QueryEmbeddingsFunction }
+        - LambdaInvokePolicy: { FunctionName: !Ref GenerateRecreationFunction }
+        - LambdaInvokePolicy: { FunctionName: !Ref PersistRecipeFunction }
+        - LambdaInvokePolicy: { FunctionName: !Ref MarkRecipeFailedFunction }
+
+  # --- S3: uploads bucket --------------------------------------------------------------
+  # Client PUTs the photo straight here with a role-signed presigned URL, so browser CORS
+  # must allow the PUT. Lifecycle expiry keeps photos from accumulating (Phase 3 step 1).
+  UploadsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-uploads-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      # SSE-S3 (AES256), not KMS: encryption at rest with no per-request KMS charge.
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [PUT, GET]
+            AllowedOrigins:
+              - !Sub "https://${CloudFrontDistribution.DomainName}"
+              - !Ref LocalDevOrigin
+            AllowedHeaders: ["*"]
+            MaxAge: 3000
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireUploads
+            Status: Enabled
+            Prefix: uploads/
+            ExpirationInDays: !Ref UploadRetentionDays
+
+  # --- S3 + CloudFront: the React site -------------------------------------------------
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-site-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: SiteOrigin
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !Ref CloudFrontOAC
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: SiteOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          # AWS managed CachingOptimized policy id (static, same in every account/region).
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          Compress: true
+        CustomErrorResponses:
+          # SPA routing: hand deep links back to index.html rather than S3's XML 403/404.
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${SiteBucket}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}"
+
+  # --- CloudWatch log groups -----------------------------------------------------------
+  # One per function, with explicit retention. Declared in-stack (rather than left to
+  # Lambda's implicit never-expire group) so `sam delete` removes them cleanly.
+  UploadLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-upload", RetentionInDays: !Ref LogRetentionDays }
+  JobUploadedLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-job-uploaded", RetentionInDays: !Ref LogRetentionDays }
+  JobResultLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-job-result", RetentionInDays: !Ref LogRetentionDays }
+  JobsListLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-jobs-list", RetentionInDays: !Ref LogRetentionDays }
+  JobSaveLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-job-save", RetentionInDays: !Ref LogRetentionDays }
+  ReverseEngineerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-reverse-engineer", RetentionInDays: !Ref LogRetentionDays }
+  RestaurantSearchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-restaurant-search", RetentionInDays: !Ref LogRetentionDays }
+  StarterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-starter", RetentionInDays: !Ref LogRetentionDays }
+  ModerateImageLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-moderate-image", RetentionInDays: !Ref LogRetentionDays }
+  VisionGuessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-vision-guess", RetentionInDays: !Ref LogRetentionDays }
+  SelectRestaurantLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-select-restaurant", RetentionInDays: !Ref LogRetentionDays }
+  GeocodeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-geocode", RetentionInDays: !Ref LogRetentionDays }
+  FetchMenuLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-fetch-menu", RetentionInDays: !Ref LogRetentionDays }
+  MatchMenuLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-match-menu", RetentionInDays: !Ref LogRetentionDays }
+  PersistMatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-persist-match", RetentionInDays: !Ref LogRetentionDays }
+  MarkFailedLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-mark-failed", RetentionInDays: !Ref LogRetentionDays }
+  QueryEmbeddingsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-query-embeddings", RetentionInDays: !Ref LogRetentionDays }
+  GenerateRecreationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-generate-recreation", RetentionInDays: !Ref LogRetentionDays }
+  PersistRecipeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-persist-recipe", RetentionInDays: !Ref LogRetentionDays }
+  MarkRecipeFailedLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-mark-recipe-failed", RetentionInDays: !Ref LogRetentionDays }
+
+# ---------------------------------------------------------------------------------------
+Outputs:
+  ApiBaseUrl:
+    Description: API Gateway base URL — set as the frontend's VITE_API_BASE_URL.
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  CloudFrontUrl:
+    Description: Public URL of the React site.
+    Value: !Sub "https://${CloudFrontDistribution.DomainName}"
+  CloudFrontDistributionId:
+    Description: Distribution id — for cache invalidations after a frontend deploy.
+    Value: !Ref CloudFrontDistribution
+  SiteBucketName:
+    Description: Bucket the React build is synced to.
+    Value: !Ref SiteBucket
+  UploadsBucketName:
+    Description: Bucket photos are uploaded to (must be emptied before teardown).
+    Value: !Ref UploadsBucket
+  TableName:
+    Value: !Ref Table
+  UserPoolId:
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Description: SPA app client id — the frontend's VITE_COGNITO_CLIENT_ID.
+    Value: !Ref UserPoolClient
+  CognitoIssuer:
+    Description: OIDC issuer / authority — the frontend's VITE_COGNITO_AUTHORITY.
+    Value: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
+  CognitoHostedUiDomain:
+    Description: Hosted-UI domain for sign-in redirects.
+    Value: !Sub "https://replate-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com"
+  IdentifyStateMachineArn:
+    Value: !Ref IdentifyStateMachine
+  RecipeStateMachineArn:
+    Value: !Ref RecipeStateMachine
+  JobQueueUrl:
+    Value: !Ref JobQueue

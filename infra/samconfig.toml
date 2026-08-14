@@ -1,0 +1,23 @@
+# SAM CLI configuration. Prod-only for now (CLAUDE.md Global Rule 2) — a single
+# [default] environment. Region is Sydney per docs/decisions.md (2026-08-14).
+version = 0.1
+
+[default.global.parameters]
+stack_name = "replate"
+
+[default.build.parameters]
+# numpy in the dependencies layer is a compiled wheel; building it for the Lambda
+# platform from Windows/macOS needs Docker. Requires Docker running.
+use_container = true
+
+[default.validate.parameters]
+lint = true
+
+[default.deploy.parameters]
+region = "ap-southeast-2"
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_s3 = true
+# Stub deploy: paid integrations are off. Model ids are blank so no Bedrock call
+# fires, and moderation is disabled. Fill these in for the Phase 3b real-AI pass.
+parameter_overrides = "ModerationEnabled=false BedrockVisionModelId= BedrockMenuModelId= BedrockGeneratorModelId= BedrockEmbeddingModelId="

@@ -22,8 +22,21 @@ def test_header_lookup_is_case_insensitive(monkeypatch):
     assert auth.get_user_oid(_event({"x-debug-user-oid": "lowercased"})) == "lowercased"
 
 
-def test_cognito_enabled_raises_not_implemented(monkeypatch):
+def test_cognito_enabled_reads_verified_sub_claim(monkeypatch):
+    """With Cognito on, the API Gateway JWT authorizer has already validated the
+    token, so get_user_oid just reads the `sub` claim it put on the request."""
     monkeypatch.setattr(auth.config, "cognito_enabled", lambda: True)
 
-    with pytest.raises(NotImplementedError):
+    event = _event()
+    event["requestContext"]["authorizer"] = {"jwt": {"claims": {"sub": "cognito-user-123"}}}
+
+    assert auth.get_user_oid(event) == "cognito-user-123"
+
+
+def test_cognito_enabled_without_claims_raises(monkeypatch):
+    """A missing `sub` when Cognito is on means the authorizer isn't wired to the
+    route - a misconfiguration, not an untrusted caller. It must fail, not fall back."""
+    monkeypatch.setattr(auth.config, "cognito_enabled", lambda: True)
+
+    with pytest.raises(PermissionError):
         auth.get_user_oid(_event())

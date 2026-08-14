@@ -1,0 +1,9 @@
+# Third-party runtime dependencies, shipped as a shared Lambda layer rather than
+# vendored into every function zip (CLAUDE.md Phase 3 step 1). boto3 is deliberately
+# absent — it ships in the Lambda python3.12 runtime and must not be duplicated here.
+#
+# numpy is a compiled wheel, so `sam build --use-container` is required to build this
+# layer for the Lambda platform from a non-Linux host (see infra/README.md).
+httpx>=0.27,<1.0
+numpy>=1.26,<3.0
+python-dotenv>=1.0,<2.0

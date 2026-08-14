@@ -24,7 +24,7 @@ than real vectors. Making those real is **Phase 3**; see the root [`CLAUDE.md`](
 
 ```bash
 cd backend
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 cp .env.example .env
 ```
 

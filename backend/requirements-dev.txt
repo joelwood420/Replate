@@ -1,0 +1,24 @@
+# Local dev + test dependencies. Install with `pip install -r requirements-dev.txt`.
+#
+# There is deliberately no `requirements.txt` in this directory. `sam build` treats a
+# requirements.txt at a function's CodeUri as "pip install these into the zip", which
+# would vendor boto3 (banned - it ships in the runtime) and bloat every function with
+# pytest/moto. The functions build source-only; their third-party runtime deps
+# (httpx, numpy, python-dotenv) come from the shared layer in infra/dependencies/.
+
+pytest
+pytest-mock
+# In-process AWS mocking for the unit suite - no Docker, no LocalStack needed to run
+# `pytest`. See tests/conftest.py.
+moto[dynamodb,s3,sqs,stepfunctions]
+
+# Runtime deps, needed locally too. In a deployed Lambda these are provided by the
+# shared dependency layer (infra/dependencies/requirements.txt), not installed here.
+python-dotenv
+httpx
+numpy
+
+# boto3 ships in the Lambda runtime, so it is deliberately NOT vendored into the
+# function package - see CLAUDE.md Phase 3 on packaging. Listed here only so local
+# dev and the test suite have it.
+boto3

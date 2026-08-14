@@ -1,11 +1,19 @@
 # AWS Target Architecture
 
-The Phase 3 architecture for Replate. **Nothing here is deployed yet, and the backend code
-has not been ported yet either** — Phase 1 (backend) and Phase 2 (frontend) were built on
-Azure and still run against Azure emulators. Porting them is **Phase 0**, the current phase;
-see `CLAUDE.md`. The project moved from Azure to AWS on 2026-08-14 because that is where the
-owner's study is focused — `docs/decisions.md` has the full reasoning, and the pre-migration
-Bicep is recoverable from git history at commit `07354af`.
+The Phase 3 architecture for Replate. The Azure→AWS **port is complete** (Phase 0), and the
+SAM template that provisions everything below now lives in `infra/template.yaml`. It is
+being rolled out in two passes (see `docs/decisions.md`, 2026-08-14):
+
+- **Phase 3a (current):** deploy the whole stack with the paid integrations stubbed — Bedrock
+  model ids blank, Rekognition off, SERP/Places keys empty, embeddings left as the SHA-256
+  pseudo-vector. Everything else — Lambda, API Gateway, Step Functions, DynamoDB, SQS, S3,
+  CloudFront, Cognito, IAM, CloudWatch — is real. The pipeline runs end-to-end returning
+  canned data, so it deploys, demos and tears down without a per-token bill.
+- **Phase 3b:** fill in the real model calls, grant Bedrock model access, and load the two
+  SERP/Places `SecureString` params.
+
+The stack deploys to **`ap-southeast-2` (Sydney)**. The pre-migration Bicep is recoverable
+from git history at commit `07354af`.
 
 Three deviations from a by-the-book AWS design, all logged in `docs/decisions.md`:
 

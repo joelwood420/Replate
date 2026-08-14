@@ -2,14 +2,19 @@ import os
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load a .env only for local dev / tests. In Lambda, AWS_LAMBDA_FUNCTION_NAME is always
+# set - and load_dotenv() fills in any *unset* var, so a .env accidentally packaged into
+# the function zip would silently reintroduce local config (e.g. AWS_ENDPOINT_URL pointing
+# at LocalStack) in production. Gating on the Lambda marker makes that impossible.
+if not os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+    load_dotenv()
 
 
 def aws_region() -> str:
     # AWS_REGION is set by the Lambda runtime itself; AWS_DEFAULT_REGION is what
     # the CLI and local tooling use. Falling back across both means the same code
     # runs deployed and against LocalStack without a bespoke setting.
-    return os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION", "eu-west-2")
+    return os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION", "ap-southeast-2")
 
 
 def aws_endpoint_url() -> str:
