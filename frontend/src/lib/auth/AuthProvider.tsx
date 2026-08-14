@@ -1,7 +1,6 @@
 import { createContext, useCallback, useMemo, useState, type ReactNode } from 'react';
-import { PublicClientApplication } from '@azure/msal-browser';
-import { MsalProvider, useIsAuthenticated, useMsal } from '@azure/msal-react';
-import { msalConfig } from './msalConfig';
+import { AuthProvider as OidcProvider, useAuth as useOidc } from 'react-oidc-context';
+import { cognitoConfig } from './cognitoConfig';
 import type { AuthHeaders } from '../apiClient';
 
 export interface AuthUser {
@@ -20,7 +19,7 @@ export interface AuthContextValue {
 
 export const AuthContext = createContext<AuthContextValue | null>(null);
 
-const ENTRAID_ENABLED = import.meta.env.VITE_ENTRAID_ENABLED === 'true';
+const COGNITO_ENABLED = import.meta.env.VITE_COGNITO_ENABLED === 'true';
 const STUB_AUTH_HEADER_NAME = import.meta.env.VITE_STUB_AUTH_HEADER_NAME || 'X-Debug-User-Oid';
 const STUB_DEFAULT_USER_OID =
   import.meta.env.VITE_STUB_DEFAULT_USER_OID || '00000000-0000-0000-0000-000000000001';
@@ -35,8 +34,8 @@ function initialsFromName(name: string): string {
     .join('');
 }
 
-// Local dev / Phase 2: no real Entra tenant exists yet. Mirrors the backend's
-// ENTRAID_ENABLED=false stub-auth seam (shared/auth.py) so a locally-created mock oid
+// Local dev / Phase 0: no Cognito user pool exists yet. Mirrors the backend's
+// COGNITO_ENABLED=false stub-auth seam (shared/auth.py) so a locally-created mock oid
 // matches STUB_DEFAULT_USER_OID and the two sides just work together.
 function MockAuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(() => {
@@ -69,46 +68,60 @@ function MockAuthProvider({ children }: { children: ReactNode }) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-// Phase 3 seam: real MSAL flow, structurally wired but inert until a real Entra tenant
-// exists (no tenant to authenticate against yet, same spirit as the backend's
-// NotImplementedError seam for ENTRAID_ENABLED=true).
-function MsalAuthBridge({ children }: { children: ReactNode }) {
-  const { instance, accounts } = useMsal();
-  const isAuthenticated = useIsAuthenticated();
+// Phase 3 seam: the real Cognito flow, structurally wired but inert until a user
+// pool exists. Unlike the MSAL bridge this replaced, it does produce a usable
+// Authorization header - API Gateway's JWT authorizer expects a bearer token, so
+// there is nothing left to fill in here once the pool is provisioned.
+function CognitoAuthBridge({ children }: { children: ReactNode }) {
+  const oidc = useOidc();
 
   const signIn = useCallback(() => {
-    void instance.loginRedirect();
-  }, [instance]);
+    void oidc.signinRedirect();
+  }, [oidc]);
 
   const signOut = useCallback(() => {
-    void instance.logoutRedirect();
-  }, [instance]);
+    void oidc.signoutRedirect();
+  }, [oidc]);
 
-  const account = accounts[0];
-  const user: AuthUser | null = account
+  const profile = oidc.user?.profile;
+  // Cognito puts the stable user identifier in `sub`. Entra called it `oid`; the
+  // field name is kept so nothing downstream of this context has to change.
+  const displayName = (profile?.name as string | undefined) ?? profile?.email ?? '';
+  const user: AuthUser | null = profile
     ? {
-        name: account.name ?? account.username,
-        initials: initialsFromName(account.name ?? account.username),
-        oid: (account.idTokenClaims?.oid as string | undefined) ?? account.homeAccountId,
+        name: displayName,
+        initials: initialsFromName(displayName),
+        oid: profile.sub ?? '',
       }
     : null;
 
-  // No real token exchange yet - not exercised until Phase 3 provisions a tenant.
-  const authHeaders = useMemo<AuthHeaders>(() => ({}), []);
+  const accessToken = oidc.user?.access_token;
+  const authHeaders = useMemo<AuthHeaders>(() => {
+    // Built up rather than returned as a ternary: a bare `{}` in one branch makes
+    // TypeScript infer `Authorization?: undefined`, which the index signature on
+    // AuthHeaders (string values only) then rejects.
+    const headers: AuthHeaders = {};
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+    return headers;
+  }, [accessToken]);
 
-  const value: AuthContextValue = { isAuthenticated, user, signIn, signOut, authHeaders };
+  const value: AuthContextValue = {
+    isAuthenticated: oidc.isAuthenticated,
+    user,
+    signIn,
+    signOut,
+    authHeaders,
+  };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-const msalInstance = ENTRAID_ENABLED ? new PublicClientApplication(msalConfig) : null;
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  if (msalInstance) {
+  if (COGNITO_ENABLED) {
     return (
-      <MsalProvider instance={msalInstance}>
-        <MsalAuthBridge>{children}</MsalAuthBridge>
-      </MsalProvider>
+      <OidcProvider {...cognitoConfig}>
+        <CognitoAuthBridge>{children}</CognitoAuthBridge>
+      </OidcProvider>
     );
   }
 

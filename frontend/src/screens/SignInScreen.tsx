@@ -9,8 +9,8 @@ export function SignInScreen() {
   const navigate = useNavigate();
 
   // Reactive rather than navigating right after calling signIn(): the mock provider
-  // authenticates synchronously, but the real MSAL provider's loginRedirect() is async
-  // (and hands the whole page over to a redirect) - this handles both uniformly.
+  // authenticates synchronously, but the real Cognito provider's signinRedirect() is
+  // async (and hands the whole page over to a redirect) - this handles both uniformly.
   useEffect(() => {
     if (isAuthenticated) navigate('/home', { replace: true });
   }, [isAuthenticated, navigate]);
@@ -31,7 +31,7 @@ export function SignInScreen() {
           <span>Sign in with Microsoft</span>
         </button>
         <div className={styles.finePrint}>
-          Authenticated via Microsoft Entra ID. Your credentials are never stored by Replate.
+          Authenticated via Amazon Cognito. Your credentials are never stored by Replate.
         </div>
       </div>
     </div>
