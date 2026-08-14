@@ -80,12 +80,26 @@ def places_timeout_seconds() -> float:
     return float(os.environ.get("PLACES_TIMEOUT_SECONDS", "8"))
 
 
-def anthropic_api_key() -> str:
-    return os.environ["ANTHROPIC_API_KEY"]
+# --- Amazon Bedrock -----------------------------------------------------------------
+# No API key: the Lambda's execution role authenticates, so only model ids are
+# configured. Model access must be granted per-model, per-region in the Bedrock
+# console before the first call - CloudFormation cannot do it.
 
 
-def menu_fetch_model() -> str:
-    return os.environ.get("MENU_FETCH_MODEL", "claude-sonnet-5")
+def bedrock_menu_model_id() -> str:
+    return os.environ.get("BEDROCK_MENU_MODEL_ID", "")
+
+
+def bedrock_vision_model_id() -> str:
+    return os.environ.get("BEDROCK_VISION_MODEL_ID", "")
+
+
+def bedrock_generator_model_id() -> str:
+    return os.environ.get("BEDROCK_GENERATOR_MODEL_ID", "")
+
+
+def bedrock_embedding_model_id() -> str:
+    return os.environ.get("BEDROCK_EMBEDDING_MODEL_ID", "")
 
 
 def menu_fetch_timeout_seconds() -> float:
@@ -94,6 +108,38 @@ def menu_fetch_timeout_seconds() -> float:
 
 def menu_fetch_max_retries() -> int:
     return int(os.environ.get("MENU_FETCH_MAX_RETRIES", "2"))
+
+
+# --- Menu page discovery ------------------------------------------------------------
+# Bedrock does not expose Anthropic's server-side web_search tool, so finding a menu
+# page needs a third-party SERP provider. This is the only stored API key the AWS
+# design introduces; everything else authenticates by IAM.
+
+
+def serp_api_key() -> str:
+    return os.environ.get("SERP_API_KEY", "")
+
+
+def serp_api_endpoint() -> str:
+    return os.environ.get("SERP_API_ENDPOINT", "https://api.search.brave.com/res/v1/web/search")
+
+
+def serp_timeout_seconds() -> float:
+    return float(os.environ.get("SERP_TIMEOUT_SECONDS", "10"))
+
+
+def serp_max_results() -> int:
+    return int(os.environ.get("SERP_MAX_RESULTS", "3"))
+
+
+def page_fetch_timeout_seconds() -> float:
+    return float(os.environ.get("PAGE_FETCH_TIMEOUT_SECONDS", "15"))
+
+
+def page_fetch_max_chars() -> int:
+    # Cap what reaches the model. A restaurant page with a huge nav or embedded
+    # script can otherwise blow the context window and the token bill for one job.
+    return int(os.environ.get("PAGE_FETCH_MAX_CHARS", "40000"))
 
 
 def rate_limit_enabled() -> bool:
@@ -116,24 +162,19 @@ def recipe_rate_limit_per_day() -> int:
     return int(os.environ.get("RECIPE_RATE_LIMIT_PER_DAY", "15"))
 
 
-def content_safety_endpoint() -> str:
-    # Optional, unlike the other service endpoints: blank means "no moderation
-    # configured", which shared/content_safety.py reports as unchecked rather than
-    # raising. Keeps local dev running without a Content Safety account.
-    return os.environ.get("CONTENT_SAFETY_ENDPOINT", "")
+def moderation_enabled() -> bool:
+    # Off by default locally. There is no key to leave blank any more - Rekognition
+    # authenticates by IAM - so this flag is what "no moderation configured" became,
+    # and shared/moderation.py reports it as unchecked rather than raising.
+    return os.environ.get("MODERATION_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 
 
-def content_safety_key() -> str:
-    return os.environ.get("CONTENT_SAFETY_KEY", "")
+def moderation_min_confidence() -> float:
+    # Rekognition scores each label 0-100 rather than Azure's 0/2/4/6 severity scale.
+    # 80 is deliberately high: a food photo reading low on a category should not fail
+    # a scan, and the false-positive cost here is a user who cannot use the app.
+    return float(os.environ.get("MODERATION_MIN_CONFIDENCE", "80"))
 
 
-def content_safety_reject_severity() -> int:
-    return int(os.environ.get("CONTENT_SAFETY_REJECT_SEVERITY", "4"))
-
-
-def content_safety_timeout_seconds() -> float:
-    return float(os.environ.get("CONTENT_SAFETY_TIMEOUT_SECONDS", "10"))
-
-
-def content_safety_max_retries() -> int:
-    return int(os.environ.get("CONTENT_SAFETY_MAX_RETRIES", "2"))
+def moderation_max_retries() -> int:
+    return int(os.environ.get("MODERATION_MAX_RETRIES", "2"))

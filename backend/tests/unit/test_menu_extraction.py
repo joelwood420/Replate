@@ -1,96 +1,183 @@
+"""Menu extraction after the search -> fetch -> extract split.
+
+Was one Claude call with a server-side web_search tool; Bedrock does not expose
+that tool, so the search and fetch stages moved into shared/web_search.py and
+this module only structures page text. These tests stub both seams - what is
+being checked is the extraction and its retry behaviour, not the network.
+"""
+
 import pytest
 
-from shared import menu_extraction
-
-
-class _TextBlock:
-    type = "text"
-
-    def __init__(self, text: str):
-        self.text = text
-
-
-class _FakeResponse:
-    def __init__(self, text: str, stop_reason: str = "end_turn"):
-        self.content = [_TextBlock(text)]
-        self.stop_reason = stop_reason
-
-
-class _FakeMessages:
-    def __init__(self, responses):
-        self._responses = list(responses)
-        self.calls = []
-
-    def create(self, **kwargs):
-        self.calls.append(kwargs)
-        return self._responses.pop(0)
-
-
-class _FakeClient:
-    def __init__(self, responses):
-        self.messages = _FakeMessages(responses)
-
-
-def _patch_client(monkeypatch, responses):
-    fake_client = _FakeClient(responses)
-    monkeypatch.setattr(menu_extraction, "Anthropic", lambda **kwargs: fake_client)
-    # Stub the key too: fetch_menu_items now fails fast on a blank one, and the local
-    # .env legitimately leaves ANTHROPIC_API_KEY empty. These tests cover extraction
-    # logic, not auth config - see test_missing_api_key_raises_menu_extraction_error.
-    monkeypatch.setattr(menu_extraction.config, "anthropic_api_key", lambda: "sk-test-key")
-    return fake_client
-
+from shared import bedrock, menu_extraction, web_search
 
 VALID_JSON = '{"items": [{"item_name": "Pad Thai", "item_description": "desc", "price": "13.00"}]}'
 
 
-def test_valid_json_happy_path(monkeypatch):
-    _patch_client(monkeypatch, [_FakeResponse(VALID_JSON)])
-
-    result = menu_extraction.fetch_menu_items("Bangkok Kitchen", "1 Main St", None)
-
-    assert result == [{"item_name": "Pad Thai", "item_description": "desc", "price": "13.00"}]
+@pytest.fixture(autouse=True)
+def model_configured(monkeypatch):
+    monkeypatch.setenv("BEDROCK_MENU_MODEL_ID", "anthropic.claude-haiku-test")
 
 
-def test_invalid_json_then_valid_on_retry(monkeypatch):
-    fake_client = _patch_client(monkeypatch, [_FakeResponse("not json"), _FakeResponse(VALID_JSON)])
-
-    result = menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)
-
-    assert result == [{"item_name": "Pad Thai", "item_description": "desc", "price": "13.00"}]
-    assert len(fake_client.messages.calls) == 2
-
-
-def test_pause_turn_resumes_with_prior_assistant_turn(monkeypatch):
-    paused_response = _FakeResponse("(paused mid-search)", stop_reason="pause_turn")
-    fake_client = _patch_client(monkeypatch, [paused_response, _FakeResponse(VALID_JSON)])
-
-    result = menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)
-
-    assert result == [{"item_name": "Pad Thai", "item_description": "desc", "price": "13.00"}]
-    # Resume must re-send exactly [user(prompt), assistant(paused content)] - no
-    # synthetic "continue" message appended.
-    second_call_messages = fake_client.messages.calls[1]["messages"]
-    assert len(second_call_messages) == 2
-    assert second_call_messages[0]["role"] == "user"
-    assert second_call_messages[1] == {"role": "assistant", "content": paused_response.content}
+@pytest.fixture
+def page(monkeypatch):
+    """Stub the search + fetch half so only extraction is under test."""
+    monkeypatch.setattr(
+        menu_extraction.web_search,
+        "find_menu_page",
+        lambda name, address, url: ("https://example.com/menu", "Pad Thai 13.00"),
+    )
 
 
-def test_exhausted_retries_raises_menu_extraction_error(monkeypatch):
-    _patch_client(monkeypatch, [_FakeResponse("not json")] * 10)
+def _patch_model(monkeypatch, *responses):
+    calls = []
+
+    def fake_converse(model_id, messages, system=None, **kwargs):
+        calls.append({"model_id": model_id, "messages": messages, "system": system})
+        outcome = responses[len(calls) - 1]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(menu_extraction.bedrock, "converse", fake_converse)
+    return calls
+
+
+# --- happy path -------------------------------------------------------------
+
+
+def test_parses_valid_json(monkeypatch, page):
+    _patch_model(monkeypatch, VALID_JSON)
+
+    items = menu_extraction.fetch_menu_items("Bangkok Kitchen", "1 Main St", None)
+
+    assert items == [{"item_name": "Pad Thai", "item_description": "desc", "price": "13.00"}]
+
+
+def test_strips_a_markdown_code_fence(monkeypatch, page):
+    _patch_model(monkeypatch, f"```json\n{VALID_JSON}\n```")
+
+    assert menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)[0]["item_name"] == "Pad Thai"
+
+
+def test_an_empty_menu_is_a_valid_answer(monkeypatch, page):
+    """A page that is not a menu should return nothing, not fail the job."""
+    _patch_model(monkeypatch, '{"items": []}')
+
+    assert menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None) == []
+
+
+def test_a_missing_description_becomes_an_empty_string(monkeypatch, page):
+    _patch_model(monkeypatch, '{"items": [{"item_name": "Pad Thai"}]}')
+
+    item = menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)[0]
+
+    assert item["item_description"] == ""
+    assert item["price"] is None
+
+
+def test_the_page_url_and_text_reach_the_prompt(monkeypatch, page):
+    calls = _patch_model(monkeypatch, VALID_JSON)
+
+    menu_extraction.fetch_menu_items("Bangkok Kitchen", "1 Main St", None)
+
+    prompt = calls[0]["messages"][0]["content"][0]["text"]
+    assert "https://example.com/menu" in prompt
+    assert "Pad Thai 13.00" in prompt
+    assert "1 Main St" in prompt
+
+
+def test_the_configured_model_id_is_used(monkeypatch, page):
+    calls = _patch_model(monkeypatch, VALID_JSON)
+
+    menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)
+
+    assert calls[0]["model_id"] == "anthropic.claude-haiku-test"
+
+
+# --- retries ----------------------------------------------------------------
+
+
+def test_unparseable_output_is_retried_with_the_bad_output_shown(monkeypatch, page):
+    """A blind retry at temperature 0 tends to reproduce the same mistake, so the
+    model is shown what it got wrong."""
+    calls = _patch_model(monkeypatch, "not json at all", VALID_JSON)
+
+    items = menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)
+
+    assert items[0]["item_name"] == "Pad Thai"
+    assert len(calls) == 2
+    assert calls[1]["messages"][1]["content"][0]["text"] == "not json at all"
+
+
+def test_gives_up_after_the_retry_budget(monkeypatch, page):
+    monkeypatch.setenv("MENU_FETCH_MAX_RETRIES", "1")
+    calls = _patch_model(monkeypatch, "nope", "still nope")
+
+    with pytest.raises(menu_extraction.MenuExtractionError, match="after retries"):
+        menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)
+
+    assert len(calls) == 2
+
+
+def test_an_item_without_a_name_is_rejected(monkeypatch, page):
+    monkeypatch.setenv("MENU_FETCH_MAX_RETRIES", "0")
+    _patch_model(monkeypatch, '{"items": [{"item_description": "no name"}]}')
 
     with pytest.raises(menu_extraction.MenuExtractionError):
         menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)
 
 
-def test_missing_api_key_raises_menu_extraction_error(monkeypatch):
-    """A blank key must surface as MenuExtractionError, not a bare TypeError.
+def test_json_without_an_items_list_is_rejected(monkeypatch, page):
+    monkeypatch.setenv("MENU_FETCH_MAX_RETRIES", "0")
+    _patch_model(monkeypatch, '{"menu": []}')
 
-    fetch_restaurant_menu only catches MenuExtractionError in order to degrade to an
-    empty menu instead of failing the whole job. Anthropic(api_key="") raises TypeError
-    from the SDK constructor, which would escape that path.
-    """
-    monkeypatch.setattr(menu_extraction.config, "anthropic_api_key", lambda: "")
+    with pytest.raises(menu_extraction.MenuExtractionError):
+        menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)
 
-    with pytest.raises(menu_extraction.MenuExtractionError, match="ANTHROPIC_API_KEY"):
+
+# --- failure surfaces -------------------------------------------------------
+
+
+def test_a_bedrock_error_is_not_retried(monkeypatch, page):
+    """A missing model id or an ungranted model will fail identically every time."""
+    monkeypatch.setenv("MENU_FETCH_MAX_RETRIES", "3")
+    calls = _patch_model(monkeypatch, bedrock.BedrockError("AccessDeniedException"))
+
+    with pytest.raises(menu_extraction.MenuExtractionError, match="Bedrock error"):
+        menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)
+
+    assert len(calls) == 1
+
+
+def test_a_missing_model_id_degrades_rather_than_crashing(monkeypatch):
+    """Same contract the missing-ANTHROPIC_API_KEY path had: the caller's graceful
+    degrade turns this into the vision-only medium-confidence outcome."""
+    monkeypatch.setenv("BEDROCK_MENU_MODEL_ID", "")
+
+    with pytest.raises(menu_extraction.MenuExtractionError, match="BEDROCK_MENU_MODEL_ID"):
+        menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)
+
+
+def test_a_search_failure_becomes_a_menu_extraction_error(monkeypatch):
+    def explode(name, address, url):
+        raise web_search.SearchError("no results")
+
+    monkeypatch.setattr(menu_extraction.web_search, "find_menu_page", explode)
+
+    with pytest.raises(menu_extraction.MenuExtractionError, match="Could not find a menu page"):
+        menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)
+
+
+def test_a_blank_page_is_rejected_before_calling_the_model(monkeypatch):
+    """Paying for a model call on an empty page is pure waste."""
+    monkeypatch.setattr(
+        menu_extraction.web_search, "find_menu_page", lambda *a: ("https://x", "   \n  ")
+    )
+
+    def explode(*args, **kwargs):
+        raise AssertionError("must not call the model for an empty page")
+
+    monkeypatch.setattr(menu_extraction.bedrock, "converse", explode)
+
+    with pytest.raises(menu_extraction.MenuExtractionError, match="no readable text"):
         menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)

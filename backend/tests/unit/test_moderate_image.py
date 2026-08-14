@@ -1,28 +1,27 @@
-from activities import moderate_image
-from shared import content_safety
+﻿from activities import moderate_image
+from shared import moderation
 
 _IMAGE_KEY = "uploads/photo.jpg"
 
 
 def _patch_storage(monkeypatch, exists=True):
     monkeypatch.setattr(moderate_image.storage, "object_exists", lambda key: exists)
-    monkeypatch.setattr(moderate_image.storage, "generate_read_url", lambda key: f"https://s3/{key}?sig=abc")
 
 
 def _patch_verdict(monkeypatch, verdict, categories=()):
     seen = {}
 
-    def fake_analyze(url):
-        seen["url"] = url
+    def fake_analyze(image_key):
+        seen["image_key"] = image_key
         return {"verdict": verdict, "categories": list(categories), "detail": None}
 
-    monkeypatch.setattr(moderate_image.content_safety, "analyze_image", fake_analyze)
+    monkeypatch.setattr(moderate_image.moderation, "analyze_image", fake_analyze)
     return seen
 
 
 def test_safe_image_is_allowed(monkeypatch):
     _patch_storage(monkeypatch)
-    _patch_verdict(monkeypatch, content_safety.Verdict.SAFE)
+    _patch_verdict(monkeypatch, moderation.Verdict.SAFE)
 
     result = moderate_image.run({"image_key": _IMAGE_KEY})
 
@@ -32,7 +31,7 @@ def test_safe_image_is_allowed(monkeypatch):
 
 def test_unsafe_image_is_blocked_with_a_readable_reason(monkeypatch):
     _patch_storage(monkeypatch)
-    _patch_verdict(monkeypatch, content_safety.Verdict.UNSAFE, ["Sexual", "Violence"])
+    _patch_verdict(monkeypatch, moderation.Verdict.UNSAFE, ["Sexual", "Violence"])
 
     result = moderate_image.run({"image_key": _IMAGE_KEY})
 
@@ -43,14 +42,14 @@ def test_unsafe_image_is_blocked_with_a_readable_reason(monkeypatch):
 
 
 def test_unchecked_image_is_allowed(monkeypatch):
-    """Fail open on 'could not check' - see the decision in shared/content_safety.py."""
+    """Fail open on 'could not check' - see the decision in shared/moderation.py."""
     _patch_storage(monkeypatch)
-    _patch_verdict(monkeypatch, content_safety.Verdict.UNCHECKED)
+    _patch_verdict(monkeypatch, moderation.Verdict.UNCHECKED)
 
     result = moderate_image.run({"image_key": _IMAGE_KEY})
 
     assert result["allowed"] is True
-    assert result["verdict"] == content_safety.Verdict.UNCHECKED
+    assert result["verdict"] == moderation.Verdict.UNCHECKED
 
 
 def test_missing_image_is_blocked_without_calling_moderation(monkeypatch):
@@ -58,10 +57,10 @@ def test_missing_image_is_blocked_without_calling_moderation(monkeypatch):
     must not be waved through by the fail-open rule."""
     _patch_storage(monkeypatch, exists=False)
 
-    def explode(url):
+    def explode(image_key):
         raise AssertionError("moderation must not be called for a missing object")
 
-    monkeypatch.setattr(moderate_image.content_safety, "analyze_image", explode)
+    monkeypatch.setattr(moderate_image.moderation, "analyze_image", explode)
 
     result = moderate_image.run({"image_key": _IMAGE_KEY})
 
@@ -70,12 +69,13 @@ def test_missing_image_is_blocked_without_calling_moderation(monkeypatch):
     assert "never finished uploading" in result["reason"]
 
 
-def test_analyzes_a_presigned_url_not_the_bare_key(monkeypatch):
-    """The uploads bucket is private, so the service can only fetch the image
-    through a signed URL."""
+def test_moderation_receives_the_object_key_not_a_url(monkeypatch):
+    """Rekognition reads the object straight out of S3. The Azure service had to
+    fetch it over the internet with a SAS attached, which is also why moderation
+    could never work against a local emulator."""
     _patch_storage(monkeypatch)
-    seen = _patch_verdict(monkeypatch, content_safety.Verdict.SAFE)
+    seen = _patch_verdict(monkeypatch, moderation.Verdict.SAFE)
 
     moderate_image.run({"image_key": _IMAGE_KEY})
 
-    assert seen["url"] == f"https://s3/{_IMAGE_KEY}?sig=abc"
+    assert seen["image_key"] == _IMAGE_KEY

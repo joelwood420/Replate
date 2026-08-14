@@ -1,30 +1,48 @@
+"""Turn a restaurant's menu page into structured menu items.
+
+Was a single Claude call using Anthropic's server-side `web_search` tool, which
+did search, fetch and extract in one. Bedrock does not expose that tool, so this
+is now the third stage of search -> fetch -> extract; the first two are in
+`shared/web_search.py`.
+
+The extraction prompt itself barely changed - it was already "turn this into
+structured menu items". What changed is that the page text arrives as an argument
+rather than being gathered by the model, which means the model no longer needs a
+tool loop, a `pause_turn` resume path, or five search iterations of budget.
+"""
+
 import json
+import logging
 
-from anthropic import Anthropic, APIConnectionError, APIStatusError, APITimeoutError
+from shared import bedrock, config, web_search
 
-from shared import config
+_SYSTEM_PROMPT = (
+    "You extract restaurant menu items from web page text. "
+    "Respond with ONLY a JSON object, no prose before or after."
+)
 
-_PROMPT_TEMPLATE = """Search the web for the current menu of "{name}"{address_clause}.
-Respond with ONLY a JSON object of this exact shape, no prose before or after:
+_PROMPT_TEMPLATE = """Extract the menu items for "{name}"{address_clause} from the page text below.
+
+Respond with ONLY a JSON object of this exact shape:
 {{"items": [{{"item_name": "...", "item_description": "...", "price": "..." or null}}]}}
-If you cannot find a menu, respond with {{"items": []}}."""
+
+Rules:
+- Only include actual food and drink items. Ignore navigation, opening hours,
+  addresses, allergen keys and marketing copy.
+- If the page is not a menu, or you cannot find any items, respond with {{"items": []}}.
+
+Page URL: {url}
+
+Page text:
+{page_text}"""
 
 
 class MenuExtractionError(Exception):
     pass
 
 
-def _parse_response(response) -> list[dict]:
-    text_blocks = [block.text for block in response.content if block.type == "text"]
-    if not text_blocks:
-        raise ValueError("no text content in Claude response")
-
-    raw = text_blocks[-1].strip()
-    if raw.startswith("```"):
-        raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-
-    data = json.loads(raw)
-    items = data.get("items")
+def _validate(payload: dict) -> list[dict]:
+    items = payload.get("items")
     if not isinstance(items, list):
         raise ValueError("response JSON missing 'items' list")
 
@@ -42,57 +60,66 @@ def _parse_response(response) -> list[dict]:
     return validated
 
 
-def fetch_menu_items(name: str, address: str | None, menu_source_url: str | None) -> list[dict]:
-    # A missing/blank key is reported as a MenuExtractionError so the caller's graceful
-    # degrade path handles it. Constructing Anthropic(api_key="") raises a bare TypeError
-    # from the SDK, which would escape that path and fail the whole job.
-    api_key = config.anthropic_api_key()
-    if not api_key:
-        raise MenuExtractionError(
-            f"Cannot fetch menu for {name}: ANTHROPIC_API_KEY is not set"
-        )
-
-    client = Anthropic(api_key=api_key, timeout=config.menu_fetch_timeout_seconds())
+def extract_from_page(name: str, address: str | None, url: str, page_text: str) -> list[dict]:
+    """Ask the model to structure one page's text. Retries on unparseable output."""
     address_clause = f" at {address}" if address else ""
-    prompt = _PROMPT_TEMPLATE.format(name=name, address_clause=address_clause)
-    if menu_source_url:
-        prompt += f"\nA known menu source URL: {menu_source_url}"
+    prompt = _PROMPT_TEMPLATE.format(
+        name=name, address_clause=address_clause, url=url, page_text=page_text
+    )
 
-    messages: list[dict] = [{"role": "user", "content": prompt}]
+    messages = [{"role": "user", "content": [{"text": prompt}]}]
     last_error: Exception | None = None
 
     for _ in range(config.menu_fetch_max_retries() + 1):
         try:
-            response = client.messages.create(
-                model=config.menu_fetch_model(),
-                max_tokens=4096,
-                tools=[{"type": "web_search_20260209", "name": "web_search", "max_uses": 5}],
-                messages=messages,
+            raw = bedrock.converse(
+                config.bedrock_menu_model_id(), messages, system=_SYSTEM_PROMPT
             )
-        except (APIConnectionError, APITimeoutError) as exc:
-            last_error = exc
-            continue
-        except APIStatusError as exc:
-            raise MenuExtractionError(f"Claude API error fetching menu for {name}: {exc}") from exc
-
-        if response.stop_reason == "pause_turn":
-            # Server-tool loop hit its internal iteration limit; resume by
-            # re-sending the paused assistant turn - the API detects the
-            # trailing server_tool_use block and continues automatically.
-            messages = [{"role": "user", "content": prompt}, {"role": "assistant", "content": response.content}]
-            continue
+        except bedrock.BedrockError as exc:
+            # A model error is not retryable here - a missing model id or a denied
+            # model grant will fail identically every time.
+            raise MenuExtractionError(f"Bedrock error fetching menu for {name}: {exc}") from exc
 
         try:
-            return _parse_response(response)
+            return _validate(bedrock.parse_json_response(raw))
         except (ValueError, json.JSONDecodeError) as exc:
             last_error = exc
+            # Show the model its own bad output rather than just asking again -
+            # a blind retry at temperature 0 tends to reproduce the same mistake.
             messages = messages + [
-                {"role": "assistant", "content": response.content},
+                {"role": "assistant", "content": [{"text": raw}]},
                 {
                     "role": "user",
-                    "content": "That wasn't valid JSON matching the schema. Respond with ONLY the JSON object.",
+                    "content": [
+                        {"text": "That wasn't valid JSON matching the schema. Respond with ONLY the JSON object."}
+                    ],
                 },
             ]
             continue
 
-    raise MenuExtractionError(f"Failed to fetch menu for {name} after retries: {last_error}") from last_error
+    raise MenuExtractionError(f"Failed to parse menu for {name} after retries: {last_error}") from last_error
+
+
+def fetch_menu_items(name: str, address: str | None, menu_source_url: str | None) -> list[dict]:
+    """Find, fetch and extract a restaurant's menu.
+
+    Signature and return shape are unchanged from the Anthropic version, so
+    `activities/fetch_restaurant_menu.py` and its graceful-degrade path did not
+    have to change - a MenuExtractionError still means "no real menu data", which
+    the match step already handles as the vision-only medium-confidence outcome.
+    """
+    if not config.bedrock_menu_model_id():
+        raise MenuExtractionError(
+            f"Cannot fetch menu for {name}: BEDROCK_MENU_MODEL_ID is not set"
+        )
+
+    try:
+        url, page_text = web_search.find_menu_page(name, address, menu_source_url)
+    except web_search.SearchError as exc:
+        raise MenuExtractionError(f"Could not find a menu page for {name}: {exc}") from exc
+
+    if not page_text.strip():
+        raise MenuExtractionError(f"Menu page for {name} at {url} had no readable text")
+
+    logging.info("Extracting menu for %s from %s (%d chars)", name, url, len(page_text))
+    return extract_from_page(name, address, url, page_text)

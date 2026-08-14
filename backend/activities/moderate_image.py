@@ -1,7 +1,7 @@
 ﻿"""Stage 1's first activity: moderate the uploaded photo before spending anything.
 
-Deliberately runs ahead of every other activity in dish_orchestrator. It gates the
-whole pipeline, so a rejected image costs one Content Safety call and no AI spend -
+Deliberately runs ahead of every other task in dish-identify.asl.json. It gates the
+whole pipeline, so a rejected image costs one Rekognition call and no model spend -
 which is the entire point of putting it here rather than next to the vision step.
 
 A MISSING object is reported separately from a failed check and is NOT covered by the
@@ -12,7 +12,7 @@ obvious error.
 """
 
 
-from shared import content_safety, storage
+from shared import moderation, storage
 
 #: Verdict for an object key that was handed out but never uploaded to. Not a
 #: moderation verdict - the service is never called in this case.
@@ -35,9 +35,11 @@ def run(activity_input: dict) -> dict:
             "reason": "The photo was never finished uploading. Try scanning it again.",
         }
 
-    result = content_safety.analyze_image(storage.generate_read_url(image_key))
+    # The key, not a URL: Rekognition reads the object straight out of S3, so the
+    # image never leaves the account and there is no presigned round-trip.
+    result = moderation.analyze_image(image_key)
 
-    if result["verdict"] == content_safety.Verdict.UNSAFE:
+    if result["verdict"] == moderation.Verdict.UNSAFE:
         categories = ", ".join(result["categories"]) or "unknown"
         return {
             "allowed": False,
