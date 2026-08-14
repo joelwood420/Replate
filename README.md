@@ -16,8 +16,13 @@ part, and nobody needs it while they're still sitting at the table.
 
 | | |
 |---|---|
-| [`backend/`](backend/README.md) | Azure Functions (Python, Durable Functions) — run it locally with `func start` |
+| [`backend/`](backend/README.md) | Python on AWS Lambda + Step Functions — run it locally against LocalStack |
 | [`frontend/`](frontend/README.md) | React (Vite + TypeScript), mobile-first — `npm run dev` |
-| [`infra/`](infra/README.md) | Bicep for the production environment (written, not yet deployed) |
+| [`infra/`](infra/README.md) | AWS SAM template for the production environment (Phase 3, not written yet) |
 | [`docs/`](docs/) | [API reference](docs/api.md), [architecture](docs/architecture.md), [user flow](docs/user-flow.md), and the [decision log](docs/decisions.md) |
 | [`CLAUDE.md`](CLAUDE.md) | Project rules and the phase-by-phase build plan |
+
+> **On AWS since 2026-08-14.** Replate was originally built on Azure and was ported before
+> anything had been deployed, so the move cost no data and no downtime. See
+> [`docs/decisions.md`](docs/decisions.md) for the reasoning, and the git history before
+> `77f091a` for the Azure version.

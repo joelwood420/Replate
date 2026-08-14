@@ -1,8 +1,8 @@
-# Replate — Frontend (Phase 2)
+# Replate — Frontend
 
-React (Vite + TypeScript) mobile-first frontend for Replate. This is the **Phase 2** scope
-from the root [`CLAUDE.md`](../CLAUDE.md): a working UI wired against the Phase 1 backend's
-real API contract, with Entra ID sign-in mocked locally since no real tenant exists yet.
+React (Vite + TypeScript) mobile-first frontend for Replate. A working UI wired against the
+backend's real API contract, with Cognito sign-in mocked locally since no user pool exists
+yet.
 
 ## Setup
 
@@ -13,7 +13,7 @@ cp .env.example .env
 ```
 
 The backend must be running locally for any of this to talk to real data — see
-[`../backend/README.md`](../backend/README.md) (`docker compose up -d`, `func start`).
+[`../backend/README.md`](../backend/README.md) (`docker compose up -d`).
 
 ## Run
 
@@ -25,24 +25,28 @@ Opens on `http://localhost:5173`. The port is pinned with `strictPort` in `vite.
 if something else is already on 5173 the dev server **fails loudly** rather than quietly moving
 to 5174 — which previously meant opening the wrong app's dev server without noticing.
 
-Sign in with the mocked "Sign in with Microsoft" button (see Auth below) to reach Home.
+Sign in with the mocked "Sign in" button (see Auth below) to reach Home.
 
 ## Auth (mocked locally)
 
-`VITE_ENTRAID_ENABLED=false` (default) makes Sign In an instant local mock — no real
-Microsoft account needed. The mock user's `oid` matches the backend's
-`STUB_DEFAULT_USER_OID`, so locally-created jobs are owned by the same identity the backend
-expects out of the box. `VITE_ENTRAID_ENABLED=true` mounts a real MSAL provider, but it's
-inert until Phase 3 provisions an actual Entra tenant — don't expect sign-in to work with it
-on locally.
+`VITE_COGNITO_ENABLED=false` (default) makes Sign In an instant local mock — no AWS account
+needed. The mock user's `oid` matches the backend's `STUB_DEFAULT_USER_OID`, so
+locally-created jobs are owned by the same identity the backend expects out of the box.
+
+`VITE_COGNITO_ENABLED=true` mounts a real OIDC client (`react-oidc-context` over
+`oidc-client-ts`) against a Cognito user pool. That pool doesn't exist until Phase 3, so
+sign-in won't work with the flag on locally. Unlike the MSAL bridge this replaced, the
+Cognito path does produce a real `Authorization: Bearer` header — which is exactly what API
+Gateway's JWT authorizer will expect, so there's nothing left to fill in once the pool is
+provisioned.
 
 ## Environment variables
 
 | Variable | Purpose |
 |---|---|
-| `VITE_API_BASE_URL` | Backend base URL (default `http://localhost:7071/api`) |
-| `VITE_ENTRAID_ENABLED` | `false` (default) mocks sign-in; `true` mounts real MSAL (inert until Phase 3) |
-| `VITE_ENTRA_CLIENT_ID`, `VITE_ENTRA_AUTHORITY_URL` | Phase 3 placeholders — unused while `VITE_ENTRAID_ENABLED=false` |
+| `VITE_API_BASE_URL` | Backend base URL (default `http://localhost:3000`) |
+| `VITE_COGNITO_ENABLED` | `false` (default) mocks sign-in; `true` mounts a real OIDC client (inert until Phase 3) |
+| `VITE_COGNITO_AUTHORITY`, `VITE_COGNITO_CLIENT_ID` | Phase 3 placeholders — unused while `VITE_COGNITO_ENABLED=false` |
 | `VITE_STUB_AUTH_HEADER_NAME`, `VITE_STUB_DEFAULT_USER_OID` | Must match the backend's `STUB_AUTH_HEADER_NAME`/`STUB_DEFAULT_USER_OID` |
 
 ## Build / typecheck
@@ -65,7 +69,7 @@ npm run lint     # tsc --noEmit only
   it's opt-in per dish; see `docs/decisions.md`. Both stages share the same full-screen
   `ProcessingOrb` loading view.
 - **Real-time seam**: `src/lib/jobs/useJobPolling.ts` polls `GET /api/jobs/{jobId}` today.
-  This is the seam Phase 3 swaps for a SignalR/Web PubSub subscription — consumers
+  This is the seam Phase 3 swaps for a push subscription (API Gateway WebSockets or AWS IoT Core) — consumers
   (`JobScreen`) don't need to change when that happens. It stops polling on terminal statuses
   (including `Identified`) and exposes `refetch()`, which `JobScreen` calls after pressing
   Reverse engineer to resume polling once the job is back in flight.
@@ -73,5 +77,5 @@ npm run lint     # tsc --noEmit only
   (per the Capture design), not an OS-camera handoff via `<input capture>`.
 - **Cookbook filter chips**: only "All" is functionally wired — the other chips
   (Mains/Sauces/Desserts) have no backing category field on the backend yet
-  (`JobResults.Cuisine` isn't the same thing), so they render but don't filter. See the
+  (the result item's cuisine isn't the same thing), so they render but don't filter. See the
   comment in `src/screens/CookbookScreen.tsx`.
