@@ -1,6 +1,4 @@
-import asyncio
 import datetime
-from unittest.mock import MagicMock
 
 from shared import ddb, repository
 from shared.models import JobStatus, MatchMethod
@@ -103,26 +101,58 @@ def test_starting_generation_clears_a_previous_error(ddb_table):
     assert repository.get_job("job-1")["error_message"] is None
 
 
-def test_handle_request_starts_orchestration_on_a_distinct_instance_id(monkeypatch):
+def test_handle_request_starts_the_recipe_machine_on_a_distinct_name(monkeypatch):
     monkeypatch.setattr(
         starter,
         "build_recipe_input",
         lambda job_id, user_oid: {"orchestration_input": {"job_id": job_id}},
     )
+    monkeypatch.setenv("RECIPE_STATE_MACHINE_ARN", "arn:aws:states:::stateMachine:recipe")
     started = {}
 
-    async def fake_start_new(name, instance_id=None, client_input=None):
-        started.update(name=name, instance_id=instance_id, client_input=client_input)
-        return instance_id
+    def fake_start(arn, name, payload):
+        started.update(arn=arn, name=name, payload=payload)
+        return True
 
-    client = MagicMock(start_new=fake_start_new)
+    monkeypatch.setattr(starter.sfn, "start_execution", fake_start)
 
-    outcome = asyncio.run(starter.handle_request("job-1", _OWNER, client))
+    outcome = starter.handle_request("job-1", _OWNER)
 
-    assert started["name"] == "recipe_orchestrator_trigger"
-    # Stage 1 already used the bare job id, so reusing it would collide.
-    assert started["instance_id"] == "job-1:recipe"
+    assert started["arn"] == "arn:aws:states:::stateMachine:recipe"
+    # Stage 1 already used the bare job id, and Step Functions refuses a name used
+    # in the last 90 days - so reusing it would collide with the finished stage-1
+    # execution rather than starting anything.
+    assert started["name"] == "job-1-recipe"
     assert outcome == {"status_code": 202, "body": {"job_id": "job-1", "status": JobStatus.GENERATING}}
+
+
+def test_a_double_tap_is_still_accepted(monkeypatch):
+    """An already-existing execution means the work is in flight, not an error."""
+    monkeypatch.setattr(
+        starter,
+        "build_recipe_input",
+        lambda job_id, user_oid: {"orchestration_input": {"job_id": job_id}},
+    )
+    monkeypatch.setattr(starter.sfn, "start_execution", lambda *a, **k: False)
+
+    outcome = starter.handle_request("job-1", _OWNER)
+
+    assert outcome["status_code"] == 202
+
+
+def test_a_rejected_request_starts_nothing(monkeypatch):
+    monkeypatch.setattr(
+        starter,
+        "build_recipe_input",
+        lambda job_id, user_oid: {"status_code": 404, "body": {"error": "Job not found"}},
+    )
+
+    def explode(*args, **kwargs):
+        raise AssertionError("must not start an execution for a rejected request")
+
+    monkeypatch.setattr(starter.sfn, "start_execution", explode)
+
+    assert starter.handle_request("job-1", _OWNER)["status_code"] == 404
 
 
 def test_returns_429_when_the_generation_quota_is_spent(ddb_table, monkeypatch):

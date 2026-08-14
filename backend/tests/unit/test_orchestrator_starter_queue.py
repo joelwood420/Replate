@@ -1,6 +1,4 @@
-﻿import asyncio
-import json
-from unittest.mock import MagicMock
+﻿import json
 
 import pytest
 
@@ -59,27 +57,67 @@ def test_processing_status_reaches_the_cookbook_listing(ddb_table):
     assert repository.list_jobs("user-1")[0]["status"] == JobStatus.PROCESSING
 
 
-def test_handle_queue_message_decodes_message_and_starts_orchestration(monkeypatch):
-    monkeypatch.setattr(
-        starter,
-        "build_orchestration_input",
-        lambda job_id: {"job_id": job_id, "image_key": "u", "latitude": 1.0, "longitude": 2.0},
-    )
+@pytest.fixture
+def started(monkeypatch):
+    """Capture StartExecution calls instead of making them."""
+    calls = []
 
-    message_body = json.dumps({"job_id": "job-1"}).encode("utf-8")
-    client = MagicMock()
-    started = {}
+    def fake_start(arn, name, payload):
+        calls.append({"arn": arn, "name": name, "payload": payload})
+        return True
 
-    async def fake_start_new(name, instance_id=None, client_input=None):
-        started["name"] = name
-        started["instance_id"] = instance_id
-        started["client_input"] = client_input
-        return "instance-1"
+    monkeypatch.setattr(starter.sfn, "start_execution", fake_start)
+    monkeypatch.setenv("IDENTIFY_STATE_MACHINE_ARN", "arn:aws:states:::stateMachine:identify")
+    return calls
 
-    client.start_new = fake_start_new
 
-    asyncio.run(starter.handle_queue_message(message_body, client))
+def _sqs_event(*job_ids):
+    return {
+        "Records": [
+            {"messageId": f"msg-{index}", "body": json.dumps({"job_id": job_id})}
+            for index, job_id in enumerate(job_ids)
+        ]
+    }
 
-    assert started["name"] == "dish_orchestrator_trigger"
-    assert started["instance_id"] == "job-1"
-    assert started["client_input"] == {"job_id": "job-1", "image_key": "u", "latitude": 1.0, "longitude": 2.0}
+
+def test_handler_decodes_the_message_and_starts_the_state_machine(ddb_table, started):
+    _create_job()
+
+    result = starter.handler(_sqs_event("job-1"))
+
+    assert result == {"batchItemFailures": []}
+    assert started[0]["arn"] == "arn:aws:states:::stateMachine:identify"
+    assert started[0]["name"] == "job-1"
+    assert started[0]["payload"] == {
+        "job_id": "job-1",
+        "image_key": "uploads/photo.jpg",
+        "latitude": 40.7,
+        "longitude": -74.0,
+    }
+
+
+def test_the_execution_is_named_after_the_job(ddb_table, started):
+    """Step Functions refuses a duplicate execution name, which is what makes a
+    redelivered SQS message harmless - the same role Durable's instance_id played."""
+    _create_job()
+
+    starter.handler(_sqs_event("job-1"))
+
+    assert started[0]["name"] == starter.sfn.sanitize_name("job-1")
+
+
+def test_one_bad_message_does_not_fail_the_whole_batch(ddb_table, started):
+    """A raised error would make SQS redeliver every message in the batch, re-running
+    work that already succeeded."""
+    _create_job()
+
+    result = starter.handler(_sqs_event("job-1", "job-does-not-exist"))
+
+    assert len(started) == 1
+    assert result == {"batchItemFailures": [{"itemIdentifier": "msg-1"}]}
+
+
+def test_a_malformed_message_body_is_reported_not_raised(ddb_table, started):
+    result = starter.handler({"Records": [{"messageId": "msg-0", "body": "not json"}]})
+
+    assert result == {"batchItemFailures": [{"itemIdentifier": "msg-0"}]}

@@ -1,11 +1,19 @@
+"""SQS-triggered starter for stage 1.
+
+Was a Durable Functions queue trigger with an injected client; now a Lambda with an
+SQS event source mapping that calls StartExecution.
+
+De-duplication carries over unchanged. Durable refused a second `start_new` for an
+instance id already running; Step Functions refuses a `StartExecution` for a name
+used in the last 90 days. Both mean the same thing here: `POST /jobs/{id}/uploaded`
+is not atomic with the send, so two simultaneous calls can both enqueue - and a
+duplicate message still cannot double-process the job.
+"""
+
 import json
 
-import azure.durable_functions as df
-
-from shared import config, repository
+from shared import config, repository, sfn
 from shared.models import JobStatus
-
-bp = df.Blueprint()
 
 
 def _load_job(job_id: str) -> dict:
@@ -28,13 +36,32 @@ def build_orchestration_input(job_id: str) -> dict:
     return {"job_id": job_id, **job_data}
 
 
-async def handle_queue_message(message_body: bytes, client) -> None:
-    job_id = json.loads(message_body.decode("utf-8"))["job_id"]
-    orchestration_input = build_orchestration_input(job_id)
-    await client.start_new("dish_orchestrator_trigger", instance_id=job_id, client_input=orchestration_input)
+def start_for_job(job_id: str) -> bool:
+    """Move the job to Processing and start the identify state machine."""
+    execution_input = build_orchestration_input(job_id)
+    return sfn.start_execution(
+        config.identify_state_machine_arn(),
+        name=sfn.sanitize_name(job_id),
+        payload=execution_input,
+    )
 
 
-@bp.queue_trigger(arg_name="msg", queue_name=config.sqs_queue_name(), connection="AzureWebJobsStorage")
-@bp.durable_client_input(client_name="client")
-async def orchestrator_starter_queue(msg, client) -> None:
-    await handle_queue_message(msg.get_body(), client)
+def handler(event, context=None):
+    """SQS event source mapping entry point.
+
+    A batch can contain more than one message. Each is processed independently so
+    one bad job id does not fail the whole batch - the raised error would make SQS
+    redeliver every message in it, re-running work that already succeeded.
+    """
+    failures = []
+    for record in event.get("Records", []):
+        message_id = record.get("messageId")
+        try:
+            job_id = json.loads(record["body"])["job_id"]
+            start_for_job(job_id)
+        except Exception:  # noqa: BLE001 - reported per-message, not swallowed
+            failures.append({"itemIdentifier": message_id})
+
+    # Partial batch response: only the listed messages are redelivered. Requires
+    # ReportBatchItemFailures on the event source mapping in the SAM template.
+    return {"batchItemFailures": failures}

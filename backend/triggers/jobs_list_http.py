@@ -1,11 +1,5 @@
-import json
-
-import azure.functions as func
-
-from shared import repository, storage
+from shared import http, repository, storage
 from shared.auth import get_user_oid
-
-bp = func.Blueprint()
 
 DEFAULT_LIMIT = 20
 
@@ -40,14 +34,12 @@ def run(user_oid: str, saved: bool | None, limit: int) -> list[dict]:
     ]
 
 
-@bp.route(route="jobs", methods=["GET"])
-def jobs_list_http(req: func.HttpRequest) -> func.HttpResponse:
-    user_oid = get_user_oid(req)
-    saved = _parse_bool(req.params.get("saved"))
+def handler(event, context=None):
+    """GET /api/jobs?saved=&limit="""
+    saved = _parse_bool(http.query_param(event, "saved"))
     try:
-        limit = int(req.params.get("limit", DEFAULT_LIMIT))
-    except ValueError:
+        limit = int(http.query_param(event, "limit", DEFAULT_LIMIT))
+    except (TypeError, ValueError):
         limit = DEFAULT_LIMIT
 
-    jobs = run(user_oid, saved, limit)
-    return func.HttpResponse(json.dumps(jobs), status_code=200, mimetype="application/json")
+    return http.respond(200, run(get_user_oid(event), saved, limit))

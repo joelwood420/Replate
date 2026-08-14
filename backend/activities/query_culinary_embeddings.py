@@ -1,8 +1,4 @@
-import azure.durable_functions as df
-
 from shared import config, models, repository, vectors
-
-bp = df.Blueprint()
 
 
 def run(activity_input: dict) -> list[dict]:
@@ -23,6 +19,23 @@ def run(activity_input: dict) -> list[dict]:
     return vectors.top_k(query_vector, candidates, top_k)
 
 
-@bp.activity_trigger(input_name="activityInput")
-def query_culinary_embeddings(activityInput: dict) -> list[dict]:
-    return run(activityInput)
+def build_query_text(match_result: dict | None, vision_guess: dict | None) -> str:
+    """The matched menu item's name, falling back to the vision model's guess.
+
+    Lives here rather than in the state machine because ASL has no way to express
+    "this or that if the first is empty" - and the fallback matters: a vision-only
+    outcome has no matched dish name at all.
+    """
+    match_result = match_result or {}
+    vision_guess = vision_guess or {}
+    return match_result.get("dish_name") or vision_guess.get("dish_name_guess") or ""
+
+
+def handler(event, context=None):
+    """Lambda entry point for the QueryCulinaryEmbeddings task."""
+    return run(
+        {
+            "query_text": build_query_text(event.get("match_result"), event.get("vision_guess")),
+            "top_k": event.get("top_k"),
+        }
+    )

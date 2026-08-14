@@ -1,12 +1,6 @@
-import json
-
-import azure.functions as func
-
-from shared import repository, storage
+from shared import http, repository, storage
 from shared.auth import get_user_oid
 from shared.models import JobStatus
-
-bp = func.Blueprint()
 
 # Statuses for which a result item exists. Stage 1 writes that item and leaves the
 # job Identified, so the result is available well before any recipe is generated.
@@ -66,9 +60,6 @@ def run(job_id: str, user_oid: str) -> dict:
     return {"status_code": 200, "body": response_body}
 
 
-@bp.route(route="jobs/{jobId}", methods=["GET"])
-def job_result_http(req: func.HttpRequest) -> func.HttpResponse:
-    outcome = run(req.route_params.get("jobId"), get_user_oid(req))
-    return func.HttpResponse(
-        json.dumps(outcome["body"]), status_code=outcome["status_code"], mimetype="application/json"
-    )
+def handler(event, context=None):
+    """GET /api/jobs/{jobId}"""
+    return http.from_outcome(run(http.path_param(event, "jobId"), get_user_oid(event)))

@@ -10,15 +10,9 @@ Splitting the two also means an abandoned upload costs nothing: the job simply s
 Queued and no orchestration is ever started.
 """
 
-import json
-
-import azure.functions as func
-
-from shared import queue, repository
+from shared import http, queue, repository
 from shared.auth import get_user_oid
 from shared.models import JobStatus
-
-bp = func.Blueprint()
 
 
 def run(job_id: str, user_oid: str) -> dict:
@@ -44,9 +38,6 @@ def run(job_id: str, user_oid: str) -> dict:
     return {"status_code": 202, "body": {"job_id": job_id, "status": JobStatus.QUEUED}}
 
 
-@bp.route(route="jobs/{jobId}/uploaded", methods=["POST"])
-def job_uploaded_http(req: func.HttpRequest) -> func.HttpResponse:
-    outcome = run(req.route_params.get("jobId"), get_user_oid(req))
-    return func.HttpResponse(
-        json.dumps(outcome["body"]), status_code=outcome["status_code"], mimetype="application/json"
-    )
+def handler(event, context=None):
+    """POST /api/jobs/{jobId}/uploaded"""
+    return http.from_outcome(run(http.path_param(event, "jobId"), get_user_oid(event)))

@@ -1,11 +1,5 @@
-import json
-
-import azure.functions as func
-
-from shared import repository
+from shared import http, repository
 from shared.auth import get_user_oid
-
-bp = func.Blueprint()
 
 
 def run(job_id: str, user_oid: str, saved: bool) -> dict:
@@ -22,15 +16,7 @@ def run(job_id: str, user_oid: str, saved: bool) -> dict:
     return {"status_code": 200, "body": {"job_id": job_id, "is_saved": saved}}
 
 
-@bp.route(route="jobs/{jobId}/save", methods=["PATCH"])
-def job_save_http(req: func.HttpRequest) -> func.HttpResponse:
-    try:
-        body = req.get_json()
-    except ValueError:
-        body = {}
-
-    saved = bool(body.get("saved", True))
-    outcome = run(req.route_params.get("jobId"), get_user_oid(req), saved)
-    return func.HttpResponse(
-        json.dumps(outcome["body"]), status_code=outcome["status_code"], mimetype="application/json"
-    )
+def handler(event, context=None):
+    """PATCH /api/jobs/{jobId}/save"""
+    saved = bool(http.get_body(event).get("saved", True))
+    return http.from_outcome(run(http.path_param(event, "jobId"), get_user_oid(event), saved))

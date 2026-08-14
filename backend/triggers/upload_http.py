@@ -7,16 +7,11 @@ signals it has finished via POST /api/jobs/{jobId}/uploaded instead
 (triggers/job_uploaded_http.py).
 """
 
-import json
 import uuid
 
-import azure.functions as func
-
-from shared import rate_limit, repository, storage
+from shared import http, rate_limit, repository, storage
 from shared.auth import get_user_oid
 from shared.models import JobStatus
-
-bp = func.Blueprint()
 
 _SELECTED_RESTAURANT_REQUIRED_FIELDS = ("place_id", "name", "latitude", "longitude")
 
@@ -121,18 +116,6 @@ def run(body: dict, user_oid: str) -> dict:
     }
 
 
-@bp.route(route="jobs", methods=["POST"])
-def upload_http(req: func.HttpRequest) -> func.HttpResponse:
-    try:
-        body = req.get_json()
-    except ValueError:
-        body = {}
-
-    outcome = run(body, get_user_oid(req))
-
-    return func.HttpResponse(
-        json.dumps(outcome["body"]),
-        status_code=outcome["status_code"],
-        mimetype="application/json",
-        headers=outcome.get("headers"),
-    )
+def handler(event, context=None):
+    """POST /api/jobs"""
+    return http.from_outcome(run(http.get_body(event), get_user_oid(event)))

@@ -1,0 +1,240 @@
+{
+  "Comment": "Stage 1: moderate the photo, identify the restaurant and its menu, guess the dish, and match the guess against the real menu. Stops at Identified - recipe generation is a separate, user-triggered state machine. Ported from orchestrators/dish_orchestrator.py.",
+  "StartAt": "ModerateImage",
+  "States": {
+    "ModerateImage": {
+      "Comment": "First and alone. Everything below costs money, so a rejected photo costs one moderation call and no model spend at all.",
+      "Type": "Task",
+      "Resource": "${ModerateImageFunctionArn}",
+      "Parameters": {
+        "image_key.$": "$.image_key"
+      },
+      "ResultPath": "$.moderation",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException", "Lambda.SdkClientException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkJobFailed"
+        }
+      ],
+      "Next": "IsImageAllowed"
+    },
+
+    "IsImageAllowed": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.moderation.allowed",
+          "BooleanEquals": false,
+          "Next": "MarkJobRejected"
+        }
+      ],
+      "Default": "IdentifyAndFetchMenu"
+    },
+
+    "MarkJobRejected": {
+      "Comment": "A rejected photo is a normal terminal outcome, not an execution failure - hence Succeed rather than Fail. The reason is written for the user and shown in the app.",
+      "Type": "Task",
+      "Resource": "${MarkJobFailedFunctionArn}",
+      "Parameters": {
+        "job_id.$": "$.job_id",
+        "error_message.$": "$.moderation.reason"
+      },
+      "ResultPath": null,
+      "End": true
+    },
+
+    "IdentifyAndFetchMenu": {
+      "Comment": "The vision guess runs concurrently with restaurant lookup and menu fetch, then both join at the match step - the same fan-out/fan-in the Durable orchestrator expressed by starting vision_task before yielding on the restaurant branch.",
+      "Type": "Parallel",
+      "ResultPath": "$.parallel",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkJobFailed"
+        }
+      ],
+      "Branches": [
+        {
+          "StartAt": "VisionGuess",
+          "States": {
+            "VisionGuess": {
+              "Type": "Task",
+              "Resource": "${VisionGuessFunctionArn}",
+              "Parameters": {
+                "image_key.$": "$.image_key"
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2
+                }
+              ],
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "HasSelectedRestaurant",
+          "States": {
+            "HasSelectedRestaurant": {
+              "Comment": "The user either shared GPS or picked a restaurant by name - never both, which POST /api/jobs enforces.",
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.selected_restaurant_id",
+                  "IsPresent": true,
+                  "Next": "SelectRestaurantCandidate"
+                }
+              ],
+              "Default": "GeocodeRestaurantCandidates"
+            },
+
+            "SelectRestaurantCandidate": {
+              "Type": "Task",
+              "Resource": "${SelectRestaurantCandidateFunctionArn}",
+              "Parameters": {
+                "job_id.$": "$.job_id",
+                "restaurant_id.$": "$.selected_restaurant_id"
+              },
+              "Next": "HasCandidate"
+            },
+
+            "GeocodeRestaurantCandidates": {
+              "Type": "Task",
+              "Resource": "${GeocodeRestaurantCandidatesFunctionArn}",
+              "Parameters": {
+                "job_id.$": "$.job_id",
+                "latitude.$": "$.latitude",
+                "longitude.$": "$.longitude"
+              },
+              "Next": "HasCandidate"
+            },
+
+            "HasCandidate": {
+              "Comment": "No restaurant near those coordinates is a valid outcome, not an error - it produces the vision-only low-confidence match downstream.",
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.candidate_found",
+                  "BooleanEquals": true,
+                  "Next": "FetchRestaurantMenu"
+                }
+              ],
+              "Default": "NoMenu"
+            },
+
+            "FetchRestaurantMenu": {
+              "Type": "Task",
+              "Resource": "${FetchRestaurantMenuFunctionArn}",
+              "Parameters": {
+                "restaurant_id.$": "$.top_candidate.restaurant_id",
+                "restaurant_name.$": "$.top_candidate.name",
+                "restaurant_address.$": "$.top_candidate.address",
+                "menu_source_url.$": "$.top_candidate.menu_source_url"
+              },
+              "ResultPath": "$.menu",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 3,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2
+                }
+              ],
+              "End": true
+            },
+
+            "NoMenu": {
+              "Type": "Pass",
+              "Result": {
+                "items": []
+              },
+              "ResultPath": "$.menu",
+              "End": true
+            }
+          }
+        }
+      ],
+      "Next": "MatchMenuItem"
+    },
+
+    "MatchMenuItem": {
+      "Comment": "The anti-hallucination step - a real menu item's name and description are trusted over the vision model's unaided guess. Records which of the three confidence outcomes occurred.",
+      "Type": "Task",
+      "Resource": "${MatchMenuItemFunctionArn}",
+      "Parameters": {
+        "vision_guess.$": "$.parallel[0]",
+        "menu_items.$": "$.parallel[1].menu.items",
+        "candidate_found.$": "$.parallel[1].candidate_found",
+        "restaurant_id.$": "$.parallel[1].restaurant_id"
+      },
+      "ResultPath": "$.match",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkJobFailed"
+        }
+      ],
+      "Next": "PersistMatchResult"
+    },
+
+    "PersistMatchResult": {
+      "Comment": "vision_guess is persisted alongside the match because stage 2 takes it as input - nothing else records it until a recipe exists.",
+      "Type": "Task",
+      "Resource": "${PersistMatchResultFunctionArn}",
+      "Parameters": {
+        "job_id.$": "$.job_id",
+        "match_result.$": "$.match",
+        "vision_guess.$": "$.parallel[0]"
+      },
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkJobFailed"
+        }
+      ],
+      "End": true
+    },
+
+    "MarkJobFailed": {
+      "Comment": "Terminal failure for stage 1. Fail (not Succeed) so the execution shows as failed in the console and in CloudWatch metrics.",
+      "Type": "Task",
+      "Resource": "${MarkJobFailedFunctionArn}",
+      "Parameters": {
+        "job_id.$": "$.job_id",
+        "error_message.$": "$.error.Cause"
+      },
+      "ResultPath": null,
+      "Next": "IdentifyFailed"
+    },
+
+    "IdentifyFailed": {
+      "Type": "Fail",
+      "Error": "DishIdentificationFailed",
+      "Cause": "Stage 1 failed; the job has been marked Failed with the underlying error."
+    }
+  }
+}

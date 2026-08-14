@@ -1,9 +1,6 @@
-import copy
+﻿import copy
 import hashlib
 
-import azure.durable_functions as df
-
-bp = df.Blueprint()
 
 CANNED_GUESSES = [
     {
@@ -46,6 +43,6 @@ def run(activity_input: dict) -> dict:
     return copy.deepcopy(CANNED_GUESSES[index])
 
 
-@bp.activity_trigger(input_name="activityInput")
-def vision_guess(activityInput: dict) -> dict:
-    return run(activityInput)
+def handler(event, context=None):
+    """Lambda entry point for the VisionGuess task in statemachines/dish-identify.asl.json."""
+    return run(event)

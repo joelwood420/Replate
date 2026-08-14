@@ -1,0 +1,105 @@
+{
+  "Comment": "Stage 2: generate the method to recreate an identified dish. Only runs when the user presses 'Reverse engineer' - this is the heaviest-output and most expensive part of the pipeline. Ported from orchestrators/recipe_orchestrator.py.",
+  "StartAt": "QueryCulinaryEmbeddings",
+  "States": {
+    "QueryCulinaryEmbeddings": {
+      "Comment": "Retrieval step that grounds the generator. The handler derives the query text from the matched dish name, falling back to the vision guess - ASL has no way to express that fallback, so it belongs in the Lambda.",
+      "Type": "Task",
+      "Resource": "${QueryCulinaryEmbeddingsFunctionArn}",
+      "Parameters": {
+        "match_result.$": "$.match_result",
+        "vision_guess.$": "$.vision_guess"
+      },
+      "ResultPath": "$.embeddings",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkRecipeFailed"
+        }
+      ],
+      "Next": "GenerateRecreation"
+    },
+
+    "GenerateRecreation": {
+      "Comment": "The most expensive call in the app. Retried at most twice and with a long timeout, because a partial retry storm here is the fastest way to burn the model budget.",
+      "Type": "Task",
+      "Resource": "${GenerateRecreationFunctionArn}",
+      "Parameters": {
+        "matched_menu_item.$": "$.match_result",
+        "vision_guess.$": "$.vision_guess",
+        "embeddings_context.$": "$.embeddings"
+      },
+      "ResultPath": "$.recreation",
+      "TimeoutSeconds": 300,
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkRecipeFailed"
+        }
+      ],
+      "Next": "PersistRecipeResult"
+    },
+
+    "PersistRecipeResult": {
+      "Type": "Task",
+      "Resource": "${PersistRecipeResultFunctionArn}",
+      "Parameters": {
+        "job_id.$": "$.job_id",
+        "recreation.$": "$.recreation"
+      },
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkRecipeFailed"
+        }
+      ],
+      "End": true
+    },
+
+    "MarkRecipeFailed": {
+      "Comment": "Reverts the job to Identified rather than Failed. Stage 1 succeeded, so the restaurant match and dish identification are still good - a transient generator error must not throw those away, and the user keeps a working 'Reverse engineer' button.",
+      "Type": "Task",
+      "Resource": "${MarkRecipeFailedFunctionArn}",
+      "Parameters": {
+        "job_id.$": "$.job_id",
+        "error_message.$": "$.error.Cause"
+      },
+      "ResultPath": null,
+      "Next": "RecipeFailed"
+    },
+
+    "RecipeFailed": {
+      "Type": "Fail",
+      "Error": "RecipeGenerationFailed",
+      "Cause": "Stage 2 failed; the job has been reverted to Identified and can be retried."
+    }
+  }
+}

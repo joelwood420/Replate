@@ -12,12 +12,8 @@ The pipeline is split in two, so persistence is too:
 Identified so the user can retry generation without losing the menu match.
 """
 
-import azure.durable_functions as df
-
 from shared import repository
 from shared.models import JobStatus
-
-bp = df.Blueprint()
 
 # Step Functions wraps a failed task's Cause in a long message including the full
 # remote stack trace. DynamoDB items cap at 400 KB, so this is no longer a column
@@ -92,21 +88,35 @@ def run_mark_recipe_failed(activity_input: dict) -> None:
     )
 
 
-@bp.activity_trigger(input_name="activityInput")
-def persist_match_result(activityInput: dict) -> None:
-    run_match(activityInput)
+# Four Lambda entry points sharing one module and one deployment package - the SAM
+# template points four functions at different Handler strings here rather than
+# building four artifacts.
 
 
-@bp.activity_trigger(input_name="activityInput")
-def persist_recipe_result(activityInput: dict) -> None:
-    run_recipe(activityInput)
+def persist_match_result_handler(event, context=None):
+    """PersistMatchResult task, statemachines/dish-identify.asl.json."""
+    run_match(event)
+    return {"job_id": event["job_id"], "status": JobStatus.IDENTIFIED}
 
 
-@bp.activity_trigger(input_name="activityInput")
-def mark_job_failed(activityInput: dict) -> None:
-    run_mark_failed(activityInput)
+def persist_recipe_result_handler(event, context=None):
+    """PersistRecipeResult task, statemachines/dish-recipe.asl.json."""
+    run_recipe(event)
+    return {"job_id": event["job_id"], "status": JobStatus.COMPLETED}
 
 
-@bp.activity_trigger(input_name="activityInput")
-def mark_recipe_failed(activityInput: dict) -> None:
-    run_mark_recipe_failed(activityInput)
+def mark_job_failed_handler(event, context=None):
+    """MarkJobFailed and MarkJobRejected tasks, statemachines/dish-identify.asl.json.
+
+    Both the moderation rejection and the catch-all failure path land here - the
+    difference is only where the message came from, and whether the state machine
+    ends in Succeed or Fail afterwards.
+    """
+    run_mark_failed(event)
+    return {"job_id": event["job_id"], "status": JobStatus.FAILED}
+
+
+def mark_recipe_failed_handler(event, context=None):
+    """MarkRecipeFailed task, statemachines/dish-recipe.asl.json."""
+    run_mark_recipe_failed(event)
+    return {"job_id": event["job_id"], "status": JobStatus.IDENTIFIED}

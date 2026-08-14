@@ -1,11 +1,8 @@
-import difflib
+﻿import difflib
 
-import azure.durable_functions as df
 
 from shared import config
 from shared.models import MatchMethod
-
-bp = df.Blueprint()
 
 
 def _similarity(a: str, b: str) -> float:
@@ -85,6 +82,6 @@ def run(activity_input: dict) -> dict:
     }
 
 
-@bp.activity_trigger(input_name="activityInput")
-def match_menu_item(activityInput: dict) -> dict:
-    return run(activityInput)
+def handler(event, context=None):
+    """Lambda entry point for the MatchMenuItem task in statemachines/dish-identify.asl.json."""
+    return run(event)

@@ -1,7 +1,4 @@
-import azure.durable_functions as df
-
-bp = df.Blueprint()
-
+﻿
 _ROLES = ["Protein", "Sauce", "Side", "Garnish", "Component"]
 
 
@@ -47,6 +44,6 @@ def run(activity_input: dict) -> dict:
     return {"elements": elements}
 
 
-@bp.activity_trigger(input_name="activityInput")
-def generate_recreation(activityInput: dict) -> dict:
-    return run(activityInput)
+def handler(event, context=None):
+    """Lambda entry point for the GenerateRecreation task in statemachines/dish-recipe.asl.json."""
+    return run(event)

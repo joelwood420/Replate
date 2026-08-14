@@ -41,6 +41,24 @@ class JobStatus:
     FAILED = "Failed"
 
 
+def candidate_envelope(candidates: list[dict]) -> dict:
+    """Shape a candidate list for the state machine.
+
+    The restaurant-lookup activities return a plain list, but ASL cannot express
+    "is this list empty" or "take the first element if there is one" without
+    awkward JSONPath. Flattening the decision into explicit fields here keeps the
+    Choice state in dish-identify.asl.json to a single boolean check, and keeps
+    the fallback logic in Python where it can be tested.
+    """
+    top = candidates[0] if candidates else None
+    return {
+        "candidates": candidates,
+        "top_candidate": top,
+        "candidate_found": top is not None,
+        "restaurant_id": top["restaurant_id"] if top else None,
+    }
+
+
 def pseudo_embedding(text: str, dim: int = EMBEDDING_DIM) -> list[float]:
     """Deterministic stand-in for a real embedding-model call.
 

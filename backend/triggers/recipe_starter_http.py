@@ -1,28 +1,18 @@
 """POST /api/jobs/{jobId}/reverse-engineer - start stage 2 for an identified dish.
 
-Uses a Durable Functions blueprint rather than the plain func.Blueprint() the other
-HTTP triggers use, because only the former can inject a durable client to start an
-orchestration.
-
-The stage-2 orchestrator's input is rebuilt here from the stage-1 row already in the
-database, mirroring how orchestrator_starter_queue.build_orchestration_input works for
-stage 1.
+This is the only HTTP handler that starts a state machine; the rest just read and
+write. Stage 2's input is rebuilt here from what stage 1 persisted, mirroring how
+orchestrator_starter_queue.build_orchestration_input works for stage 1.
 """
 
-import json
-
-import azure.durable_functions as df
-import azure.functions as func
-
-from shared import rate_limit, repository
+from shared import config, http, rate_limit, repository, sfn
 from shared.auth import get_user_oid
 from shared.models import JobStatus
 
-bp = df.Blueprint()
-
-# Stage 1 already claimed the bare job_id as its execution name, so stage 2 needs its
-# own or the start call will collide with the completed stage-1 execution.
-RECIPE_INSTANCE_SUFFIX = ":recipe"
+# Stage 1 already claimed the bare job_id as its execution name, and Step Functions
+# refuses a name used in the last 90 days - so stage 2 needs its own or the start
+# would collide with the completed stage-1 execution.
+RECIPE_INSTANCE_SUFFIX = "-recipe"
 
 
 def _load_job_for_recipe(job_id: str) -> dict | None:
@@ -103,25 +93,21 @@ def build_recipe_input(job_id: str, user_oid: str) -> dict:
     }
 
 
-async def handle_request(job_id: str, user_oid: str, client) -> dict:
+def handle_request(job_id: str, user_oid: str) -> dict:
     outcome = build_recipe_input(job_id, user_oid)
-    if "orchestration_input" in outcome:
-        await client.start_new(
-            "recipe_orchestrator_trigger",
-            instance_id=f"{job_id}{RECIPE_INSTANCE_SUFFIX}",
-            client_input=outcome["orchestration_input"],
-        )
-        return {"status_code": 202, "body": {"job_id": job_id, "status": JobStatus.GENERATING}}
-    return outcome
+    if "orchestration_input" not in outcome:
+        return outcome
 
-
-@bp.route(route="jobs/{jobId}/reverse-engineer", methods=["POST"])
-@bp.durable_client_input(client_name="client")
-async def recipe_starter_http(req: func.HttpRequest, client) -> func.HttpResponse:
-    outcome = await handle_request(req.route_params.get("jobId"), get_user_oid(req), client)
-    return func.HttpResponse(
-        json.dumps(outcome["body"]),
-        status_code=outcome["status_code"],
-        mimetype="application/json",
-        headers=outcome.get("headers"),
+    # A False return means an execution with this name already exists, i.e. the
+    # user double-tapped the button. That is still a 202 - the work is in flight.
+    sfn.start_execution(
+        config.recipe_state_machine_arn(),
+        name=sfn.sanitize_name(f"{job_id}{RECIPE_INSTANCE_SUFFIX}"),
+        payload=outcome["orchestration_input"],
     )
+    return {"status_code": 202, "body": {"job_id": job_id, "status": JobStatus.GENERATING}}
+
+
+def handler(event, context=None):
+    """POST /api/jobs/{jobId}/reverse-engineer"""
+    return http.from_outcome(handle_request(http.path_param(event, "jobId"), get_user_oid(event)))

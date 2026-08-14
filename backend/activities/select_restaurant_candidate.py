@@ -1,8 +1,4 @@
-import azure.durable_functions as df
-
-from shared import repository
-
-bp = df.Blueprint()
+from shared import models, repository
 
 
 def _as_candidate(restaurant: dict) -> dict:
@@ -29,6 +25,10 @@ def run(activity_input: dict) -> list[dict]:
     return [candidate]
 
 
-@bp.activity_trigger(input_name="activityInput")
-def select_restaurant_candidate(activityInput: dict) -> list[dict]:
-    return run(activityInput)
+def handler(event, context=None):
+    """Lambda entry point for the SelectRestaurantCandidate task.
+
+    Emits the same envelope as the geocode path so the state machine's Choice
+    state does not have to care which branch produced the candidate.
+    """
+    return models.candidate_envelope(run(event))

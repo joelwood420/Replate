@@ -1,4 +1,4 @@
-"""Stage 1's first activity: moderate the uploaded photo before spending anything.
+﻿"""Stage 1's first activity: moderate the uploaded photo before spending anything.
 
 Deliberately runs ahead of every other activity in dish_orchestrator. It gates the
 whole pipeline, so a rejected image costs one Content Safety call and no AI spend -
@@ -11,11 +11,8 @@ passing that downstream just fails the vision call a step later with a far less
 obvious error.
 """
 
-import azure.durable_functions as df
 
 from shared import content_safety, storage
-
-bp = df.Blueprint()
 
 #: Verdict for an object key that was handed out but never uploaded to. Not a
 #: moderation verdict - the service is never called in this case.
@@ -57,6 +54,6 @@ def run(activity_input: dict) -> dict:
     }
 
 
-@bp.activity_trigger(input_name="activityInput")
-def moderate_image(activityInput: dict) -> dict:
-    return run(activityInput)
+def handler(event, context=None):
+    """Lambda entry point for the ModerateImage task in statemachines/dish-identify.asl.json."""
+    return run(event)

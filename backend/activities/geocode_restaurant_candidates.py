@@ -1,8 +1,4 @@
-import azure.durable_functions as df
-
-from shared import repository
-
-bp = df.Blueprint()
+from shared import models, repository
 
 NULL_ISLAND = (0.0, 0.0)
 
@@ -71,6 +67,10 @@ def run(activity_input: dict) -> list[dict]:
     return candidates
 
 
-@bp.activity_trigger(input_name="activityInput")
-def geocode_restaurant_candidates(activityInput: dict) -> list[dict]:
-    return run(activityInput)
+def handler(event, context=None):
+    """Lambda entry point for the GeocodeRestaurantCandidates task.
+
+    Wraps the plain list `run` returns in the envelope the state machine's
+    Choice state reads - see `shared.models.candidate_envelope`.
+    """
+    return models.candidate_envelope(run(event))

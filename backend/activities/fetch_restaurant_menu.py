@@ -1,10 +1,7 @@
-import datetime
+﻿import datetime
 
-import azure.durable_functions as df
 
 from shared import config, menu_extraction, repository
-
-bp = df.Blueprint()
 
 
 def _cache_is_fresh(menu_last_fetched_at: str | None) -> bool:
@@ -58,6 +55,6 @@ def run(activity_input: dict) -> dict:
     return {"restaurant_id": restaurant_id, "items": persisted_items, "source": "claude_fetch"}
 
 
-@bp.activity_trigger(input_name="activityInput")
-def fetch_restaurant_menu(activityInput: dict) -> dict:
-    return run(activityInput)
+def handler(event, context=None):
+    """Lambda entry point for the FetchRestaurantMenu task in statemachines/dish-identify.asl.json."""
+    return run(event)

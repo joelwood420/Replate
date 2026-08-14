@@ -40,6 +40,14 @@ def presigned_url_expiry_minutes() -> int:
     return int(os.environ.get("PRESIGNED_URL_EXPIRY_MINUTES", "15"))
 
 
+def identify_state_machine_arn() -> str:
+    return os.environ.get("IDENTIFY_STATE_MACHINE_ARN", "")
+
+
+def recipe_state_machine_arn() -> str:
+    return os.environ.get("RECIPE_STATE_MACHINE_ARN", "")
+
+
 def menu_cache_ttl_hours() -> int:
     return int(os.environ.get("MENU_CACHE_TTL_HOURS", "24"))
 
