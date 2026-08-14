@@ -2,18 +2,33 @@ import uuid
 
 import pytest
 
-from shared import blob, db
+from shared import blob, config, ddb
 
 
 @pytest.fixture
-def sql_connection():
-    ctx = db.get_connection()
+def ddb_table():
+    """A real DynamoDB table, created if it isn't already there.
+
+    Skips rather than fails when nothing is listening, so the marker-gated
+    integration suite stays runnable on a machine with no LocalStack. Point
+    AWS_ENDPOINT_URL at LocalStack (or DynamoDB Local) to exercise these.
+    """
+    ddb.reset_table_cache()
     try:
-        conn = ctx.__enter__()
-    except Exception as exc:
-        pytest.skip(f"SQL Server not reachable: {exc}")
-    yield conn
-    ctx.__exit__(None, None, None)
+        from scripts.create_table import create_table
+
+        create_table()
+        table = ddb.get_table()
+        table.load()
+    except Exception as exc:  # noqa: BLE001 - any connection failure means "skip"
+        pytest.skip(f"DynamoDB endpoint not reachable at {config.aws_endpoint_url() or 'default'}: {exc}")
+    return table
+
+
+@pytest.fixture
+def unique_user_oid():
+    """A fresh user id per test, so tests sharing one table cannot collide."""
+    return str(uuid.uuid4())
 
 
 @pytest.fixture

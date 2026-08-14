@@ -1,120 +1,92 @@
 import datetime
-from unittest.mock import MagicMock
 
+import pytest
+
+from shared import ddb, repository
 from triggers import upload_http
 
-
-class _ConnectionCtx:
-    def __init__(self, conn):
-        self._conn = conn
-
-    def __enter__(self):
-        return self._conn
-
-    def __exit__(self, *exc_info):
-        return False
+_OWNER = "user-oid-1"
 
 
-class _CounterRow:
-    """Stands in for a RateLimitCounters row as pyodbc returns it."""
-
-    def __init__(self, window_start, call_count):
-        self.WindowStart = window_start
-        self.CallCount = call_count
-
-
-def _current_bucket():
-    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None, minute=0, second=0, microsecond=0)
-
-
-def _mock_conn(counter_rows=()):
-    """A connection whose rate-limit SELECT returns `counter_rows`.
-
-    The real rate limiter runs against it rather than being stubbed out, so these
-    tests cover the quota wiring as well as the endpoint.
-    """
-    conn = MagicMock()
-    conn.cursor().fetchall.return_value = list(counter_rows)
-    return conn
-
-
-def _patch_deps(monkeypatch, conn):
+@pytest.fixture(autouse=True)
+def stub_presigned_url(monkeypatch):
     monkeypatch.setattr(
         upload_http.blob,
         "generate_upload_sas_url",
-        lambda: {"blob_url": "https://x/blob", "sas_url": "https://x/blob?sig=abc"},
+        lambda: {"blob_url": "uploads/blob.jpg", "sas_url": "https://x/uploads/blob.jpg?sig=abc"},
     )
-    monkeypatch.setattr(upload_http.db, "get_connection", lambda: _ConnectionCtx(conn))
 
 
-def test_generates_sas_url_and_creates_job_row(monkeypatch):
-    conn = _mock_conn()
-    _patch_deps(monkeypatch, conn)
+def _seed_quota(action, hours_ago, count):
+    bucket = (
+        datetime.datetime.now(datetime.timezone.utc).replace(minute=0, second=0, microsecond=0)
+        - datetime.timedelta(hours=hours_ago)
+    )
+    ddb.put(
+        {
+            "PK": ddb.rate_pk(_OWNER),
+            "SK": ddb.rate_sk(action, bucket.strftime("%Y-%m-%dT%H")),
+            "call_count": count,
+            "expires_at": int((bucket + datetime.timedelta(hours=26)).timestamp()),
+        }
+    )
 
-    result = upload_http.run({"latitude": 40.7, "longitude": -74.0}, "user-oid-1")
+
+def test_generates_upload_url_and_creates_the_job(ddb_table):
+    result = upload_http.run({"latitude": 40.7, "longitude": -74.0}, _OWNER)
 
     assert result["status_code"] == 201
-    assert result["body"]["blob_url"] == "https://x/blob"
-    assert result["body"]["upload_url"] == "https://x/blob?sig=abc"
-    assert "job_id" in result["body"]
+    assert result["body"]["blob_url"] == "uploads/blob.jpg"
+    assert result["body"]["upload_url"] == "https://x/uploads/blob.jpg?sig=abc"
 
-    insert_calls = [c for c in conn.cursor().execute.call_args_list if "INSERT INTO Jobs" in c.args[0]]
-    assert len(insert_calls) == 1
+    job = repository.get_job(result["body"]["job_id"])
+    assert job["user_id"] == _OWNER
+    assert job["latitude"] == pytest.approx(40.7)
 
 
-def test_does_not_queue_the_job(monkeypatch):
+def test_creates_the_user_profile(ddb_table):
+    upload_http.run({"latitude": 40.7, "longitude": -74.0}, _OWNER)
+
+    assert ddb.get(ddb.user_pk(_OWNER), ddb.SK_PROFILE) is not None
+
+
+def test_does_not_queue_the_job(ddb_table):
     """The client signals upload completion separately - see triggers/job_uploaded_http.py.
 
-    Enqueuing here would race the client's blob PUT, which only happens after this
-    call returns the SAS URL.
+    Enqueuing here would race the client's PUT, which only happens after this call
+    returns the upload URL.
     """
     assert not hasattr(upload_http, "queue")
 
-    conn = _mock_conn()
-    _patch_deps(monkeypatch, conn)
+    result = upload_http.run({"latitude": 40.7, "longitude": -74.0}, _OWNER)
 
-    upload_http.run({"latitude": 40.7, "longitude": -74.0}, "user-oid-1")
-
-    queries = [c.args[0] for c in conn.cursor().execute.call_args_list]
-    assert any("INSERT INTO Jobs" in q for q in queries)
+    assert repository.get_job(result["body"]["job_id"])["status"] == "Queued"
 
 
-def test_returns_400_on_missing_required_fields():
-    result = upload_http.run({}, "user-oid-1")
+def test_returns_400_on_missing_required_fields(ddb_table):
+    result = upload_http.run({}, _OWNER)
 
     assert result["status_code"] == 400
     assert "error" in result["body"]
 
 
-def test_returns_400_when_both_gps_and_selected_restaurant_present():
+def test_returns_400_when_both_gps_and_selected_restaurant_present(ddb_table):
     body = {
         "latitude": 1.0,
         "longitude": 2.0,
         "selected_restaurant": {"place_id": "p1", "name": "Luigi's", "latitude": 1.0, "longitude": 2.0},
     }
-    result = upload_http.run(body, "user-oid-1")
 
-    assert result["status_code"] == 400
+    assert upload_http.run(body, _OWNER)["status_code"] == 400
 
 
-def test_returns_400_when_selected_restaurant_missing_required_field():
+def test_returns_400_when_selected_restaurant_missing_required_field(ddb_table):
     body = {"selected_restaurant": {"place_id": "p1", "name": "Luigi's", "latitude": 1.0}}
-    result = upload_http.run(body, "user-oid-1")
 
-    assert result["status_code"] == 400
+    assert upload_http.run(body, _OWNER)["status_code"] == 400
 
 
-def test_selected_restaurant_creates_job_with_selected_restaurant_id(monkeypatch):
-    conn = _mock_conn()
-    _patch_deps(monkeypatch, conn)
-
-    upserted = []
-    monkeypatch.setattr(
-        upload_http.restaurants,
-        "upsert_restaurant",
-        lambda *args, **kwargs: upserted.append(args),
-    )
-
+def test_selected_restaurant_creates_job_and_restaurant(ddb_table):
     body = {
         "selected_restaurant": {
             "place_id": "place-1",
@@ -124,23 +96,19 @@ def test_selected_restaurant_creates_job_with_selected_restaurant_id(monkeypatch
             "longitude": -74.0,
         }
     }
-    result = upload_http.run(body, "user-oid-1")
+
+    result = upload_http.run(body, _OWNER)
 
     assert result["status_code"] == 201
-    assert len(upserted) == 1
-    assert upserted[0][0] == "place-1"
-
-    insert_calls = [c for c in conn.cursor().execute.call_args_list if "INSERT INTO Jobs" in c.args[0]]
-    assert len(insert_calls) == 1
-    assert insert_calls[0].args[-1] == "place-1"  # SelectedRestaurantId is the last bound param
+    assert repository.get_job(result["body"]["job_id"])["selected_restaurant_id"] == "place-1"
+    assert repository.get_restaurant("place-1")["name"] == "Luigi's"
 
 
-def test_returns_429_with_retry_after_when_hourly_quota_is_spent(monkeypatch):
+def test_returns_429_with_retry_after_when_hourly_quota_is_spent(ddb_table, monkeypatch):
     monkeypatch.setenv("SCAN_RATE_LIMIT_PER_HOUR", "3")
-    conn = _mock_conn([_CounterRow(_current_bucket(), 3)])
-    _patch_deps(monkeypatch, conn)
+    _seed_quota("scan", 0, 3)
 
-    result = upload_http.run({"latitude": 40.7, "longitude": -74.0}, "user-oid-1")
+    result = upload_http.run({"latitude": 40.7, "longitude": -74.0}, _OWNER)
 
     assert result["status_code"] == 429
     assert result["headers"]["Retry-After"] == str(result["body"]["retry_after_seconds"])
@@ -148,40 +116,39 @@ def test_returns_429_with_retry_after_when_hourly_quota_is_spent(monkeypatch):
     assert "3 scans" in result["body"]["error"]
 
 
-def test_throttled_request_creates_no_job(monkeypatch):
-    """The quota check has to come before the INSERT, or it caps nothing."""
+def test_throttled_request_creates_no_job(ddb_table, monkeypatch):
+    """The quota check has to come before the write, or it caps nothing."""
     monkeypatch.setenv("SCAN_RATE_LIMIT_PER_HOUR", "1")
-    conn = _mock_conn([_CounterRow(_current_bucket(), 1)])
-    _patch_deps(monkeypatch, conn)
+    _seed_quota("scan", 0, 1)
 
-    upload_http.run({"latitude": 40.7, "longitude": -74.0}, "user-oid-1")
+    upload_http.run({"latitude": 40.7, "longitude": -74.0}, _OWNER)
 
-    queries = [c.args[0] for c in conn.cursor().execute.call_args_list]
-    assert not any("INSERT INTO Jobs" in q for q in queries)
-    assert not any("MERGE RateLimitCounters" in q for q in queries)
+    assert repository.list_jobs(_OWNER) == []
 
 
-def test_daily_quota_blocks_even_when_the_current_hour_is_clear(monkeypatch):
+def test_daily_quota_blocks_even_when_the_current_hour_is_clear(ddb_table, monkeypatch):
     monkeypatch.setenv("SCAN_RATE_LIMIT_PER_HOUR", "10")
     monkeypatch.setenv("SCAN_RATE_LIMIT_PER_DAY", "12")
-    bucket = _current_bucket()
-    earlier = [_CounterRow(bucket - datetime.timedelta(hours=n), 4) for n in (1, 2, 3)]
-    conn = _mock_conn(earlier)
-    _patch_deps(monkeypatch, conn)
+    for hours_ago in (1, 2, 3):
+        _seed_quota("scan", hours_ago, 4)
 
-    result = upload_http.run({"latitude": 40.7, "longitude": -74.0}, "user-oid-1")
+    result = upload_http.run({"latitude": 40.7, "longitude": -74.0}, _OWNER)
 
     assert result["status_code"] == 429
     assert "12 scans" in result["body"]["error"]
     assert "per day" in result["body"]["error"]
 
 
-def test_quota_can_be_disabled(monkeypatch):
+def test_quota_can_be_disabled(ddb_table, monkeypatch):
     monkeypatch.setenv("RATE_LIMIT_ENABLED", "false")
     monkeypatch.setenv("SCAN_RATE_LIMIT_PER_HOUR", "1")
-    conn = _mock_conn([_CounterRow(_current_bucket(), 99)])
-    _patch_deps(monkeypatch, conn)
+    _seed_quota("scan", 0, 99)
 
-    result = upload_http.run({"latitude": 40.7, "longitude": -74.0}, "user-oid-1")
+    assert upload_http.run({"latitude": 40.7, "longitude": -74.0}, _OWNER)["status_code"] == 201
 
-    assert result["status_code"] == 201
+
+def test_a_successful_scan_consumes_one_unit(ddb_table):
+    upload_http.run({"latitude": 40.7, "longitude": -74.0}, _OWNER)
+
+    rows = ddb.query_prefix(ddb.rate_pk(_OWNER), "scan#")
+    assert sum(row["call_count"] for row in rows) == 1

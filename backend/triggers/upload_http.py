@@ -11,7 +11,7 @@ import uuid
 
 import azure.functions as func
 
-from shared import blob, db, rate_limit, restaurants
+from shared import blob, rate_limit, repository
 from shared.auth import get_user_oid
 from shared.models import JobStatus
 
@@ -52,50 +52,39 @@ def validate_body(body: dict) -> str | None:
     return "latitude/longitude or selected_restaurant is required"
 
 
-def _ensure_user(user_oid: str, conn) -> None:
-    cursor = conn.cursor()
-    cursor.execute(
-        "MERGE Users AS target USING (SELECT ? AS UserId) AS src ON target.UserId = src.UserId "
-        "WHEN NOT MATCHED THEN INSERT (UserId) VALUES (?);",
-        user_oid,
-        user_oid,
-    )
-
-
 def _insert_job(
-    user_oid: str, latitude: float, longitude: float, selected_restaurant_id: str | None, blob_url: str, conn
+    user_oid: str, latitude: float, longitude: float, selected_restaurant_id: str | None, image_key: str
 ) -> str:
     job_id = str(uuid.uuid4())
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO Jobs (JobId, UserId, Status, ImageBlobUrl, Latitude, Longitude, SelectedRestaurantId) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        job_id,
-        user_oid,
-        JobStatus.QUEUED,
-        blob_url,
-        latitude,
-        longitude,
-        selected_restaurant_id,
+    repository.create_job(
+        job_id=job_id,
+        user_oid=user_oid,
+        status=JobStatus.QUEUED,
+        image_key=image_key,
+        latitude=latitude,
+        longitude=longitude,
+        selected_restaurant_id=selected_restaurant_id,
     )
     return job_id
 
 
-def _create_job(user_oid: str, body: dict, blob_url: str, conn) -> str:
+def _create_job(user_oid: str, body: dict, image_key: str) -> str:
     if "selected_restaurant" in body:
         selected = body["selected_restaurant"]
         latitude = float(selected["latitude"])
         longitude = float(selected["longitude"])
         restaurant_id = selected["place_id"]
-        # Restaurants row must exist before Jobs.SelectedRestaurantId can FK to it.
-        restaurants.upsert_restaurant(
-            restaurant_id, selected["name"], selected.get("address", ""), latitude, longitude, None, conn
+        # The restaurant item is written first so the menu-fetch step later in the
+        # pipeline has a record to hang MenuLastFetchedAt on. There is no foreign
+        # key enforcing this any more, but the ordering still matters.
+        repository.upsert_restaurant(
+            restaurant_id, selected["name"], selected.get("address", ""), latitude, longitude, None
         )
-        return _insert_job(user_oid, latitude, longitude, restaurant_id, blob_url, conn)
+        return _insert_job(user_oid, latitude, longitude, restaurant_id, image_key)
 
     latitude = float(body["latitude"])
     longitude = float(body["longitude"])
-    return _insert_job(user_oid, latitude, longitude, None, blob_url, conn)
+    return _insert_job(user_oid, latitude, longitude, None, image_key)
 
 
 def run(body: dict, user_oid: str) -> dict:
@@ -103,26 +92,22 @@ def run(body: dict, user_oid: str) -> dict:
     if error:
         return {"status_code": 400, "body": {"error": error}}
 
-    # Minted before the quota check so the SAS call stays outside the transaction the
-    # rate limiter locks rows in. It costs nothing to throw away on a throttled
-    # request - a SAS token is generated locally from the account key, and the blob
-    # it names is never created unless the client uploads to it.
+    # Minted before the quota check. It costs nothing to throw away on a throttled
+    # request - the URL is signed locally from the caller's own credentials, and the
+    # object it names is never created unless the client uploads to it.
     upload_info = blob.generate_upload_sas_url()
 
-    with db.get_connection() as conn:
-        # Before the quota check: RateLimitCounters.UserId is a foreign key to Users,
-        # so the row has to exist before a counter can reference it.
-        _ensure_user(user_oid, conn)
+    repository.ensure_user(user_oid)
 
-        quota = rate_limit.check_and_consume(user_oid, rate_limit.Action.SCAN, conn)
-        if not quota["allowed"]:
-            return {
-                "status_code": 429,
-                "body": {"error": quota["error"], "retry_after_seconds": quota["retry_after_seconds"]},
-                "headers": {"Retry-After": str(quota["retry_after_seconds"])},
-            }
+    quota = rate_limit.check_and_consume(user_oid, rate_limit.Action.SCAN)
+    if not quota["allowed"]:
+        return {
+            "status_code": 429,
+            "body": {"error": quota["error"], "retry_after_seconds": quota["retry_after_seconds"]},
+            "headers": {"Retry-After": str(quota["retry_after_seconds"])},
+        }
 
-        job_id = _create_job(user_oid, body, upload_info["blob_url"], conn)
+    job_id = _create_job(user_oid, body, upload_info["blob_url"])
 
     return {
         "status_code": 201,

@@ -3,7 +3,11 @@ from __future__ import annotations
 import hashlib
 import struct
 
-EMBEDDING_DIM = 1536
+# Amazon Titan Text Embeddings V2. Was 1536 (Azure OpenAI text-embedding-3-small),
+# which had to match the width of a `VECTOR(1536)` column. Now that vectors live in
+# DynamoDB and similarity is computed in-process, the width is only a constant -
+# nothing but the seed data has to agree with it.
+EMBEDDING_DIM = 1024
 
 
 class MatchMethod:
@@ -25,9 +29,8 @@ class JobStatus:
     error message instead, so a transient generator error never discards a good
     menu match - see activities/persist_job_result.mark_recipe_failed.
 
-    Values are stored in Jobs.Status, an unconstrained NVARCHAR(20) - so they must
-    stay under 20 characters, and must be mirrored in frontend/src/lib/apiClient.ts
-    and docs/payload-schemas.json.
+    Values are stored as the job item's `status` attribute and must be mirrored in
+    frontend/src/lib/apiClient.ts and docs/payload-schemas.json.
     """
 
     QUEUED = "Queued"

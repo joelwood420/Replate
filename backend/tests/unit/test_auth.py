@@ -5,7 +5,7 @@ from shared import auth
 
 
 def test_stub_mode_uses_header_and_falls_back_to_default(monkeypatch):
-    monkeypatch.setattr(auth.config, "entraid_enabled", lambda: False)
+    monkeypatch.setattr(auth.config, "cognito_enabled", lambda: False)
 
     req_with_header = func.HttpRequest(
         method="POST", url="/api/jobs", body=b"{}", headers={"X-Debug-User-Oid": "explicit-oid"}
@@ -16,8 +16,8 @@ def test_stub_mode_uses_header_and_falls_back_to_default(monkeypatch):
     assert auth.get_user_oid(req_without_header) == auth.config.stub_default_user_oid()
 
 
-def test_entraid_enabled_raises_not_implemented(monkeypatch):
-    monkeypatch.setattr(auth.config, "entraid_enabled", lambda: True)
+def test_cognito_enabled_raises_not_implemented(monkeypatch):
+    monkeypatch.setattr(auth.config, "cognito_enabled", lambda: True)
 
     req = func.HttpRequest(method="POST", url="/api/jobs", body=b"{}", headers={})
     with pytest.raises(NotImplementedError):

@@ -14,42 +14,31 @@ import json
 
 import azure.functions as func
 
-from shared import db, queue
+from shared import queue, repository
 from shared.auth import get_user_oid
 from shared.models import JobStatus
 
 bp = func.Blueprint()
 
 
-def _fetch_job(job_id: str, conn) -> dict | None:
-    cursor = conn.cursor()
-    cursor.execute("SELECT UserId, Status FROM Jobs WHERE JobId = ?", job_id)
-    row = cursor.fetchone()
-    if row is None:
-        return None
-    return {"user_id": str(row.UserId), "status": row.Status}
-
-
 def run(job_id: str, user_oid: str) -> dict:
-    with db.get_connection() as conn:
-        job = _fetch_job(job_id, conn)
-        if job is None:
-            return {"status_code": 404, "body": {"error": "Job not found"}}
-        if job["user_id"] != user_oid:
-            return {"status_code": 403, "body": {"error": "Not authorized to modify this job"}}
-        if job["status"] != JobStatus.QUEUED:
-            # Covers a retried or duplicated call: only a job still waiting on its
-            # photo can be started.
-            return {
-                "status_code": 409,
-                "body": {"error": f"Job is already {job['status']} - its photo was already submitted"},
-            }
+    job = repository.get_job(job_id)
+    if job is None:
+        return {"status_code": 404, "body": {"error": "Job not found"}}
+    if job["user_id"] != user_oid:
+        return {"status_code": 403, "body": {"error": "Not authorized to modify this job"}}
+    if job["status"] != JobStatus.QUEUED:
+        # Covers a retried or duplicated call: only a job still waiting on its
+        # photo can be started.
+        return {
+            "status_code": 409,
+            "body": {"error": f"Job is already {job['status']} - its photo was already submitted"},
+        }
 
-    # Outside the transaction on purpose - a queue round-trip should not be holding
-    # database locks. The status check above is not atomic with this send, so two
-    # simultaneous calls could both enqueue; orchestrator_starter_queue starts the
-    # orchestration with instance_id=job_id, and Durable rejects a second start for
-    # an id that is already running, so a duplicate message cannot double-process.
+    # The status check above is not atomic with this send, so two simultaneous calls
+    # could both enqueue. The starter names the execution after the job id, and
+    # Step Functions rejects a second execution with a name already in flight, so a
+    # duplicate message cannot double-process.
     queue.send_job_message(job_id)
 
     return {"status_code": 202, "body": {"job_id": job_id, "status": JobStatus.QUEUED}}

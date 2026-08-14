@@ -1,6 +1,6 @@
 import azure.durable_functions as df
 
-from shared import db, restaurants
+from shared import repository
 
 bp = df.Blueprint()
 
@@ -51,31 +51,23 @@ def _stub_lookup(latitude: float, longitude: float) -> list[dict]:
     return sorted(candidates, key=lambda c: c["distance_m"])
 
 
-def _persist(job_id: str, candidates: list[dict], conn) -> None:
-    cursor = conn.cursor()
+def _persist(job_id: str, candidates: list[dict]) -> None:
     for candidate in candidates:
-        restaurants.upsert_restaurant(
+        repository.upsert_restaurant(
             candidate["restaurant_id"],
             candidate["name"],
             candidate["address"],
             candidate["latitude"],
             candidate["longitude"],
             candidate["menu_source_url"],
-            conn,
         )
-        cursor.execute(
-            "INSERT INTO JobRestaurantCandidates (JobId, RestaurantId, DistanceM) VALUES (?, ?, ?)",
-            job_id,
-            candidate["restaurant_id"],
-            candidate["distance_m"],
-        )
+    repository.put_job_candidates(job_id, candidates)
 
 
 def run(activity_input: dict) -> list[dict]:
     candidates = _stub_lookup(activity_input["latitude"], activity_input["longitude"])
     if candidates:
-        with db.get_connection() as conn:
-            _persist(activity_input["job_id"], candidates, conn)
+        _persist(activity_input["job_id"], candidates)
     return candidates
 
 

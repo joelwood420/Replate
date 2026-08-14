@@ -1,39 +1,26 @@
-import json
-
 import azure.durable_functions as df
 
-from shared import config, db, models
+from shared import config, models, repository, vectors
 
 bp = df.Blueprint()
 
 
-def _execute(activity_input: dict, conn) -> list[dict]:
+def run(activity_input: dict) -> list[dict]:
+    """Retrieve the culinary techniques closest to the dish description.
+
+    Was a `SELECT TOP (k) ... ORDER BY VECTOR_DISTANCE(...)` against Azure SQL.
+    Now the whole (small) corpus is read and compared in-process - see
+    `shared/vectors.py` for why that is the same amount of work it always was.
+    """
     query_text = activity_input.get("query_text") or ""
     top_k = activity_input.get("top_k") or config.vector_search_top_k()
-    query_vector_json = json.dumps(models.pseudo_embedding(query_text))
 
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT TOP (?) EmbeddingId, SourceText, CuisineType, "
-        "VECTOR_DISTANCE('cosine', Embedding, CAST(CAST(? AS NVARCHAR(MAX)) AS VECTOR(1536))) AS Distance "
-        "FROM CulinaryEmbeddings ORDER BY Distance",
-        top_k,
-        query_vector_json,
-    )
-    return [
-        {
-            "embedding_id": str(row.EmbeddingId),
-            "source_text": row.SourceText,
-            "cuisine_type": row.CuisineType,
-            "distance": float(row.Distance),
-        }
-        for row in cursor.fetchall()
-    ]
+    candidates = repository.all_embeddings()
+    if not candidates:
+        return []
 
-
-def run(activity_input: dict) -> list[dict]:
-    with db.get_connection() as conn:
-        return _execute(activity_input, conn)
+    query_vector = models.pseudo_embedding(query_text)
+    return vectors.top_k(query_vector, candidates, top_k)
 
 
 @bp.activity_trigger(input_name="activityInput")

@@ -1,39 +1,66 @@
-from unittest.mock import MagicMock
-
 from activities import query_culinary_embeddings as query_embeddings
-from shared import models
+from shared import models, repository
 
 
-def _mock_conn(rows):
-    conn = MagicMock()
-    conn.cursor.return_value.fetchall.return_value = rows
-    return conn
+def _seed(texts):
+    for index, text in enumerate(texts):
+        repository.put_embedding(
+            source_text=text,
+            embedding=models.pseudo_embedding(text),
+            cuisine_type="Thai",
+            embedding_id=f"e{index}",
+        )
 
 
-def test_builds_parameterized_vector_distance_query():
-    conn = _mock_conn(rows=[])
+def test_returns_at_most_top_k(ddb_table):
+    _seed(["a", "b", "c", "d"])
 
-    query_embeddings._execute({"query_text": "pad thai", "top_k": 3}, conn)
+    result = query_embeddings.run({"query_text": "pad thai", "top_k": 2})
 
-    call = conn.cursor().execute.call_args
-    sql_text = call.args[0]
-    params = call.args[1:]
-    assert "VECTOR_DISTANCE" in sql_text
-    assert "pad thai" not in sql_text
-    assert params[0] == 3
+    assert len(result) == 2
 
 
-def test_returns_top_k_ordered_by_ascending_distance():
-    rows = [
-        MagicMock(EmbeddingId="e1", SourceText="a", CuisineType="Thai", Distance=0.1),
-        MagicMock(EmbeddingId="e2", SourceText="b", CuisineType="Thai", Distance=0.5),
-    ]
-    conn = _mock_conn(rows=rows)
+def test_results_ordered_by_ascending_distance(ddb_table):
+    _seed(["a", "b", "c"])
 
-    result = query_embeddings._execute({"query_text": "pad thai", "top_k": 2}, conn)
+    result = query_embeddings.run({"query_text": "pad thai", "top_k": 3})
 
-    assert [r["distance"] for r in result] == [0.1, 0.5]
-    assert result[0]["embedding_id"] == "e1"
+    distances = [r["distance"] for r in result]
+    assert distances == sorted(distances)
+
+
+def test_exact_text_match_is_the_nearest_result(ddb_table):
+    """Sanity check on the cosine maths through the whole activity."""
+    _seed(["deglazing a pan", "blooming spices", "making a roux"])
+
+    result = query_embeddings.run({"query_text": "making a roux", "top_k": 3})
+
+    assert result[0]["source_text"] == "making a roux"
+    assert result[0]["distance"] < 1e-9
+
+
+def test_raw_vectors_are_not_returned(ddb_table):
+    """These become Step Functions task output - a 1024-float array per row would
+    eat the state payload budget for no benefit."""
+    _seed(["a", "b"])
+
+    result = query_embeddings.run({"query_text": "x", "top_k": 2})
+
+    assert all("embedding" not in item for item in result)
+    assert set(result[0]) == {"embedding_id", "source_text", "cuisine_type", "distance"}
+
+
+def test_empty_corpus_returns_empty_list(ddb_table):
+    assert query_embeddings.run({"query_text": "anything", "top_k": 5}) == []
+
+
+def test_top_k_defaults_from_config(ddb_table, monkeypatch):
+    monkeypatch.setenv("VECTOR_SEARCH_TOP_K", "2")
+    _seed(["a", "b", "c", "d"])
+
+    result = query_embeddings.run({"query_text": "x"})
+
+    assert len(result) == 2
 
 
 def test_stub_query_embedding_is_deterministic_for_same_text():
@@ -41,3 +68,4 @@ def test_stub_query_embedding_is_deterministic_for_same_text():
     second = models.pseudo_embedding("roux")
 
     assert first == second
+    assert len(first) == models.EMBEDDING_DIM

@@ -2,31 +2,24 @@ import json
 
 import azure.functions as func
 
-from shared import db
+from shared import repository
 from shared.auth import get_user_oid
 
 bp = func.Blueprint()
 
 
-def _fetch_owner(job_id: str, conn) -> str | None:
-    cursor = conn.cursor()
-    cursor.execute("SELECT UserId FROM Jobs WHERE JobId = ?", job_id)
-    row = cursor.fetchone()
-    return str(row.UserId) if row else None
-
-
 def run(job_id: str, user_oid: str, saved: bool) -> dict:
-    with db.get_connection() as conn:
-        owner = _fetch_owner(job_id, conn)
-        if owner is None:
-            return {"status_code": 404, "body": {"error": "Job not found"}}
-        if owner != user_oid:
-            return {"status_code": 403, "body": {"error": "Not authorized to modify this job"}}
+    job = repository.get_job(job_id)
+    if job is None:
+        return {"status_code": 404, "body": {"error": "Job not found"}}
+    if job["user_id"] != user_oid:
+        return {"status_code": 403, "body": {"error": "Not authorized to modify this job"}}
 
-        cursor = conn.cursor()
-        cursor.execute("UPDATE Jobs SET IsSaved = ? WHERE JobId = ?", 1 if saved else 0, job_id)
+    # is_saved is one of the projected fields, so this writes both the canonical
+    # job item and the cookbook listing item - see shared/repository.py.
+    repository.update_job(job_id, is_saved=saved)
 
-        return {"status_code": 200, "body": {"job_id": job_id, "is_saved": saved}}
+    return {"status_code": 200, "body": {"job_id": job_id, "is_saved": saved}}
 
 
 @bp.route(route="jobs/{jobId}/save", methods=["PATCH"])

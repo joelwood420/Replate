@@ -2,43 +2,29 @@ import json
 
 import azure.durable_functions as df
 
-from shared import config, db
+from shared import config, repository
 from shared.models import JobStatus
 
 bp = df.Blueprint()
 
 
-def _load_job(job_id: str, conn) -> dict:
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT ImageBlobUrl, Latitude, Longitude, SelectedRestaurantId FROM Jobs WHERE JobId = ?", job_id
-    )
-    row = cursor.fetchone()
-    if row is None:
+def _load_job(job_id: str) -> dict:
+    job = repository.get_job(job_id)
+    if job is None:
         raise ValueError(f"Job not found: {job_id}")
     result = {
-        "image_blob_url": row.ImageBlobUrl,
-        "latitude": float(row.Latitude),
-        "longitude": float(row.Longitude),
+        "image_blob_url": job["image_key"],
+        "latitude": job.get("latitude"),
+        "longitude": job.get("longitude"),
     }
-    if row.SelectedRestaurantId:
-        result["selected_restaurant_id"] = row.SelectedRestaurantId
+    if job.get("selected_restaurant_id"):
+        result["selected_restaurant_id"] = job["selected_restaurant_id"]
     return result
 
 
-def _mark_processing(job_id: str, conn) -> None:
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE Jobs SET Status = ?, UpdatedAt = SYSUTCDATETIME() WHERE JobId = ?",
-        JobStatus.PROCESSING,
-        job_id,
-    )
-
-
 def build_orchestration_input(job_id: str) -> dict:
-    with db.get_connection() as conn:
-        job_data = _load_job(job_id, conn)
-        _mark_processing(job_id, conn)
+    job_data = _load_job(job_id)
+    repository.update_job(job_id, status=JobStatus.PROCESSING)
     return {"job_id": job_id, **job_data}
 
 

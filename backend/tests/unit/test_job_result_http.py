@@ -1,192 +1,147 @@
-from datetime import datetime, timezone
-from unittest.mock import MagicMock
+import pytest
 
+from shared import repository
+from shared.models import JobStatus, MatchMethod
 from triggers import job_result_http
-from shared.models import JobStatus
 
-CREATED_AT = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-
-
-class _ConnectionCtx:
-    def __init__(self, conn):
-        self._conn = conn
-
-    def __enter__(self):
-        return self._conn
-
-    def __exit__(self, *exc_info):
-        return False
+_MATCH_RESULT = {
+    "dish_name": "Margherita Pizza",
+    "cuisine": "Italian",
+    "vision_confidence": 0.8,
+    "matched_restaurant_id": "stub-1",
+    "matched_menu_item_id": None,
+    "match_confidence": 0.9,
+    "match_method": MatchMethod.MENU_MATCHED,
+}
 
 
-def test_returns_404_for_unknown_job_id(monkeypatch):
-    conn = MagicMock()
-    conn.cursor.return_value.fetchone.return_value = None
-    monkeypatch.setattr(job_result_http.db, "get_connection", lambda: _ConnectionCtx(conn))
+@pytest.fixture(autouse=True)
+def stub_presigned_url(monkeypatch):
+    monkeypatch.setattr(job_result_http.blob, "generate_read_sas_url", lambda key: f"{key}?sig=abc")
 
+
+def _job(status=JobStatus.PROCESSING, owner="owner-oid"):
+    return repository.create_job(
+        job_id="job-1", user_oid=owner, status=status, image_key="uploads/photo.jpg"
+    )
+
+
+def test_returns_404_for_unknown_job_id(ddb_table):
     result = job_result_http.run("missing-job", "user-oid-1")
 
     assert result["status_code"] == 404
 
 
-def test_returns_403_when_oid_does_not_match_job_owner(monkeypatch):
-    conn = MagicMock()
-    conn.cursor.return_value.fetchone.return_value = MagicMock(
-        JobId="job-1",
-        UserId="owner-oid",
-        Status=JobStatus.PROCESSING,
-        ErrorMessage=None,
-        ImageBlobUrl="https://x/uploads/photo.jpg",
-        IsSaved=0,
-        CreatedAt=CREATED_AT,
-    )
-    monkeypatch.setattr(job_result_http.db, "get_connection", lambda: _ConnectionCtx(conn))
-    monkeypatch.setattr(job_result_http.blob, "generate_read_sas_url", lambda url: f"{url}?sig=abc")
+def test_returns_403_when_oid_does_not_match_job_owner(ddb_table):
+    _job()
 
     result = job_result_http.run("job-1", "different-oid")
 
     assert result["status_code"] == 403
 
 
-def test_returns_pending_status_when_not_yet_completed(monkeypatch):
-    conn = MagicMock()
-    conn.cursor.return_value.fetchone.return_value = MagicMock(
-        JobId="job-1",
-        UserId="owner-oid",
-        Status=JobStatus.PROCESSING,
-        ErrorMessage=None,
-        ImageBlobUrl="https://x/uploads/photo.jpg",
-        IsSaved=0,
-        CreatedAt=CREATED_AT,
-    )
-    monkeypatch.setattr(job_result_http.db, "get_connection", lambda: _ConnectionCtx(conn))
-    monkeypatch.setattr(job_result_http.blob, "generate_read_sas_url", lambda url: f"{url}?sig=abc")
+def test_returns_pending_status_when_not_yet_completed(ddb_table):
+    job = _job()
 
     result = job_result_http.run("job-1", "owner-oid")
 
     assert result["status_code"] == 200
     assert result["body"]["status"] == JobStatus.PROCESSING
-    assert result["body"]["image_url"] == "https://x/uploads/photo.jpg?sig=abc"
+    assert result["body"]["image_url"] == "uploads/photo.jpg?sig=abc"
     assert result["body"]["is_saved"] is False
-    assert result["body"]["created_at"] == CREATED_AT.isoformat()
+    assert result["body"]["created_at"] == job["created_at"]
     assert "result" not in result["body"]
 
 
-def test_returns_full_nested_result_when_completed(monkeypatch):
-    conn = MagicMock()
-    cursor = conn.cursor.return_value
-    job_row = MagicMock(
-        JobId="job-1",
-        UserId="owner-oid",
-        Status=JobStatus.COMPLETED,
-        ErrorMessage=None,
-        ImageBlobUrl="https://x/uploads/photo.jpg",
-        IsSaved=1,
-        CreatedAt=CREATED_AT,
-    )
-    result_row = MagicMock(
-        DishName="Margherita Pizza",
-        Cuisine="Italian",
-        Confidence=0.8,
-        MatchedRestaurantId="stub-1",
-        RestaurantName="Marchetti",
-        MatchedMenuItemId=None,
-        MatchConfidence=0.9,
-        MatchMethod="menu_matched",
-    )
-    element_row = MagicMock(ElementId="el-1", Name="Crust", Description="desc", Role="Base")
+def test_created_at_carries_an_explicit_utc_offset(ddb_table):
+    """Without one, `new Date(...)` on the client parses it as local time and
+    skews every "time ago" display by the viewer's offset."""
+    _job()
 
-    cursor.fetchone.side_effect = [job_row, result_row]
-    cursor.fetchall.side_effect = [[element_row], [], []]
+    created_at = job_result_http.run("job-1", "owner-oid")["body"]["created_at"]
 
-    monkeypatch.setattr(job_result_http.db, "get_connection", lambda: _ConnectionCtx(conn))
-    monkeypatch.setattr(job_result_http.blob, "generate_read_sas_url", lambda url: f"{url}?sig=abc")
+    assert created_at.endswith("+00:00")
+
+
+def test_returns_full_nested_result_when_completed(ddb_table):
+    _job(status=JobStatus.COMPLETED)
+    repository.upsert_restaurant("stub-1", "Marchetti", None, None, None, None)
+    repository.put_job_result("job-1", _MATCH_RESULT)
+    repository.replace_dish_elements(
+        "job-1",
+        [
+            {
+                "name": "Crust",
+                "description": "desc",
+                "role": "Base",
+                "sort_order": 0,
+                "ingredients": [
+                    {"ingredient_name": "Flour", "amount": "2", "unit": "cup", "sort_order": 0}
+                ],
+                "steps": [{"step_number": 1, "instruction": "Mix."}],
+            }
+        ],
+    )
 
     result = job_result_http.run("job-1", "owner-oid")
 
+    body = result["body"]
     assert result["status_code"] == 200
-    assert result["body"]["image_url"] == "https://x/uploads/photo.jpg?sig=abc"
-    assert result["body"]["is_saved"] is True
-    assert result["body"]["created_at"] == CREATED_AT.isoformat()
-    assert result["body"]["result"]["dish_name"] == "Margherita Pizza"
-    assert result["body"]["result"]["restaurant_name"] == "Marchetti"
-    assert len(result["body"]["result"]["elements"]) == 1
-    assert result["body"]["result"]["elements"][0]["name"] == "Crust"
-    assert result["body"]["result"]["elements"][0]["role"] == "Base"
+    assert body["image_url"] == "uploads/photo.jpg?sig=abc"
+    assert body["result"]["dish_name"] == "Margherita Pizza"
+    # Was a LEFT JOIN, now an explicit point lookup.
+    assert body["result"]["restaurant_name"] == "Marchetti"
+    assert len(body["result"]["elements"]) == 1
+    assert body["result"]["elements"][0]["name"] == "Crust"
+    assert body["result"]["elements"][0]["role"] == "Base"
+    assert body["result"]["elements"][0]["ingredients"][0]["ingredient_name"] == "Flour"
 
 
-def test_returns_result_with_empty_elements_when_identified(monkeypatch):
+def test_returns_result_with_empty_elements_when_identified(ddb_table):
     """Stage 1 output is available before any recipe exists.
 
     The frontend needs the dish name, restaurant and confidence badge to render the
     "Reverse engineer" screen, so `result` can't wait for status Completed.
     """
-    conn = MagicMock()
-    cursor = conn.cursor.return_value
-    job_row = MagicMock(
-        JobId="job-1",
-        UserId="owner-oid",
-        Status=JobStatus.IDENTIFIED,
-        ErrorMessage=None,
-        ImageBlobUrl="https://x/uploads/photo.jpg",
-        IsSaved=1,
-        CreatedAt=CREATED_AT,
+    _job(status=JobStatus.IDENTIFIED)
+    repository.upsert_restaurant("stub-1", "Marchetti", None, None, None, None)
+    repository.put_job_result("job-1", _MATCH_RESULT)
+
+    body = job_result_http.run("job-1", "owner-oid")["body"]
+
+    assert body["status"] == JobStatus.IDENTIFIED
+    assert body["result"]["dish_name"] == "Margherita Pizza"
+    assert body["result"]["match_method"] == MatchMethod.MENU_MATCHED
+    assert body["result"]["elements"] == []
+
+
+def test_vision_only_result_has_no_restaurant_name(ddb_table):
+    _job(status=JobStatus.IDENTIFIED)
+    repository.put_job_result(
+        "job-1",
+        {**_MATCH_RESULT, "matched_restaurant_id": None, "match_method": MatchMethod.VISION_ONLY_LOW},
     )
-    result_row = MagicMock(
-        DishName="Margherita Pizza",
-        Cuisine="Italian",
-        Confidence=0.8,
-        MatchedRestaurantId="stub-1",
-        RestaurantName="Marchetti",
-        MatchedMenuItemId=None,
-        MatchConfidence=0.9,
-        MatchMethod="menu_matched",
-    )
-    cursor.fetchone.side_effect = [job_row, result_row]
-    cursor.fetchall.side_effect = [[]]
 
-    monkeypatch.setattr(job_result_http.db, "get_connection", lambda: _ConnectionCtx(conn))
-    monkeypatch.setattr(job_result_http.blob, "generate_read_sas_url", lambda url: f"{url}?sig=abc")
+    body = job_result_http.run("job-1", "owner-oid")["body"]
 
-    result = job_result_http.run("job-1", "owner-oid")
-
-    assert result["body"]["status"] == JobStatus.IDENTIFIED
-    assert result["body"]["is_saved"] is True
-    assert result["body"]["result"]["dish_name"] == "Margherita Pizza"
-    assert result["body"]["result"]["match_method"] == "menu_matched"
-    assert result["body"]["result"]["elements"] == []
+    assert body["result"]["restaurant_name"] is None
+    assert body["result"]["match_method"] == MatchMethod.VISION_ONLY_LOW
 
 
-def test_surfaces_error_message_on_an_identified_job(monkeypatch):
+def test_surfaces_error_message_on_an_identified_job(ddb_table):
     """A failed reverse-engineer attempt reverts to Identified, not Failed."""
-    conn = MagicMock()
-    cursor = conn.cursor.return_value
-    job_row = MagicMock(
-        JobId="job-1",
-        UserId="owner-oid",
-        Status=JobStatus.IDENTIFIED,
-        ErrorMessage="generator exploded",
-        ImageBlobUrl="https://x/uploads/photo.jpg",
-        IsSaved=1,
-        CreatedAt=CREATED_AT,
-    )
-    result_row = MagicMock(
-        DishName="Pad Thai",
-        Cuisine="Thai",
-        Confidence=0.7,
-        MatchedRestaurantId=None,
-        RestaurantName=None,
-        MatchedMenuItemId=None,
-        MatchConfidence=0.0,
-        MatchMethod="vision_only_low",
-    )
-    cursor.fetchone.side_effect = [job_row, result_row]
-    cursor.fetchall.side_effect = [[]]
+    _job(status=JobStatus.IDENTIFIED)
+    repository.put_job_result("job-1", _MATCH_RESULT)
+    repository.update_job("job-1", error_message="generator exploded")
 
-    monkeypatch.setattr(job_result_http.db, "get_connection", lambda: _ConnectionCtx(conn))
-    monkeypatch.setattr(job_result_http.blob, "generate_read_sas_url", lambda url: f"{url}?sig=abc")
+    body = job_result_http.run("job-1", "owner-oid")["body"]
 
-    result = job_result_http.run("job-1", "owner-oid")
+    assert body["status"] == JobStatus.IDENTIFIED
+    assert body["error_message"] == "generator exploded"
+    assert body["result"] is not None
 
-    assert result["body"]["status"] == JobStatus.IDENTIFIED
-    assert result["body"]["error_message"] == "generator exploded"
-    assert result["body"]["result"] is not None
+
+def test_no_error_message_key_when_there_is_no_error(ddb_table):
+    _job()
+
+    assert "error_message" not in job_result_http.run("job-1", "owner-oid")["body"]

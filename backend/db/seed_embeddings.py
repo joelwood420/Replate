@@ -1,19 +1,19 @@
-"""Seed CulinaryEmbeddings with a handful of stub culinary-technique rows.
+"""Seed the EMBEDDINGS partition with a handful of stub culinary-technique items.
 
-Phase 1 stub: SourceText/CuisineType are hand-written and Embedding is a
+Phase 0 stub: source_text/cuisine_type are hand-written and the vector is a
 deterministic pseudo-embedding (shared.models.pseudo_embedding), not a real
-embedding-model call - swap for a real embedding pipeline in Phase 3.
+embedding-model call - swap for Bedrock Titan Text Embeddings V2 in Phase 3.
 
 Run directly: `python db/seed_embeddings.py` (from backend/).
 """
 
-import json
+import hashlib
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from shared import db, models  # noqa: E402
+from shared import models, repository  # noqa: E402
 
 SEED_TECHNIQUES = [
     {
@@ -85,31 +85,28 @@ SEED_TECHNIQUES = [
 ]
 
 
-def seed(conn) -> int:
-    cursor = conn.cursor()
-    inserted = 0
-    for technique in SEED_TECHNIQUES:
-        cursor.execute(
-            "SELECT COUNT(*) FROM CulinaryEmbeddings WHERE SourceText = ?",
-            technique["source_text"],
-        )
-        if cursor.fetchone()[0] > 0:
-            continue
+def _stable_id(source_text: str) -> str:
+    """Derive the item id from the text it embeds.
 
-        embedding_json = json.dumps(models.pseudo_embedding(technique["source_text"]))
-        cursor.execute(
-            "INSERT INTO CulinaryEmbeddings (SourceText, Embedding, CuisineType, SourceUrl) "
-            "VALUES (?, CAST(CAST(? AS NVARCHAR(MAX)) AS VECTOR(1536)), ?, ?)",
-            technique["source_text"],
-            embedding_json,
-            technique["cuisine_type"],
-            technique["source_url"],
+    Makes re-seeding idempotent by construction: the same technique always lands
+    on the same key and overwrites itself, so there is no "does this row already
+    exist?" query and no chance of accumulating duplicates across runs.
+    """
+    return hashlib.sha256(source_text.encode("utf-8")).hexdigest()[:16]
+
+
+def seed() -> int:
+    for technique in SEED_TECHNIQUES:
+        repository.put_embedding(
+            source_text=technique["source_text"],
+            embedding=models.pseudo_embedding(technique["source_text"]),
+            cuisine_type=technique["cuisine_type"],
+            source_url=technique["source_url"],
+            embedding_id=_stable_id(technique["source_text"]),
         )
-        inserted += 1
-    return inserted
+    return len(SEED_TECHNIQUES)
 
 
 if __name__ == "__main__":
-    with db.get_connection() as connection:
-        count = seed(connection)
-    print(f"Inserted {count} new CulinaryEmbeddings row(s) (skipped rows that already existed).")
+    count = seed()
+    print(f"Seeded {count} culinary-technique embedding(s) (idempotent - safe to re-run).")

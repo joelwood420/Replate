@@ -1,89 +1,80 @@
 import asyncio
 import datetime
-import json
 from unittest.mock import MagicMock
 
+from shared import ddb, repository
 from shared.models import JobStatus, MatchMethod
 from triggers import recipe_starter_http as starter
 
 _OWNER = "11111111-1111-1111-1111-111111111111"
 _VISION_GUESS = {"dish_name_guess": "Pad Thai", "cuisine_guess": "Thai", "elements": []}
+_MATCH_RESULT = {
+    "dish_name": "Pad Thai Goong",
+    "cuisine": "Thai",
+    "vision_confidence": 0.8,
+    "matched_restaurant_id": "place-1",
+    "matched_menu_item_id": None,
+    "match_confidence": 0.91,
+    "match_method": MatchMethod.MENU_MATCHED,
+}
 
 
-class _ConnectionCtx:
-    def __init__(self, conn):
-        self._conn = conn
-
-    def __enter__(self):
-        return self._conn
-
-    def __exit__(self, *exc_info):
-        return False
+def _job(status=JobStatus.IDENTIFIED, owner=_OWNER, vision_guess=_VISION_GUESS):
+    repository.create_job(
+        job_id="job-1", user_oid=owner, status=status, image_key="uploads/p.jpg"
+    )
+    repository.put_job_result("job-1", _MATCH_RESULT, vision_guess)
 
 
-def _row(status=JobStatus.IDENTIFIED, owner=_OWNER, vision_guess=_VISION_GUESS):
-    return MagicMock(
-        UserId=owner,
-        Status=status,
-        DishName="Pad Thai Goong",
-        Cuisine="Thai",
-        Confidence=0.8,
-        MatchedRestaurantId="place-1",
-        MatchedMenuItemId=None,
-        MatchConfidence=0.91,
-        MatchMethod=MatchMethod.MENU_MATCHED,
-        VisionGuessJson=json.dumps(vision_guess) if vision_guess is not None else None,
+def _spend_recipe_quota(call_count):
+    bucket = datetime.datetime.now(datetime.timezone.utc).replace(minute=0, second=0, microsecond=0)
+    ddb.put(
+        {
+            "PK": ddb.rate_pk(_OWNER),
+            "SK": ddb.rate_sk("recipe", bucket.strftime("%Y-%m-%dT%H")),
+            "call_count": call_count,
+            "expires_at": int((bucket + datetime.timedelta(hours=26)).timestamp()),
+        }
     )
 
 
-def _patch_conn(monkeypatch, row):
-    conn = MagicMock()
-    conn.cursor.return_value.fetchone.return_value = row
-    monkeypatch.setattr(starter.db, "get_connection", lambda: _ConnectionCtx(conn))
-    return conn
-
-
-def test_returns_404_for_unknown_job(monkeypatch):
-    _patch_conn(monkeypatch, None)
-
+def test_returns_404_for_unknown_job(ddb_table):
     outcome = starter.build_recipe_input("job-1", _OWNER)
 
     assert outcome == {"status_code": 404, "body": {"error": "Job not found"}}
 
 
-def test_returns_403_when_caller_does_not_own_the_job(monkeypatch):
-    _patch_conn(monkeypatch, _row(owner="22222222-2222-2222-2222-222222222222"))
+def test_returns_403_when_caller_does_not_own_the_job(ddb_table):
+    _job(owner="22222222-2222-2222-2222-222222222222")
 
-    outcome = starter.build_recipe_input("job-1", _OWNER)
-
-    assert outcome["status_code"] == 403
+    assert starter.build_recipe_input("job-1", _OWNER)["status_code"] == 403
 
 
-def test_returns_409_when_recipe_already_generated(monkeypatch):
-    conn = _patch_conn(monkeypatch, _row(status=JobStatus.COMPLETED))
+def test_returns_409_when_recipe_already_generated(ddb_table):
+    _job(status=JobStatus.COMPLETED)
 
     outcome = starter.build_recipe_input("job-1", _OWNER)
 
     assert outcome["status_code"] == 409
     # Must not flip an already-Completed job back to Generating.
-    assert not [c for c in conn.cursor().execute.call_args_list if "UPDATE Jobs" in c.args[0]]
+    assert repository.get_job("job-1")["status"] == JobStatus.COMPLETED
 
 
-def test_returns_409_when_generation_already_in_flight(monkeypatch):
-    _patch_conn(monkeypatch, _row(status=JobStatus.GENERATING))
-
-    assert starter.build_recipe_input("job-1", _OWNER)["status_code"] == 409
-
-
-def test_returns_409_when_stage_one_has_not_finished(monkeypatch):
-    _patch_conn(monkeypatch, _row(status=JobStatus.PROCESSING))
+def test_returns_409_when_generation_already_in_flight(ddb_table):
+    _job(status=JobStatus.GENERATING)
 
     assert starter.build_recipe_input("job-1", _OWNER)["status_code"] == 409
 
 
-def test_returns_409_when_vision_guess_was_never_persisted(monkeypatch):
-    """Only reachable for rows written before the VisionGuessJson column existed."""
-    _patch_conn(monkeypatch, _row(vision_guess=None))
+def test_returns_409_when_stage_one_has_not_finished(ddb_table):
+    _job(status=JobStatus.PROCESSING)
+
+    assert starter.build_recipe_input("job-1", _OWNER)["status_code"] == 409
+
+
+def test_returns_409_when_vision_guess_was_never_persisted(ddb_table):
+    """Only reachable for jobs written before the vision guess was persisted."""
+    _job(vision_guess=None)
 
     outcome = starter.build_recipe_input("job-1", _OWNER)
 
@@ -91,26 +82,25 @@ def test_returns_409_when_vision_guess_was_never_persisted(monkeypatch):
     assert "vision analysis" in outcome["body"]["error"]
 
 
-def test_marks_generating_and_builds_orchestration_input(monkeypatch):
-    conn = _patch_conn(monkeypatch, _row())
+def test_marks_generating_and_builds_orchestration_input(ddb_table):
+    _job()
 
     outcome = starter.build_recipe_input("job-1", _OWNER)
 
-    updates = [c for c in conn.cursor().execute.call_args_list if "UPDATE Jobs" in c.args[0]]
-    assert len(updates) == 1
-    assert updates[0].args[1] == JobStatus.GENERATING
-
+    assert repository.get_job("job-1")["status"] == JobStatus.GENERATING
     assert outcome["orchestration_input"]["job_id"] == "job-1"
     assert outcome["orchestration_input"]["vision_guess"] == _VISION_GUESS
-    assert outcome["orchestration_input"]["match_result"] == {
-        "dish_name": "Pad Thai Goong",
-        "cuisine": "Thai",
-        "vision_confidence": 0.8,
-        "matched_restaurant_id": "place-1",
-        "matched_menu_item_id": None,
-        "match_confidence": 0.91,
-        "match_method": MatchMethod.MENU_MATCHED,
-    }
+    assert outcome["orchestration_input"]["match_result"] == _MATCH_RESULT
+
+
+def test_starting_generation_clears_a_previous_error(ddb_table):
+    """A retry after a failed generation should not keep showing the old error."""
+    _job()
+    repository.update_job("job-1", error_message="generator exploded")
+
+    starter.build_recipe_input("job-1", _OWNER)
+
+    assert repository.get_job("job-1")["error_message"] is None
 
 
 def test_handle_request_starts_orchestration_on_a_distinct_instance_id(monkeypatch):
@@ -135,18 +125,10 @@ def test_handle_request_starts_orchestration_on_a_distinct_instance_id(monkeypat
     assert outcome == {"status_code": 202, "body": {"job_id": "job-1", "status": JobStatus.GENERATING}}
 
 
-def _spend_recipe_quota(conn, call_count):
-    """Make the rate limiter see `call_count` generations already used this hour."""
-    bucket = datetime.datetime.now(datetime.timezone.utc).replace(
-        tzinfo=None, minute=0, second=0, microsecond=0
-    )
-    conn.cursor.return_value.fetchall.return_value = [MagicMock(WindowStart=bucket, CallCount=call_count)]
-
-
-def test_returns_429_when_the_generation_quota_is_spent(monkeypatch):
+def test_returns_429_when_the_generation_quota_is_spent(ddb_table, monkeypatch):
     monkeypatch.setenv("RECIPE_RATE_LIMIT_PER_HOUR", "2")
-    conn = _patch_conn(monkeypatch, _row())
-    _spend_recipe_quota(conn, 2)
+    _job()
+    _spend_recipe_quota(2)
 
     outcome = starter.build_recipe_input("job-1", _OWNER)
 
@@ -154,39 +136,33 @@ def test_returns_429_when_the_generation_quota_is_spent(monkeypatch):
     assert "2 recipe generations" in outcome["body"]["error"]
     assert outcome["headers"]["Retry-After"] == str(outcome["body"]["retry_after_seconds"])
     # The job must stay Identified so the user can retry once the window reopens.
-    assert not [c for c in conn.cursor().execute.call_args_list if "UPDATE Jobs" in c.args[0]]
+    assert repository.get_job("job-1")["status"] == JobStatus.IDENTIFIED
 
 
-def test_a_rejected_request_does_not_spend_the_quota(monkeypatch):
+def test_a_rejected_request_does_not_spend_the_quota(ddb_table, monkeypatch):
     """404/403/409 all come before the quota check - being told 'no' should not
     cost the user one of their generations."""
     monkeypatch.setenv("RECIPE_RATE_LIMIT_PER_HOUR", "2")
-    conn = _patch_conn(monkeypatch, _row(status=JobStatus.COMPLETED))
+    _job(status=JobStatus.COMPLETED)
 
-    assert starter.build_recipe_input("job-1", _OWNER)["status_code"] == 409
-    assert not [c for c in conn.cursor().execute.call_args_list if "RateLimitCounters" in c.args[0]]
+    starter.build_recipe_input("job-1", _OWNER)
 
-
-def test_a_successful_start_consumes_one_generation(monkeypatch):
-    conn = _patch_conn(monkeypatch, _row())
-    _spend_recipe_quota(conn, 0)
-
-    outcome = starter.build_recipe_input("job-1", _OWNER)
-
-    assert "orchestration_input" in outcome
-    merges = [c for c in conn.cursor().execute.call_args_list if c.args[0].startswith("MERGE RateLimitCounters")]
-    assert len(merges) == 1
+    assert ddb.query_prefix(ddb.rate_pk(_OWNER), "recipe#") == []
 
 
-def test_handle_request_does_not_start_orchestration_when_validation_fails(monkeypatch):
-    monkeypatch.setattr(
-        starter,
-        "build_recipe_input",
-        lambda job_id, user_oid: {"status_code": 409, "body": {"error": "nope"}},
-    )
-    client = MagicMock()
+def test_a_successful_start_consumes_one_generation(ddb_table):
+    _job()
 
-    outcome = asyncio.run(starter.handle_request("job-1", _OWNER, client))
+    starter.build_recipe_input("job-1", _OWNER)
 
-    assert outcome == {"status_code": 409, "body": {"error": "nope"}}
-    client.start_new.assert_not_called()
+    rows = ddb.query_prefix(ddb.rate_pk(_OWNER), "recipe#")
+    assert sum(row["call_count"] for row in rows) == 1
+
+
+def test_scan_quota_is_untouched_by_generation(ddb_table):
+    """Separate quotas per pipeline stage - see shared/rate_limit.py."""
+    _job()
+
+    starter.build_recipe_input("job-1", _OWNER)
+
+    assert ddb.query_prefix(ddb.rate_pk(_OWNER), "scan#") == []

@@ -1,10 +1,22 @@
 pytest
-pyodbc
+pytest-mock
+# In-process DynamoDB for the unit suite - no Docker, no LocalStack needed to run
+# `pytest`. See tests/conftest.py.
+moto[dynamodb]
 python-dotenv
+httpx
+numpy
+anthropic
+
+# boto3 ships in the Lambda runtime, so it is deliberately NOT pinned into the
+# function package - see CLAUDE.md Phase 3 on packaging. It is listed here only so
+# local dev and the test suite have it.
+boto3
+
+# Azure packages still present because the HTTP/orchestration layer has not been
+# ported yet (Phase 0 steps 3-4). They go once the Lambda handlers and Step
+# Functions state machines replace them.
 azure-functions
 azure-functions-durable
 azure-storage-blob
 azure-storage-queue
-pytest-mock
-httpx
-anthropic

@@ -2,40 +2,37 @@ import asyncio
 import json
 from unittest.mock import MagicMock
 
+import pytest
+
+from shared import repository
+from shared.models import JobStatus
 from triggers import orchestrator_starter_queue as starter
 
 
-class _ConnectionCtx:
-    def __init__(self, conn):
-        self._conn = conn
+def _create_job(**overrides):
+    kwargs = {
+        "job_id": "job-1",
+        "user_oid": "user-1",
+        "status": JobStatus.QUEUED,
+        "image_key": "https://x/blob",
+        "latitude": 40.7,
+        "longitude": -74.0,
+    }
+    kwargs.update(overrides)
+    return repository.create_job(**kwargs)
 
-    def __enter__(self):
-        return self._conn
 
-    def __exit__(self, *exc_info):
-        return False
-
-
-def test_build_orchestration_input_marks_processing_and_returns_job_data(monkeypatch):
-    conn = MagicMock()
-    conn.cursor.return_value.fetchone.return_value = MagicMock(
-        ImageBlobUrl="https://x/blob", Latitude=40.7, Longitude=-74.0, SelectedRestaurantId=None
-    )
-    monkeypatch.setattr(starter.db, "get_connection", lambda: _ConnectionCtx(conn))
+def test_build_orchestration_input_marks_processing_and_returns_job_data(ddb_table):
+    _create_job()
 
     result = starter.build_orchestration_input("job-1")
 
     assert result == {"job_id": "job-1", "image_blob_url": "https://x/blob", "latitude": 40.7, "longitude": -74.0}
-    update_calls = [c for c in conn.cursor().execute.call_args_list if "UPDATE Jobs" in c.args[0]]
-    assert len(update_calls) == 1
+    assert repository.get_job("job-1")["status"] == JobStatus.PROCESSING
 
 
-def test_build_orchestration_input_includes_selected_restaurant_id_when_set(monkeypatch):
-    conn = MagicMock()
-    conn.cursor.return_value.fetchone.return_value = MagicMock(
-        ImageBlobUrl="https://x/blob", Latitude=40.7, Longitude=-74.0, SelectedRestaurantId="place-1"
-    )
-    monkeypatch.setattr(starter.db, "get_connection", lambda: _ConnectionCtx(conn))
+def test_build_orchestration_input_includes_selected_restaurant_id_when_set(ddb_table):
+    _create_job(selected_restaurant_id="place-1")
 
     result = starter.build_orchestration_input("job-1")
 
@@ -46,6 +43,20 @@ def test_build_orchestration_input_includes_selected_restaurant_id_when_set(monk
         "longitude": -74.0,
         "selected_restaurant_id": "place-1",
     }
+
+
+def test_build_orchestration_input_raises_for_unknown_job(ddb_table):
+    with pytest.raises(ValueError, match="job-missing"):
+        starter.build_orchestration_input("job-missing")
+
+
+def test_processing_status_reaches_the_cookbook_listing(ddb_table):
+    """Status is a projected field - the listing must not go stale."""
+    _create_job()
+
+    starter.build_orchestration_input("job-1")
+
+    assert repository.list_jobs("user-1")[0]["status"] == JobStatus.PROCESSING
 
 
 def test_handle_queue_message_decodes_message_and_starts_orchestration(monkeypatch):

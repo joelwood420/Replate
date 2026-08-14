@@ -2,7 +2,7 @@ import json
 
 import azure.functions as func
 
-from shared import blob, db
+from shared import blob, repository
 from shared.auth import get_user_oid
 
 bp = func.Blueprint()
@@ -17,36 +17,26 @@ def _parse_bool(value: str | None) -> bool | None:
 
 
 def run(user_oid: str, saved: bool | None, limit: int) -> list[dict]:
-    query = (
-        "SELECT TOP (?) j.JobId, j.Status, j.IsSaved, j.CreatedAt, j.ImageBlobUrl, "
-        "jr.DishName, r.Name AS RestaurantName "
-        "FROM Jobs j "
-        "LEFT JOIN JobResults jr ON jr.JobId = j.JobId "
-        "LEFT JOIN Restaurants r ON r.RestaurantId = jr.MatchedRestaurantId "
-        "WHERE j.UserId = ?"
-    )
-    params = [limit, user_oid]
-    if saved is not None:
-        query += " AND j.IsSaved = ?"
-        params.append(1 if saved else 0)
-    query += " ORDER BY j.CreatedAt DESC"
+    """The cookbook listing.
 
-    with db.get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, *params)
-        rows = cursor.fetchall()
-
+    This was a three-table join (Jobs -> JobResults -> Restaurants) to get a dish
+    name and restaurant name per row. It is now a single query against the user's
+    partition: `dish_name` and `restaurant_name` are denormalised onto the listing
+    item when stage 1 persists the match. See `shared/repository.py` for how the
+    two copies are kept in step.
+    """
+    jobs = repository.list_jobs(user_oid, saved=saved, limit=limit)
     return [
         {
-            "job_id": str(row.JobId),
-            "status": row.Status,
-            "is_saved": bool(row.IsSaved),
-            "created_at": db.to_utc_iso(row.CreatedAt),
-            "dish_name": row.DishName,
-            "restaurant_name": row.RestaurantName,
-            "image_url": blob.generate_read_sas_url(row.ImageBlobUrl),
+            "job_id": job["job_id"],
+            "status": job["status"],
+            "is_saved": bool(job.get("is_saved")),
+            "created_at": job["created_at"],
+            "dish_name": job.get("dish_name"),
+            "restaurant_name": job.get("restaurant_name"),
+            "image_url": blob.generate_read_sas_url(job["image_key"]),
         }
-        for row in rows
+        for job in jobs
     ]
 
 

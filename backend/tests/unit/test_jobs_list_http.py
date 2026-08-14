@@ -1,101 +1,89 @@
-from unittest.mock import MagicMock
+import pytest
 
+from shared import repository
+from shared.models import JobStatus
 from triggers import jobs_list_http
 
 
-class _ConnectionCtx:
-    def __init__(self, conn):
-        self._conn = conn
-
-    def __enter__(self):
-        return self._conn
-
-    def __exit__(self, *exc_info):
-        return False
+@pytest.fixture(autouse=True)
+def stub_presigned_url(monkeypatch):
+    monkeypatch.setattr(jobs_list_http.blob, "generate_read_sas_url", lambda key: f"{key}?sig=abc")
 
 
-def _row(**overrides):
-    defaults = dict(
-        JobId="job-1",
-        Status="Completed",
-        IsSaved=0,
-        CreatedAt=None,
-        ImageBlobUrl="https://x/uploads/photo.jpg",
-        DishName="Margherita Pizza",
-        RestaurantName="Marchetti",
+def test_returns_empty_list_when_caller_has_no_jobs(ddb_table):
+    assert jobs_list_http.run("owner-oid", None, 20) == []
+
+
+def test_maps_fields_including_image_url_and_dish_name(ddb_table):
+    job = repository.create_job(
+        job_id="job-1",
+        user_oid="owner-oid",
+        status=JobStatus.COMPLETED,
+        image_key="uploads/photo.jpg",
     )
-    defaults.update(overrides)
-    return MagicMock(**defaults)
-
-
-def test_returns_empty_list_when_caller_has_no_jobs(monkeypatch):
-    conn = MagicMock()
-    conn.cursor.return_value.fetchall.return_value = []
-    monkeypatch.setattr(jobs_list_http.db, "get_connection", lambda: _ConnectionCtx(conn))
-    monkeypatch.setattr(jobs_list_http.blob, "generate_read_sas_url", lambda url: f"{url}?sig=abc")
-
-    result = jobs_list_http.run("owner-oid", None, 20)
-
-    assert result == []
-
-
-def test_maps_row_fields_including_image_url_and_dish_name(monkeypatch):
-    conn = MagicMock()
-    conn.cursor.return_value.fetchall.return_value = [_row()]
-    monkeypatch.setattr(jobs_list_http.db, "get_connection", lambda: _ConnectionCtx(conn))
-    monkeypatch.setattr(jobs_list_http.blob, "generate_read_sas_url", lambda url: f"{url}?sig=abc")
+    repository.update_job("job-1", dish_name="Margherita Pizza", restaurant_name="Marchetti")
 
     result = jobs_list_http.run("owner-oid", None, 20)
 
     assert result == [
         {
             "job_id": "job-1",
-            "status": "Completed",
+            "status": JobStatus.COMPLETED,
             "is_saved": False,
-            "created_at": None,
+            "created_at": job["created_at"],
             "dish_name": "Margherita Pizza",
             "restaurant_name": "Marchetti",
-            "image_url": "https://x/uploads/photo.jpg?sig=abc",
+            "image_url": "uploads/photo.jpg?sig=abc",
         }
     ]
 
 
-def test_scopes_query_to_caller_oid(monkeypatch):
-    conn = MagicMock()
-    conn.cursor.return_value.fetchall.return_value = []
-    monkeypatch.setattr(jobs_list_http.db, "get_connection", lambda: _ConnectionCtx(conn))
-    monkeypatch.setattr(jobs_list_http.blob, "generate_read_sas_url", lambda url: url)
+def test_scopes_the_listing_to_the_caller(ddb_table):
+    repository.create_job(job_id="mine", user_oid="owner-oid", status="Queued", image_key="a.jpg")
+    repository.create_job(job_id="theirs", user_oid="other-oid", status="Queued", image_key="b.jpg")
 
-    jobs_list_http.run("owner-oid", None, 20)
+    result = jobs_list_http.run("owner-oid", None, 20)
 
-    call = conn.cursor().execute.call_args
-    assert "WHERE j.UserId = ?" in call.args[0]
-    assert "owner-oid" in call.args[1:]
+    # Partitioned by user, so another user's jobs are not merely filtered out -
+    # they are never read.
+    assert [job["job_id"] for job in result] == ["mine"]
 
 
-def test_saved_filter_adds_is_saved_predicate(monkeypatch):
-    conn = MagicMock()
-    conn.cursor.return_value.fetchall.return_value = []
-    monkeypatch.setattr(jobs_list_http.db, "get_connection", lambda: _ConnectionCtx(conn))
-    monkeypatch.setattr(jobs_list_http.blob, "generate_read_sas_url", lambda url: url)
+def test_saved_filter_narrows_the_listing(ddb_table):
+    repository.create_job(job_id="saved", user_oid="owner-oid", status="Queued", image_key="a.jpg")
+    repository.create_job(job_id="unsaved", user_oid="owner-oid", status="Queued", image_key="b.jpg")
+    repository.update_job("saved", is_saved=True)
 
-    jobs_list_http.run("owner-oid", True, 20)
-
-    call = conn.cursor().execute.call_args
-    assert "AND j.IsSaved = ?" in call.args[0]
-    assert 1 in call.args[1:]
+    assert [j["job_id"] for j in jobs_list_http.run("owner-oid", True, 20)] == ["saved"]
+    assert [j["job_id"] for j in jobs_list_http.run("owner-oid", False, 20)] == ["unsaved"]
 
 
-def test_no_saved_filter_when_not_requested(monkeypatch):
-    conn = MagicMock()
-    conn.cursor.return_value.fetchall.return_value = []
-    monkeypatch.setattr(jobs_list_http.db, "get_connection", lambda: _ConnectionCtx(conn))
-    monkeypatch.setattr(jobs_list_http.blob, "generate_read_sas_url", lambda url: url)
+def test_no_saved_filter_returns_everything(ddb_table):
+    repository.create_job(job_id="saved", user_oid="owner-oid", status="Queued", image_key="a.jpg")
+    repository.create_job(job_id="unsaved", user_oid="owner-oid", status="Queued", image_key="b.jpg")
+    repository.update_job("saved", is_saved=True)
 
-    jobs_list_http.run("owner-oid", None, 20)
+    assert len(jobs_list_http.run("owner-oid", None, 20)) == 2
 
-    call = conn.cursor().execute.call_args
-    assert "AND j.IsSaved = ?" not in call.args[0]
+
+def test_newest_first(ddb_table):
+    for index in range(3):
+        repository.create_job(
+            job_id=f"job-{index}", user_oid="owner-oid", status="Queued", image_key=f"{index}.jpg"
+        )
+
+    result = jobs_list_http.run("owner-oid", None, 20)
+
+    assert [job["job_id"] for job in result] == ["job-2", "job-1", "job-0"]
+
+
+def test_limit_is_respected(ddb_table):
+    for index in range(5):
+        repository.create_job(
+            job_id=f"job-{index}", user_oid="owner-oid", status="Queued", image_key=f"{index}.jpg"
+        )
+
+    assert len(jobs_list_http.run("owner-oid", None, 2)) == 2
 
 
 def test_parse_bool_handles_true_false_and_missing():

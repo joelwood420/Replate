@@ -1,7 +1,5 @@
-import json
-from unittest.mock import MagicMock
-
 from activities import persist_job_result
+from shared import repository
 from shared.models import JobStatus, MatchMethod
 
 _MATCH_RESULT = {
@@ -34,175 +32,183 @@ _RECREATION = {
 }
 
 
-def _executed_sql(conn):
-    return [c.args[0] for c in conn.cursor().execute.call_args_list]
-
-
-def _calls_matching(conn, fragment):
-    return [c for c in conn.cursor().execute.call_args_list if fragment in c.args[0]]
+def _job(job_id="job-123", status=JobStatus.PROCESSING):
+    return repository.create_job(
+        job_id=job_id, user_oid="user-1", status=status, image_key="uploads/p.jpg"
+    )
 
 
 # --- stage 1: persist_match_result -----------------------------------------
 
 
-def test_match_writes_job_results_row_without_any_recipe():
-    conn = MagicMock()
+def test_match_writes_the_result_without_any_recipe(ddb_table):
+    _job()
 
-    persist_job_result._execute_match(
-        {"job_id": "job-123", "match_result": _MATCH_RESULT, "vision_guess": _VISION_GUESS}, conn
+    persist_job_result.run_match(
+        {"job_id": "job-123", "match_result": _MATCH_RESULT, "vision_guess": _VISION_GUESS}
     )
 
-    executed = _executed_sql(conn)
-    assert any("INSERT INTO JobResults" in s for s in executed)
-    # Stage 1 must not write any part of the recipe tree - that's stage 2's job.
-    assert not any("INSERT INTO DishElements" in s for s in executed)
-    assert not any("INSERT INTO ElementIngredients" in s for s in executed)
-    assert not any("INSERT INTO ElementSteps" in s for s in executed)
+    assert repository.get_job_result("job-123")["dish_name"] == "Margherita Pizza"
+    # Stage 1 must not write any part of the recipe - that's stage 2's job.
+    assert repository.get_dish_elements("job-123") == []
 
 
-def test_match_persists_vision_guess_as_json():
-    """Stage 2 reads this back - it is the only record of the vision guess."""
-    conn = MagicMock()
+def test_match_persists_the_vision_guess(ddb_table):
+    """Stage 2 reads this back - it is the only record of the vision guess.
 
-    persist_job_result._execute_match(
-        {"job_id": "job-123", "match_result": _MATCH_RESULT, "vision_guess": _VISION_GUESS}, conn
+    It is now a nested map rather than a JSON string, so there is nothing to
+    serialise on the way in or parse on the way out.
+    """
+    _job()
+
+    persist_job_result.run_match(
+        {"job_id": "job-123", "match_result": _MATCH_RESULT, "vision_guess": _VISION_GUESS}
     )
 
-    insert = _calls_matching(conn, "INSERT INTO JobResults")[0]
-    assert "VisionGuessJson" in insert.args[0]
-    assert json.loads(insert.args[-1]) == _VISION_GUESS
+    assert repository.get_job_result("job-123")["vision_guess"] == _VISION_GUESS
 
 
-def test_match_sets_status_identified_and_auto_saves_to_cookbook():
-    conn = MagicMock()
+def test_match_sets_status_identified_and_auto_saves_to_cookbook(ddb_table):
+    _job()
 
-    persist_job_result._execute_match(
-        {"job_id": "job-123", "match_result": _MATCH_RESULT, "vision_guess": _VISION_GUESS}, conn
+    persist_job_result.run_match(
+        {"job_id": "job-123", "match_result": _MATCH_RESULT, "vision_guess": _VISION_GUESS}
     )
 
-    updates = _calls_matching(conn, "UPDATE Jobs")
-    assert len(updates) == 1
-    assert "IsSaved = 1" in updates[0].args[0]
-    assert updates[0].args[1] == JobStatus.IDENTIFIED
-    assert updates[0].args[2] == "job-123"
+    job = repository.get_job("job-123")
+    assert job["status"] == JobStatus.IDENTIFIED
+    assert job["is_saved"] is True
 
 
-def test_match_tolerates_missing_vision_guess():
-    conn = MagicMock()
+def test_match_denormalises_dish_and_restaurant_onto_the_listing(ddb_table):
+    """The cookbook list has no join to fall back on - if this is not written
+    at match time, every row shows a blank dish name."""
+    _job()
+    repository.upsert_restaurant("stub-1", "Trattoria Roma", None, None, None, None)
 
-    persist_job_result._execute_match({"job_id": "job-123", "match_result": _MATCH_RESULT}, conn)
+    persist_job_result.run_match(
+        {"job_id": "job-123", "match_result": _MATCH_RESULT, "vision_guess": _VISION_GUESS}
+    )
 
-    insert = _calls_matching(conn, "INSERT INTO JobResults")[0]
-    assert insert.args[-1] is None
+    listed = repository.list_jobs("user-1")[0]
+    assert listed["dish_name"] == "Margherita Pizza"
+    assert listed["restaurant_name"] == "Trattoria Roma"
+
+
+def test_match_tolerates_a_missing_restaurant(ddb_table):
+    """Vision-only outcomes have no matched restaurant to look up."""
+    _job()
+    vision_only = {**_MATCH_RESULT, "matched_restaurant_id": None}
+
+    persist_job_result.run_match(
+        {"job_id": "job-123", "match_result": vision_only, "vision_guess": _VISION_GUESS}
+    )
+
+    assert repository.list_jobs("user-1")[0]["restaurant_name"] is None
+
+
+def test_match_tolerates_missing_vision_guess(ddb_table):
+    _job()
+
+    persist_job_result.run_match({"job_id": "job-123", "match_result": _MATCH_RESULT})
+
+    assert repository.get_job_result("job-123")["vision_guess"] is None
 
 
 # --- stage 2: persist_recipe_result ----------------------------------------
 
 
-def test_recipe_writes_element_ingredient_and_step_rows():
-    conn = MagicMock()
+def test_recipe_writes_elements_with_nested_ingredients_and_steps(ddb_table):
+    _job(status=JobStatus.GENERATING)
 
-    persist_job_result._execute_recipe({"job_id": "job-123", "recreation": _RECREATION}, conn)
+    persist_job_result.run_recipe({"job_id": "job-123", "recreation": _RECREATION})
 
-    executed = _executed_sql(conn)
-    assert any("INSERT INTO DishElements" in s for s in executed)
-    assert any("INSERT INTO ElementIngredients" in s for s in executed)
-    assert any("INSERT INTO ElementSteps" in s for s in executed)
-    # Stage 1 already wrote the JobResults row; stage 2 must not insert a second one
-    # (JobId is the primary key, so it would throw).
-    assert not any("INSERT INTO JobResults" in s for s in executed)
+    elements = repository.get_dish_elements("job-123")
+    assert len(elements) == 1
+    assert elements[0]["ingredients"][0]["ingredient_name"] == "Flour"
+    assert elements[0]["steps"][0]["instruction"] == "Mix and knead."
 
 
-def test_recipe_sets_status_completed_and_clears_error():
-    conn = MagicMock()
+def test_recipe_does_not_disturb_the_stage_one_result(ddb_table):
+    _job(status=JobStatus.GENERATING)
+    persist_job_result.run_match({"job_id": "job-123", "match_result": _MATCH_RESULT})
 
-    persist_job_result._execute_recipe({"job_id": "job-123", "recreation": {"elements": []}}, conn)
+    persist_job_result.run_recipe({"job_id": "job-123", "recreation": _RECREATION})
 
-    updates = _calls_matching(conn, "UPDATE Jobs")
-    assert len(updates) == 1
-    assert "ErrorMessage = NULL" in updates[0].args[0]
-    assert updates[0].args[1] == JobStatus.COMPLETED
-    assert updates[0].args[2] == "job-123"
+    assert repository.get_job_result("job-123")["dish_name"] == "Margherita Pizza"
 
 
-def test_recipe_clears_previous_elements_before_inserting():
-    """Re-running generation must replace the recipe, not duplicate it.
+def test_recipe_sets_status_completed_and_clears_error(ddb_table):
+    _job(status=JobStatus.GENERATING)
+    repository.update_job("job-123", error_message="a previous attempt failed")
 
-    There is no unique key on DishElements (JobId, SortOrder), so without the
-    delete a retry would silently double every element, ingredient and step.
-    """
-    conn = MagicMock()
+    persist_job_result.run_recipe({"job_id": "job-123", "recreation": {"elements": []}})
 
-    persist_job_result._execute_recipe({"job_id": "job-123", "recreation": _RECREATION}, conn)
-
-    executed = _executed_sql(conn)
-    # Children first - the foreign keys are NO ACTION, so nothing cascades.
-    assert executed[0].startswith("DELETE FROM ElementSteps")
-    assert executed[1].startswith("DELETE FROM ElementIngredients")
-    assert executed[2].startswith("DELETE FROM DishElements")
-    assert executed.index("DELETE FROM DishElements WHERE JobId = ?") < next(
-        i for i, s in enumerate(executed) if "INSERT INTO DishElements" in s
-    )
+    job = repository.get_job("job-123")
+    assert job["status"] == JobStatus.COMPLETED
+    assert job["error_message"] is None
 
 
-def test_recipe_run_twice_produces_the_same_row_count():
-    first, second = MagicMock(), MagicMock()
+def test_recipe_run_twice_does_not_duplicate_elements(ddb_table):
+    """Re-running generation must replace the recipe, not append to it."""
+    _job(status=JobStatus.GENERATING)
 
-    persist_job_result._execute_recipe({"job_id": "job-123", "recreation": _RECREATION}, first)
-    persist_job_result._execute_recipe({"job_id": "job-123", "recreation": _RECREATION}, second)
+    persist_job_result.run_recipe({"job_id": "job-123", "recreation": _RECREATION})
+    persist_job_result.run_recipe({"job_id": "job-123", "recreation": _RECREATION})
 
-    def insert_count(conn):
-        return len([s for s in _executed_sql(conn) if s.startswith("INSERT INTO")])
-
-    assert insert_count(first) == insert_count(second)
+    assert len(repository.get_dish_elements("job-123")) == 1
 
 
 # --- failure activities ----------------------------------------------------
 
 
-def test_mark_job_failed_sets_status_and_error_message():
-    conn = MagicMock()
+def test_mark_job_failed_sets_status_and_error_message(ddb_table):
+    _job()
 
-    persist_job_result._execute_mark_failed({"job_id": "job-123", "error_message": "boom"}, conn)
+    persist_job_result.run_mark_failed({"job_id": "job-123", "error_message": "boom"})
 
-    call = conn.cursor().execute.call_args
-    assert "UPDATE Jobs" in call.args[0]
-    assert call.args[1] == JobStatus.FAILED
-    assert call.args[2] == "boom"
-    assert call.args[3] == "job-123"
+    job = repository.get_job("job-123")
+    assert job["status"] == JobStatus.FAILED
+    assert job["error_message"] == "boom"
 
 
-def test_error_messages_are_truncated_to_fit_the_column():
-    """Jobs.ErrorMessage is NVARCHAR(1000).
+def test_error_messages_are_truncated(ddb_table):
+    """Step Functions wraps a failed task's Cause with the full remote stack trace.
 
-    Durable wraps activity failures in a message containing the whole remote stack trace,
-    which overflows the column. An error handler that throws leaves the job stuck in a
-    non-terminal status forever with no record of why, so truncation matters.
+    An error message the size of a stack trace is noise in every API response that
+    returns it, and an error handler that itself fails leaves the job stranded in a
+    non-terminal status with no record of why.
     """
     long_error = "x" * 5000
 
-    for execute in (
-        persist_job_result._execute_mark_failed,
-        persist_job_result._execute_mark_recipe_failed,
+    for job_id, run in (
+        ("job-a", persist_job_result.run_mark_failed),
+        ("job-b", persist_job_result.run_mark_recipe_failed),
     ):
-        conn = MagicMock()
-        execute({"job_id": "job-123", "error_message": long_error}, conn)
+        _job(job_id=job_id)
+        run({"job_id": job_id, "error_message": long_error})
 
-        written = conn.cursor().execute.call_args.args[2]
+        written = repository.get_job(job_id)["error_message"]
         assert len(written) == 1000
         assert written.endswith("…")
 
 
-def test_mark_recipe_failed_reverts_to_identified_not_failed():
+def test_mark_recipe_failed_reverts_to_identified_not_failed(ddb_table):
     """A transient generator error must leave the dish usable and retryable."""
-    conn = MagicMock()
+    _job(status=JobStatus.GENERATING)
 
-    persist_job_result._execute_mark_recipe_failed(
-        {"job_id": "job-123", "error_message": "generator exploded"}, conn
+    persist_job_result.run_mark_recipe_failed(
+        {"job_id": "job-123", "error_message": "generator exploded"}
     )
 
-    call = conn.cursor().execute.call_args
-    assert "UPDATE Jobs" in call.args[0]
-    assert call.args[1] == JobStatus.IDENTIFIED
-    assert call.args[2] == "generator exploded"
-    assert call.args[3] == "job-123"
+    job = repository.get_job("job-123")
+    assert job["status"] == JobStatus.IDENTIFIED
+    assert job["error_message"] == "generator exploded"
+
+
+def test_a_failed_status_reaches_the_listing(ddb_table):
+    _job()
+
+    persist_job_result.run_mark_failed({"job_id": "job-123", "error_message": "boom"})
+
+    assert repository.list_jobs("user-1")[0]["status"] == JobStatus.FAILED

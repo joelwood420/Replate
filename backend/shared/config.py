@@ -5,24 +5,21 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def sql_server() -> str:
-    return os.environ["SQL_SERVER"]
+def aws_region() -> str:
+    # AWS_REGION is set by the Lambda runtime itself; AWS_DEFAULT_REGION is what
+    # the CLI and local tooling use. Falling back across both means the same code
+    # runs deployed and against LocalStack without a bespoke setting.
+    return os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION", "eu-west-2")
 
 
-def sql_database() -> str:
-    return os.environ["SQL_DATABASE"]
+def aws_endpoint_url() -> str:
+    # Blank in a real deployment - set only to point boto3 at LocalStack or
+    # DynamoDB Local. Anything non-empty overrides normal endpoint resolution.
+    return os.environ.get("AWS_ENDPOINT_URL", "").strip()
 
 
-def sql_uid() -> str:
-    return os.environ["SQL_UID"]
-
-
-def sql_pwd() -> str:
-    return os.environ["SQL_PWD"]
-
-
-def sql_odbc_driver() -> str:
-    return os.environ.get("SQL_ODBC_DRIVER", "ODBC Driver 18 for SQL Server")
+def ddb_table_name() -> str:
+    return os.environ.get("DDB_TABLE_NAME", "replate")
 
 
 def azure_storage_connection_string() -> str:
@@ -61,8 +58,8 @@ def stub_default_user_oid() -> str:
     return os.environ.get("STUB_DEFAULT_USER_OID", "00000000-0000-0000-0000-000000000001")
 
 
-def entraid_enabled() -> bool:
-    return os.environ.get("ENTRAID_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+def cognito_enabled() -> bool:
+    return os.environ.get("COGNITO_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 
 
 def google_places_api_key() -> str:
