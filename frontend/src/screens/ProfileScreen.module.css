@@ -35,3 +35,24 @@
   padding-bottom: 2px;
   text-align: center;
 }
+
+.footer {
+  padding: 0 22px 20px;
+}
+
+.signOutButton {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 13px 18px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: 1px solid var(--color-border-chip);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-muted-light);
+  white-space: nowrap;
+}
