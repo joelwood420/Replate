@@ -26,7 +26,9 @@ that also grounds itself against culinary technique/recipe embeddings.
 - Database: **Amazon DynamoDB**, single-table design. Culinary-technique embeddings live in
   the same table and are scanned brute-force in the Lambda — no separate vector database
 - Auth: **Amazon Cognito** user pool
-- AI: **Amazon Bedrock** (Claude for vision/extraction/generation, Titan for embeddings)
+- AI: **first-party Anthropic API** (Claude for vision/menu/generation, incl. the server-side
+  `web_search` tool for menu fetch). Embeddings are a pseudo-embedding stub — no provider yet
+  (Anthropic has no embeddings endpoint). See `docs/decisions.md` (2026-08-17).
 - Infra: **AWS SAM** (a CloudFormation transform — the deployed artifact is a CloudFormation
   stack)
 - CI/CD: GitHub Actions
@@ -66,13 +68,15 @@ that also grounds itself against culinary technique/recipe embeddings.
 3. **One phase at a time.** Implement strictly in phase order (below). Don't start Phase 3
    work while Phase 0 is incomplete, and don't reach ahead into a later phase's resources
    (e.g. don't provision cloud infra during the port — assume LocalStack/mocks until Phase 3).
-4. **No secrets in code or SAM templates.** API keys (SERP API, Google Places, etc.) go in
+4. **No secrets in code or SAM templates.** API keys (Anthropic API, Google Places, etc.) go in
    **AWS Systems Manager Parameter Store** as `SecureString` parameters and are read at
    runtime or referenced from the template — never hardcoded or committed. Prefer Parameter
    Store over Secrets Manager: Standard-tier parameters are free, whereas Secrets Manager
    bills per secret per month. Anything that can use **IAM instead of a key should** —
-   Bedrock, S3, DynamoDB, SQS and Rekognition all authenticate via the Lambda execution role,
-   so they need no stored credential at all.
+   S3, DynamoDB, SQS and Rekognition all authenticate via the Lambda execution role, so they
+   need no stored credential at all. The Anthropic API and Google Places are the exceptions
+   (they take keys); model calls moved off IAM-authenticated Bedrock deliberately — see
+   `docs/decisions.md` (2026-08-17).
 5. **Don't fabricate AWS pricing.** Pricing and free-tier terms change; if a cost claim
    matters for a decision, note that it should be re-verified against the current AWS /
    third-party pricing pages rather than asserting a possibly-stale number as fact.
@@ -108,9 +112,9 @@ is entirely code and local tooling.
 | Azure Static Web Apps | S3 + CloudFront (Origin Access Control) |
 | Key Vault | SSM Parameter Store (`SecureString`) |
 | Azure AI Content Safety | Amazon Rekognition `DetectModerationLabels` |
-| Microsoft Foundry (Claude Haiku 4.5) | Amazon Bedrock (Claude Haiku 4.5) |
-| `text-embedding-3-small` (1536-d) | Bedrock Titan Text Embeddings V2 (**1024-d**) |
-| Anthropic `web_search` server tool | SERP API + HTTP fetch + Bedrock extraction |
+| Microsoft Foundry (Claude Haiku 4.5) | first-party Anthropic API (Claude) |
+| `text-embedding-3-small` (1536-d) | pseudo-embedding stub, 1024-d (real provider TBD) |
+| Anthropic `web_search` server tool | first-party Anthropic API `web_search` server tool (unchanged) |
 | App Insights + Log Analytics | CloudWatch Logs + Metrics |
 | Bicep | AWS SAM |
 | Azurite + SQL Server 2025 container | LocalStack + `sam local` |
@@ -149,8 +153,10 @@ is entirely code and local tooling.
 2. **Vector search.** `query_culinary_embeddings` loads the `EMBEDDINGS` partition and
    computes cosine similarity with numpy in-process. This is the same brute-force approach
    `VECTOR_DISTANCE` was doing — it just moves from the database into the Lambda. Embedding
-   dimension changes from 1536 to **1024** (Titan V2); it is now only a constant, since the
-   vectors are no longer typed by a database column. Re-seed via `backend/db/seed_embeddings.py`.
+   dimension is **1024** and is now only a constant, since the vectors are no longer typed by a
+   database column. Vectors stay a pseudo-embedding stub — no real embedding provider yet
+   (Anthropic has no embeddings endpoint; see `docs/decisions.md`, 2026-08-17). Re-seed via
+   `backend/db/seed_embeddings.py`.
 3. **HTTP layer.** Convert the 7 HTTP triggers from `azure.functions` blueprints to Lambda
    handlers taking an API Gateway v2 (payload format 2.0) event. Keep the handlers thin
    adapters over `shared/` — that is already the shape of the code and it is what keeps the
@@ -195,15 +201,16 @@ is entirely code and local tooling.
    fails the job; a service error, timeout, missing config or exhausted quota does not; a
    missing object is *not* covered by fail-open. Map Rekognition's confidence score onto the
    existing `CONTENT_SAFETY_REJECT_SEVERITY` threshold concept and rename the setting.
-8. **Model calls.** Route Claude calls through Bedrock (`bedrock-runtime` Converse API) using
-   the Lambda execution role — no API key. This affects `vision_guess`, `generate_recreation`
-   and the extraction half of `fetch_restaurant_menu`. Drop the `anthropic` dependency.
-9. **Menu search — the one real behaviour change.** `fetch_restaurant_menu` is currently a
-   *working* implementation built on Anthropic's server-side `web_search` tool. **Bedrock does
-   not expose that tool.** Split the single tool-using call into three steps: **search** (a
-   third-party SERP API — key in Parameter Store), **fetch** (HTTP GET the top result), then
-   **extract** (Bedrock Claude, structured output). The extraction prompt survives nearly
-   unchanged; search and fetch are new code. Keep the 24-hour `MenuLastFetchedAt` cache gate.
+8. **Model calls.** Route Claude calls through the **first-party Anthropic API** (`anthropic`
+   SDK, `ANTHROPIC_API_KEY` from Parameter Store) via `shared/anthropic_client.py`. This affects
+   `vision_guess`, `generate_recreation` and `fetch_restaurant_menu` (only the last is wired
+   today; the first two are stubs). Supersedes the earlier Bedrock plan — see `docs/decisions.md`
+   (2026-08-17).
+9. **Menu search.** `fetch_restaurant_menu` uses the Anthropic API's server-side `web_search`
+   tool: **one call** finds, fetches and extracts the menu as structured JSON
+   (`shared/menu_extraction.py`). The model must support `web_search_20260209` (Sonnet 4.6+/Opus
+   4.6+). Keep the 24-hour `MenuLastFetchedAt` cache gate. (The Bedrock era split this into a
+   SERP search→fetch→extract chain; that's reverted.)
 10. **Auth.** `shared/auth.py` keeps returning a stubbed `oid` via `X-Debug-User-Oid` — do not
     implement real validation here, it belongs in Phase 3. Swap the frontend's
     `@azure/msal-react` / `@azure/msal-browser` for a Cognito OIDC client behind the same
@@ -212,8 +219,8 @@ is entirely code and local tooling.
 11. **Local dev loop.** Rewrite `backend/docker-compose.yml` around **LocalStack (Community)**
     — S3, SQS, DynamoDB, Step Functions and SSM — replacing Azurite and the SQL Server 2025
     container. Use `sam local start-api` / `sam local invoke` in place of `func start`.
-    Bedrock, Rekognition and Cognito are **not** in LocalStack Community: the first two call
-    the real service (cheap per call), and Cognito stays stubbed. Keep the
+    The Anthropic API (external HTTPS), Rekognition and Cognito are **not** local: the first two
+    call the real service (cheap per call), and Cognito stays stubbed. Keep the
     `docker compose up -d` → run → `pytest` shape.
 12. **Tests.** Most of the ~133 tests mock at the `shared/` boundary and survive largely
     intact. Two exceptions: `tests/unit/test_orchestrator.py` (10 tests that drive the Durable
@@ -246,11 +253,11 @@ what brings the existing code up to it.
    simple parallel fan-out — model it accordingly:
    - Task: reverse-geocode the uploaded GPS coordinates → candidate restaurant(s) nearby
      (Google Places) — stubbed lookup, real persistence.
-   - Task: fetch/scrape the top candidate restaurant's menu (SERP API + fetch + Bedrock
-     extraction into structured menu items — most restaurant APIs don't return full menu
-     text). Cache keyed by restaurant, gated on `MenuLastFetchedAt`.
-   - Task (runs in parallel with the two above): call the vision model via Bedrock with the
-     uploaded image, prompted for a preliminary dish/element breakdown (component names +
+   - Task: fetch the top candidate restaurant's menu (one Anthropic API call with the
+     server-side `web_search` tool, extracted into structured menu items — most restaurant APIs
+     don't return full menu text). Cache keyed by restaurant, gated on `MenuLastFetchedAt`.
+   - Task (runs in parallel with the two above): call the vision model via the Anthropic API
+     with the uploaded image, prompted for a preliminary dish/element breakdown (component names +
      visual description per element) — this is a *guess*, not the final answer.
    - Fan-in: match the vision model's guess against the real scraped menu items (by
      name/description similarity). Record which of three outcomes occurred: menu item
@@ -278,14 +285,14 @@ what brings the existing code up to it.
 - **LocalStack (Community)** via `docker compose` for S3, SQS, DynamoDB, Step Functions and
   SSM. Point `AWS_ENDPOINT_URL` at it. **DynamoDB Local** is a lighter alternative when only
   the data layer is needed.
-- Bedrock, Rekognition and Cognito are not emulated by LocalStack Community — Bedrock and
-  Rekognition call the real service, Cognito stays stubbed via `X-Debug-User-Oid`.
+- The Anthropic API, Rekognition and Cognito are not local — the first two call the real
+  service, Cognito stays stubbed via `X-Debug-User-Oid`.
 - The DynamoDB table definition lives in the SAM template (single source of truth from Phase
   3 onward) and is created locally by a setup script, so local and prod never drift apart.
 - Connect from Python via `boto3`. For interactive poking-around, use the AWS CLI against the
   LocalStack endpoint or NoSQL Workbench — the same tooling works against real DynamoDB later,
   so there's no switch between local and prod.
-- Unit tests: `pytest` with external calls (Bedrock, SERP API, Google Places, Rekognition)
+- Unit tests: `pytest` with external calls (Anthropic API, Google Places, Rekognition)
   mocked — no real credentials needed to run the suite.
 - Integration-style local tests: a smaller set hitting LocalStack directly (SQS round-trip,
   presigned URL generation, real DynamoDB writes/queries, the embedding scan) to catch what
@@ -349,29 +356,31 @@ Do not start this phase until Phase 0's test suite is green.
    - **DynamoDB table** — provisioned 25/25 or below, TTL enabled on the rate-limit attribute.
    - **SQS** job queue with a dead-letter queue.
    - **Cognito** user pool + SPA app client (hosted UI or a custom sign-in page).
-   - **SSM Parameter Store** `SecureString` parameters for the SERP API key and Google Places
-     key. Prefer SAM policy templates and `Connectors` over hand-written IAM where possible;
-     everything else (Bedrock, S3, DynamoDB, SQS, Rekognition) authenticates by role.
+   - **SSM Parameter Store** `SecureString` parameters for the Anthropic API key and Google
+     Places key. Prefer SAM policy templates and `Connectors` over hand-written IAM where
+     possible; everything else (S3, DynamoDB, SQS, Rekognition) authenticates by role.
    - **CloudWatch** log groups with an explicit retention period — the default is "never
      expire", which is a slow-burning cost.
-2. Grant model access for the chosen Claude and Titan models in the Bedrock console for the
-   deployment region (a one-time manual step CloudFormation cannot do).
+2. Put the Anthropic API key into Parameter Store as a `SecureString` (a one-time manual step —
+   CloudFormation cannot create `SecureString` values). No per-model console access grant is
+   needed on the first-party API.
 3. Create the DynamoDB table from the template, not the console, so local and prod stay in
    lockstep.
 4. Finalize the AI feature against real resources:
    - Restaurant lookup: real Google Places calls against the uploaded GPS.
-   - Menu fetch/scrape: real SERP API search + fetch + Bedrock extraction (see Global Rule 1 —
-     check per-call cost of the chosen SERP provider and its free grant).
-   - Vision model call: Bedrock Claude — implement retries, timeouts, and structured-output
+   - Menu fetch: real Anthropic API call with the server-side `web_search` tool (see Global
+     Rule 1 — check per-token and per-web_search cost).
+   - Vision model call: Anthropic API Claude — implement retries, timeouts, and structured-output
      parsing/validation for the preliminary dish/element breakdown.
    - Menu-matching step: real matching logic (name/description similarity between the vision
      guess and the real menu items) and persist which of the three confidence outcomes
      occurred — this is the anti-hallucination mechanism, so add specific test coverage for
      all three outcomes, not just the happy path.
-   - Embeddings: real Titan Text Embeddings V2 vectors (1024-d) seeded into the `EMBEDDINGS`
-     partition, retrieved by in-Lambda cosine similarity. Revisit only if the corpus grows
-     large enough that scanning it stops being trivially cheap.
-   - Structured generator: final Bedrock call producing the per-element ingredient lists +
+   - Embeddings: pick a real embedding provider (Anthropic has none), seed 1024-d vectors into
+     the `EMBEDDINGS` partition, retrieved by in-Lambda cosine similarity. Until then the
+     pseudo-embedding stub stands. Revisit the brute-force scan only if the corpus grows large
+     enough that scanning it stops being trivially cheap.
+   - Structured generator: final Anthropic API call producing the per-element ingredient lists +
      steps, grounded in the matched menu item (if any) + retrieved technique embeddings — the
      heaviest-output, highest-cost call in the pipeline, so budget and rate-limit around it
      specifically (see step 6).
@@ -441,9 +450,9 @@ deployed instance), all wired into the GitHub Actions pipeline.
    verify the structured result is returned and displayed correctly.
 4. **Where e2e runs:** against the deployed prod environment after a deploy (a `post-deploy`
    job, or a dedicated `e2e.yml` triggered after the deploy workflows succeed), since there's
-   no staging environment yet — be mindful this means e2e runs incur real Bedrock and SERP API
-   cost and consume Cognito MAU, so keep the suite lean (happy path + a couple of key failure
-   paths) rather than exhaustive.
+   no staging environment yet — be mindful this means e2e runs incur real Anthropic API (tokens
+   + web_search) and Google Places cost and consume Cognito MAU, so keep the suite lean (happy
+   path + a couple of key failure paths) rather than exhaustive.
 5. **Test data hygiene:** use a dedicated test/demo user account (not a real user) for e2e
    runs, and clean up any DynamoDB items / S3 objects the run creates afterward (or tag them
    so they're excluded from real usage metrics). The uploads bucket lifecycle rule helps but

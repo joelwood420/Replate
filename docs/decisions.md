@@ -10,6 +10,53 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-17 — Model calls go through the first-party Anthropic API, not Amazon Bedrock
+
+**Decision:** Route Claude calls through the **first-party Anthropic API** (`anthropic` SDK,
+`ANTHROPIC_API_KEY`), reversing the 2026-08-14 Bedrock decision. Menu extraction goes back to a
+single call using Anthropic's server-side **`web_search`** tool, so the SERP
+search→fetch→extract split (`shared/web_search.py`) and the SERP API key are removed. Supersedes
+the 2026-08-14 **Bedrock** and **SERP API** decisions; reinstates the shape of the 2026-07-23
+native-`web_search` menu-fetch decision.
+
+**Why:** Two reasons, the owner's:
+
+- **The native `web_search` tool.** Bedrock does not expose it; the first-party API does. That
+  tool is what let `fetch_restaurant_menu` find, fetch and extract a menu in one call — the whole
+  reason it had to be split into three stages on Bedrock. Going back to the Anthropic API
+  collapses the split and deletes a module and a stored key.
+- **Setup/billing simplicity for a portfolio demo.** One API key and no per-model, per-region
+  Bedrock console access grant (the manual step CloudFormation can't do). One AI vendor line to
+  reason about.
+
+**Context worth recording:**
+
+- **This is a plumbing swap, not a rewrite.** The only live model call today is menu extraction;
+  `vision_guess` and `generate_recreation` are still canned stubs, so `shared/bedrock.py` becomes
+  `shared/anthropic_client.py` and only `menu_extraction.py` changes behaviour. The blank-key
+  posture is preserved: with no `ANTHROPIC_API_KEY`, menu fetch raises `MenuExtractionError` and
+  the pipeline degrades to the vision-only medium-confidence outcome — exactly as the blank
+  Bedrock model id did.
+- **The trade-off, accepted knowingly:** an API key now lives in Parameter Store as a
+  `SecureString`, giving up Bedrock's IAM-only, zero-stored-key story (the very thing the
+  2026-08-14 Bedrock entry valued). It's the one stored credential the model calls introduce;
+  everything else (S3, DynamoDB, SQS, Rekognition) still authenticates by IAM. Calling an
+  external HTTPS API needs no VPC/NAT — Lambda has default internet egress (Global Rule 1).
+- **Embeddings stay a pseudo-embedding stub.** Anthropic has no embeddings endpoint, so rather
+  than keep Bedrock alive just for Titan, Bedrock is dropped entirely and the SHA-256
+  `pseudo_embedding` stub stands until embeddings are actually wired — the real provider is a
+  later, separate choice.
+- **Menu model can't be Haiku 4.5 with the modern tool.** The `web_search_20260209` tool
+  (dynamic filtering) requires Sonnet 4.6+/Opus 4.6+; Haiku 4.5 only has the basic
+  `web_search_20250305`. So the 2026-07-28 "Haiku 4.5 for menu extraction" cost call can't stand
+  as-is. `ANTHROPIC_MENU_MODEL` defaults to **`claude-sonnet-5`** (supports the modern tool); the
+  24-hour menu cache keeps the per-call cost infrequent. Falling back to Haiku 4.5 + the basic
+  tool is the cheaper option if cost ever bites.
+- **Pricing note (Global Rule 5, re-verify):** the first-party API is pay-per-token with no free
+  tier, same as Bedrock was; the recipe generator remains the heaviest call and the two-stage
+  split plus the separate recipe quota are what contain it. `web_search` is billed per search on
+  top of tokens — check the current rate before the real wiring.
+
 ## 2026-08-17 — Custom in-app Cognito auth UI instead of the hosted UI
 
 **Decision:** Build sign-up, email verification, and sign-in as Replate's own React screens,
@@ -203,6 +250,10 @@ relational engine would have meant paying to keep a database idle.
 
 ## 2026-08-14 — Model calls go through Amazon Bedrock
 
+> **Superseded by the 2026-08-17 Anthropic API entry.** The IAM-only, zero-stored-key argument
+> below is exactly what was given up to regain the native `web_search` tool and a simpler
+> one-vendor setup.
+
 **Decision:** Route all Claude calls — vision guess, menu extraction, recipe generation — and
 the embedding calls through Amazon Bedrock, rather than the first-party Anthropic API.
 Supersedes the 2026-07-28 Microsoft Foundry decision.
@@ -232,6 +283,11 @@ thing that can be committed by accident.
 ---
 
 ## 2026-08-14 — Menu search: third-party SERP API, splitting one tool call into three steps
+
+> **Superseded by the 2026-08-17 Anthropic API entry.** Moving back to the first-party API
+> restores the native `web_search` tool, so the split collapses to one call again and the SERP
+> key is gone. This entry's own "rejected: keep the Anthropic API for this one activity" is, in
+> effect, what was adopted — for the whole pipeline, not just this activity.
 
 **Decision:** `fetch_restaurant_menu` becomes **search** (a third-party SERP API) → **fetch**
 (HTTP GET the top result) → **extract** (Bedrock Claude, structured output), replacing the

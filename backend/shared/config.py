@@ -85,66 +85,39 @@ def places_timeout_seconds() -> float:
     return float(os.environ.get("PLACES_TIMEOUT_SECONDS", "8"))
 
 
-# --- Amazon Bedrock -----------------------------------------------------------------
-# No API key: the Lambda's execution role authenticates, so only model ids are
-# configured. Model access must be granted per-model, per-region in the Bedrock
-# console before the first call - CloudFormation cannot do it.
+# --- Anthropic API ------------------------------------------------------------------
+# First-party Anthropic API (docs/decisions.md, 2026-08-17). Unlike Bedrock this
+# needs a stored API key - ANTHROPIC_API_KEY, held in Parameter Store as a
+# SecureString when deployed and blank locally. A blank key degrades gracefully
+# (menu fetch falls back to the vision-only outcome) rather than crashing.
 
 
-def bedrock_menu_model_id() -> str:
-    return os.environ.get("BEDROCK_MENU_MODEL_ID", "")
+def anthropic_api_key() -> str:
+    return os.environ.get("ANTHROPIC_API_KEY", "")
 
 
-def bedrock_vision_model_id() -> str:
-    return os.environ.get("BEDROCK_VISION_MODEL_ID", "")
+def anthropic_menu_model() -> str:
+    # Default supports the web_search_20260209 server tool (Sonnet 4.6+/Opus 4.6+);
+    # Haiku 4.5 only has the basic web_search variant.
+    return os.environ.get("ANTHROPIC_MENU_MODEL", "claude-sonnet-5")
 
 
-def bedrock_generator_model_id() -> str:
-    return os.environ.get("BEDROCK_GENERATOR_MODEL_ID", "")
+def anthropic_vision_model() -> str:
+    # Placeholder for Phase 3b - vision_guess is still a stub.
+    return os.environ.get("ANTHROPIC_VISION_MODEL", "")
 
 
-def bedrock_embedding_model_id() -> str:
-    return os.environ.get("BEDROCK_EMBEDDING_MODEL_ID", "")
+def anthropic_generator_model() -> str:
+    # Placeholder for Phase 3b - generate_recreation is still a stub.
+    return os.environ.get("ANTHROPIC_GENERATOR_MODEL", "")
 
 
-def menu_fetch_timeout_seconds() -> float:
-    return float(os.environ.get("MENU_FETCH_TIMEOUT_SECONDS", "60"))
+def anthropic_timeout_seconds() -> float:
+    return float(os.environ.get("ANTHROPIC_TIMEOUT_SECONDS", "120"))
 
 
 def menu_fetch_max_retries() -> int:
     return int(os.environ.get("MENU_FETCH_MAX_RETRIES", "2"))
-
-
-# --- Menu page discovery ------------------------------------------------------------
-# Bedrock does not expose Anthropic's server-side web_search tool, so finding a menu
-# page needs a third-party SERP provider. This is the only stored API key the AWS
-# design introduces; everything else authenticates by IAM.
-
-
-def serp_api_key() -> str:
-    return os.environ.get("SERP_API_KEY", "")
-
-
-def serp_api_endpoint() -> str:
-    return os.environ.get("SERP_API_ENDPOINT", "https://api.search.brave.com/res/v1/web/search")
-
-
-def serp_timeout_seconds() -> float:
-    return float(os.environ.get("SERP_TIMEOUT_SECONDS", "10"))
-
-
-def serp_max_results() -> int:
-    return int(os.environ.get("SERP_MAX_RESULTS", "3"))
-
-
-def page_fetch_timeout_seconds() -> float:
-    return float(os.environ.get("PAGE_FETCH_TIMEOUT_SECONDS", "15"))
-
-
-def page_fetch_max_chars() -> int:
-    # Cap what reaches the model. A restaurant page with a huge nav or embedded
-    # script can otherwise blow the context window and the token bill for one job.
-    return int(os.environ.get("PAGE_FETCH_MAX_CHARS", "40000"))
 
 
 def rate_limit_enabled() -> bool:

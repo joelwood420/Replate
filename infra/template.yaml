@@ -2,28 +2,27 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >
   Replate — production stack (prod only, CLAUDE.md Global Rule 2). Phase 3a deploys
-  this with the paid integrations stubbed: Bedrock model ids blank and moderation off,
+  this with the paid integrations stubbed: the ANTHROPIC_API_KEY blank and moderation off,
   so the whole two-stage pipeline runs end-to-end returning canned data at no per-token
-  cost. Phase 3b fills in the real model calls. See docs/decisions.md (2026-08-14).
+  cost. Phase 3b fills in the real model calls. See docs/decisions.md (2026-08-17).
 
 # ---------------------------------------------------------------------------------------
 Parameters:
-  BedrockVisionModelId:
+  AnthropicMenuModel:
+    Type: String
+    Default: "claude-sonnet-5"
+    Description: >
+      Anthropic model id for menu extraction. Must support the web_search_20260209
+      server tool (Sonnet 4.6+/Opus 4.6+). The ANTHROPIC_API_KEY it needs is read from
+      SSM Parameter Store; blank key = stubbed (menu fetch degrades to vision-only).
+  AnthropicVisionModel:
     Type: String
     Default: ""
-    Description: Bedrock model id / inference profile for the vision guess. Blank = stubbed (3a).
-  BedrockMenuModelId:
+    Description: Anthropic model id for the vision guess. Blank = stubbed (vision_guess is a stub).
+  AnthropicGeneratorModel:
     Type: String
     Default: ""
-    Description: Bedrock model id for menu extraction. Blank = stubbed (3a).
-  BedrockGeneratorModelId:
-    Type: String
-    Default: ""
-    Description: Bedrock model id for recipe generation. Blank = stubbed (3a).
-  BedrockEmbeddingModelId:
-    Type: String
-    Default: ""
-    Description: Titan Text Embeddings V2 model id. Blank = pseudo-embedding stub (3a).
+    Description: Anthropic model id for recipe generation. Blank = stubbed (generate_recreation is a stub).
   ModerationEnabled:
     Type: String
     Default: "false"
@@ -83,15 +82,16 @@ Globals:
         COGNITO_ISSUER: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
         STUB_AUTH_HEADER_NAME: "X-Debug-User-Oid"
         STUB_DEFAULT_USER_OID: "00000000-0000-0000-0000-000000000001"
-        BEDROCK_VISION_MODEL_ID: !Ref BedrockVisionModelId
-        BEDROCK_MENU_MODEL_ID: !Ref BedrockMenuModelId
-        BEDROCK_GENERATOR_MODEL_ID: !Ref BedrockGeneratorModelId
-        BEDROCK_EMBEDDING_MODEL_ID: !Ref BedrockEmbeddingModelId
+        ANTHROPIC_MENU_MODEL: !Ref AnthropicMenuModel
+        ANTHROPIC_VISION_MODEL: !Ref AnthropicVisionModel
+        ANTHROPIC_GENERATOR_MODEL: !Ref AnthropicGeneratorModel
         MODERATION_ENABLED: !Ref ModerationEnabled
         # Read at runtime from SSM in 3b; empty here so restaurant search / menu fetch
-        # degrade instead of KeyError-ing during the stub deploy.
+        # degrade instead of KeyError-ing during the stub deploy. ANTHROPIC_API_KEY is
+        # the one stored credential the model calls introduce (docs/decisions.md,
+        # 2026-08-17); everything else authenticates by IAM.
         GOOGLE_PLACES_API_KEY: ""
-        SERP_API_KEY: ""
+        ANTHROPIC_API_KEY: ""
 
 # ---------------------------------------------------------------------------------------
 Resources:
@@ -380,10 +380,10 @@ Resources:
             TableName: !Ref Table
         - S3CrudPolicy:
             BucketName: !Ref UploadsBucket
-        - Statement:
-            - Effect: Allow
-              Action: [bedrock:InvokeModel]
-              Resource: "*"
+        # Reads ANTHROPIC_API_KEY from SSM when the real vision call is wired (3b).
+        # No IAM for the model itself - the Anthropic API authenticates by key.
+        - SSMParameterReadPolicy:
+            ParameterName: replate/*
 
   SelectRestaurantFunction:
     Type: AWS::Serverless::Function
@@ -414,12 +414,10 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref Table
+        # Reads ANTHROPIC_API_KEY (the menu web_search call). No IAM for the model
+        # itself - the Anthropic API authenticates by key.
         - SSMParameterReadPolicy:
             ParameterName: replate/*
-        - Statement:
-            - Effect: Allow
-              Action: [bedrock:InvokeModel]
-              Resource: "*"
 
   MatchMenuFunction:
     Type: AWS::Serverless::Function
@@ -455,12 +453,10 @@ Resources:
       FunctionName: !Sub "${AWS::StackName}-query-embeddings"
       Handler: activities.query_culinary_embeddings.handler
       Policies:
+        # Embeddings are a pseudo-embedding stub (shared.models.pseudo_embedding),
+        # computed in-process - no model call, so no key and no IAM here.
         - DynamoDBCrudPolicy:
             TableName: !Ref Table
-        - Statement:
-            - Effect: Allow
-              Action: [bedrock:InvokeModel]
-              Resource: "*"
 
   GenerateRecreationFunction:
     Type: AWS::Serverless::Function
@@ -471,10 +467,10 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref Table
-        - Statement:
-            - Effect: Allow
-              Action: [bedrock:InvokeModel]
-              Resource: "*"
+        # Reads ANTHROPIC_API_KEY when the real recipe call is wired (3b). No IAM
+        # for the model itself - the Anthropic API authenticates by key.
+        - SSMParameterReadPolicy:
+            ParameterName: replate/*
 
   PersistRecipeFunction:
     Type: AWS::Serverless::Function

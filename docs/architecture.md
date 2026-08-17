@@ -4,13 +4,13 @@ The Phase 3 architecture for Replate. The Azure→AWS **port is complete** (Phas
 SAM template that provisions everything below now lives in `infra/template.yaml`. It is
 being rolled out in two passes (see `docs/decisions.md`, 2026-08-14):
 
-- **Phase 3a (current):** deploy the whole stack with the paid integrations stubbed — Bedrock
-  model ids blank, Rekognition off, SERP/Places keys empty, embeddings left as the SHA-256
+- **Phase 3a (current):** deploy the whole stack with the paid integrations stubbed —
+  `ANTHROPIC_API_KEY` blank, Rekognition off, Places key empty, embeddings left as the SHA-256
   pseudo-vector. Everything else — Lambda, API Gateway, Step Functions, DynamoDB, SQS, S3,
   CloudFront, Cognito, IAM, CloudWatch — is real. The pipeline runs end-to-end returning
   canned data, so it deploys, demos and tears down without a per-token bill.
-- **Phase 3b:** fill in the real model calls, grant Bedrock model access, and load the two
-  SERP/Places `SecureString` params.
+- **Phase 3b:** fill in the real model calls and load the Anthropic + Places `SecureString`
+  params.
 
 The stack deploys to **`ap-southeast-2` (Sydney)**. The pre-migration Bicep is recoverable
 from git history at commit `07354af`.
@@ -21,8 +21,9 @@ Three deviations from a by-the-book AWS design, all logged in `docs/decisions.md
   and the few hundred culinary-technique embeddings are scanned brute-force with numpy inside
   the Lambda. This is what the Azure design was already doing with an unindexed
   `VECTOR_DISTANCE` — it just moves from the database into the process.
-- **Menu lookup is search → fetch → extract**, not one tool-using model call. Bedrock does not
-  expose Anthropic's server-side `web_search` tool, so a third-party SERP API does the search.
+- **Menu lookup is one model call** using the first-party Anthropic API's server-side
+  `web_search` tool, which finds, fetches and extracts the menu together (see `docs/decisions.md`,
+  2026-08-17).
 - **No push channel.** The client polls `GET /api/jobs/{id}`; `useJobPolling.ts` remains the
   documented swap seam.
 
@@ -64,11 +65,10 @@ flowchart TB
     end
 
     subgraph Security["Security"]
-        SSM["SSM Parameter Store<br/>SERP + Places keys (SecureString)"]
+        SSM["SSM Parameter Store<br/>Anthropic + Places keys (SecureString)"]
     end
 
     subgraph AI["AI"]
-        Bedrock["Amazon Bedrock<br/>Claude Haiku 4.5 — vision, extraction, generation<br/>Titan Embeddings V2 — technique vectors"]
         Rek["Amazon Rekognition<br/>DetectModerationLabels"]
     end
 
@@ -77,8 +77,8 @@ flowchart TB
     end
 
     subgraph External["External APIs (3rd-party)"]
+        Anthropic["Anthropic API<br/>Claude — vision, menu (web_search), generation"]
         Places["Google Places<br/>restaurant lookup + typeahead"]
-        Serp["SERP API<br/>find the menu page"]
     end
 
     Browser -- "sign in (OIDC)" --> Cognito
@@ -99,8 +99,7 @@ flowchart TB
     SFN --> TaskFns
 
     TaskFns -- "moderate upload" --> Rek
-    TaskFns -- "dish/element guess, menu extraction,<br/>recipe generation, embed text" --> Bedrock
-    TaskFns -- "find menu page" --> Serp
+    TaskFns -- "dish/element guess, menu fetch (web_search),<br/>recipe generation" --> Anthropic
     TaskFns -- "restaurant lookup" --> Places
     TaskFns -- "read blob, read/write items,<br/>scan EMBEDDINGS partition" --> DDB
     TaskFns -- "read photo" --> S3U
@@ -113,11 +112,12 @@ flowchart TB
 > `frontend/src/lib/jobs/useJobPolling.ts` is the seam to swap if that changes — on AWS the
 > alternatives are API Gateway WebSockets or AWS IoT Core over MQTT.
 
-**Everything except Bedrock, Rekognition, Google Places and the SERP API authenticates via
-IAM.** Only two stored credentials exist in the whole system — the SERP API key and the Google
-Places key — and both live in Parameter Store as `SecureString` parameters. There is no VPC
-and therefore no NAT Gateway, which is the most common way a nominally serverless AWS project
-starts costing real money.
+**Everything except the Anthropic API, Google Places and (only its endpoint) Rekognition
+authenticates via IAM.** Rekognition itself is IAM; the two stored credentials in the whole
+system are the Anthropic API key and the Google Places key, both held in Parameter Store as
+`SecureString` parameters. The Anthropic API is reached over plain HTTPS egress — there is no
+VPC and therefore no NAT Gateway, which is the most common way a nominally serverless AWS
+project starts costing real money.
 
 ## Request flow (happy path)
 
@@ -174,16 +174,15 @@ monthly grants with 12-month trial grants, and the difference only shows up a ye
 | S3 | 5 GB + 20k GET + 2k PUT/month | **12 months** | ~per-GB-month; lifecycle-expire uploads | No |
 | API Gateway (HTTP API) | 1M requests/month | **12 months** | Per-million requests | No |
 | Rekognition | 5,000 images/month | **12 months** | Per-image | No |
-| Amazon Bedrock | **None** — pay per token | — | Per input/output token | No |
+| Anthropic API | **None** — pay per token | — | Per input/output token (+ per web_search) | No |
 | Google Places | Provider-specific | — | Billed by Google | — |
-| SERP API | Provider-specific (varies by vendor) | — | Per-query | — |
 
 **Nothing in this design carries a fixed hourly cost**, provided DynamoDB stays on provisioned
 capacity at or below 25 RCU/WCU, no VPC (and therefore no NAT Gateway) is introduced, and no
 vector index service is added. That last one matters: OpenSearch Serverless has a minimum
 billed capacity and would, on its own, cost more than everything else here combined.
 
-**Most likely to actually cost money:** Bedrock token spend on the recipe generator (the
+**Most likely to actually cost money:** Anthropic token spend on the recipe generator (the
 heaviest-output call in the pipeline), then CloudWatch log ingestion if retention is left at
 the "never expire" default, then S3 storage once the 12-month grant lapses if uploads are
 never expired.
@@ -204,8 +203,8 @@ IAM role** (no long-lived access keys) is Phase 4.
 
 Two things the template cannot do, which stay manual:
 
-- **Bedrock model access** must be granted per-model, per-region in the console before the
-  first call.
+- **The `SecureString` parameters** (Anthropic API key, Google Places key) must be created with
+  `aws ssm put-parameter` — CloudFormation cannot create `SecureString` values.
 - **Cognito's hosted-UI domain and the SPA callback URLs** need the CloudFront distribution
   domain, which doesn't exist until the first deploy — so the SPA client config is a two-pass
   step, exactly as the Entra app registration was.

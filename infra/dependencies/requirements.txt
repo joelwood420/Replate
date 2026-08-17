@@ -4,6 +4,7 @@
 #
 # numpy is a compiled wheel, so `sam build --use-container` is required to build this
 # layer for the Lambda platform from a non-Linux host (see infra/README.md).
+anthropic>=0.40,<1.0
 httpx>=0.27,<1.0
 numpy>=1.26,<3.0
 python-dotenv>=1.0,<2.0

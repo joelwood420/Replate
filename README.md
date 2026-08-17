@@ -18,7 +18,7 @@ part, and nobody needs it while they're still sitting at the table.
 (stack `replate`, region `ap-southeast-2`).
 
 > This is the **Phase 3a stub deploy**: real Cognito auth and the full infrastructure are
-> live, but the paid AI integrations are off (`ModerationEnabled=false`, Bedrock model ids
+> live, but the paid AI integrations are off (`ModerationEnabled=false`, `ANTHROPIC_API_KEY`
 > blank), so "Reverse engineer" returns stub output until the Phase 3b real-AI pass. A
 > frontend deploy (`npm run build` → `aws s3 sync` → CloudFront invalidation) is needed to
 > push local changes to this URL.

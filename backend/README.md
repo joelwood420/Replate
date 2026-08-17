@@ -49,11 +49,13 @@ python db/seed_embeddings.py        # seeds the culinary-technique vectors
 `AWS_ENDPOINT_URL` in `.env` is the only setting that differs between local and deployed;
 it must be **blank** in a real deployment or boto3 will try to reach LocalStack from Lambda.
 
-**Not emulated by LocalStack Community:** Bedrock, Rekognition and Cognito.
+**Not local:** the Anthropic API, Rekognition and Cognito.
 
-- **Bedrock** — leave `BEDROCK_*_MODEL_ID` blank locally. Menu fetch then raises
+- **Anthropic API** — model calls go to the first-party Anthropic API (an external HTTPS
+  service). Leave `ANTHROPIC_API_KEY` blank locally. Menu fetch then raises
   `MenuExtractionError`, which the pipeline already degrades on (it becomes the vision-only
-  medium-confidence outcome), so the flow still works end to end.
+  medium-confidence outcome), so the flow still works end to end. `ANTHROPIC_MENU_MODEL` must
+  support the `web_search_20260209` server tool (Sonnet 4.6+/Opus 4.6+).
 - **Rekognition** — `MODERATION_ENABLED=false` (the default) reports every photo as
   `unchecked` and lets it through, matching the documented fail-open rule. Set it to `true`
   with real AWS credentials to exercise the real thing; it reads straight from S3, so unlike
@@ -128,9 +130,9 @@ than fails** when nothing is listening.
 | Upload, presigned URLs, job lifecycle | **Real** |
 | Rate limiting (per-user, per-stage, TTL buckets) | **Real** |
 | Menu matching (the anti-hallucination check) | **Real** |
-| Menu fetch — search → fetch → extract | **Real**, needs `SERP_API_KEY` + a Bedrock model id |
+| Menu fetch — find + extract via `web_search` | **Real**, needs `ANTHROPIC_API_KEY` |
 | Image moderation | **Real**, needs `MODERATION_ENABLED=true` + AWS credentials |
-| Vector retrieval | Real query, **pseudo-embeddings** (Phase 3: Titan V2) |
+| Vector retrieval | Real query, **pseudo-embeddings** (real provider TBD) |
 | Restaurant lookup from GPS | **Stub** (`CANNED_CANDIDATES`) |
 | Vision guess | **Stub** (`CANNED_GUESSES`) |
 | Recipe generation | **Stub** |
@@ -148,9 +150,8 @@ ones that are easy to get wrong:
 | `SQS_QUEUE_URL` | Set from the SAM template. Blank locally — the queue is created by name |
 | `MODERATION_ENABLED` | `false` locally. There is no key to omit any more — Rekognition uses IAM |
 | `MODERATION_MIN_CONFIDENCE` | 0–100, not Azure's 0/2/4/6. Default 80, deliberately high |
-| `BEDROCK_*_MODEL_ID` | No API key. Model access must be granted per-model per-region in the console |
-| `SERP_API_KEY` | The only stored credential in the design; everything else is IAM |
-| `PAGE_FETCH_MAX_CHARS` | A cost cap — page text goes straight into a model prompt |
+| `ANTHROPIC_API_KEY` | The one stored credential the model calls introduce; everything else is IAM. Blank locally |
+| `ANTHROPIC_MENU_MODEL` | Must support the `web_search_20260209` tool (Sonnet 4.6+/Opus 4.6+). Default `claude-sonnet-5` |
 | `COGNITO_ENABLED` | `true` raises `NotImplementedError` until Phase 3 |
 
 ## Notes for future work

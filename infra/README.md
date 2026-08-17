@@ -24,9 +24,9 @@ This deploys with every **paid** integration off, so it runs end-to-end at no pe
 
 | Off in 3a | How | Turned on in 3b |
 |---|---|---|
-| Bedrock (vision, menu, recipe, embeddings) | `Bedrock*ModelId` params blank | set to the model id / `apac.*` inference profile |
+| Anthropic model calls (menu, vision, recipe) | `ANTHROPIC_API_KEY` blank | create the `SecureString` param |
 | Rekognition moderation | `ModerationEnabled=false` | `true` |
-| SERP + Google Places | env keys empty; SSM params not yet created | create the two `SecureString` params |
+| Google Places | env key empty; SSM param not yet created | create the `SecureString` param |
 
 Everything else is real: real Cognito sign-in, real API Gateway JWT authorizer, real
 DynamoDB/SQS/S3/Step Functions/CloudFront. See `docs/decisions.md` (2026-08-14) for why the
@@ -83,7 +83,7 @@ stubbed.
 Open the CloudFront URL → sign in → upload a photo with GPS → poll until the job reaches
 `Identified` (a canned match) → press **Reverse engineer** → the job reaches `Completed` with
 canned recipe elements. That exercises API Gateway → Lambda → SQS → Step Functions →
-DynamoDB → S3 presigned upload end-to-end, with no Bedrock/SERP spend.
+DynamoDB → S3 presigned upload end-to-end, with no Anthropic spend.
 
 ## Teardown
 
@@ -99,13 +99,14 @@ cd infra && sam delete
 
 Because every Lambda log group is declared in the stack (rather than left to Lambda's implicit
 never-expire group), `sam delete` removes those too — nothing lingers. The one thing it can't
-remove is the Bedrock model-access grant (a console toggle CloudFormation never created), but
-that's free — you pay per token, not for access being enabled.
+remove is the `SecureString` in Parameter Store (CloudFormation never created it) — delete
+`/replate/anthropic-api-key` by hand if you want it gone.
 
 ## Deliberate deviations
 
-- **Region `ap-southeast-2` (Sydney)** — closest to the owner for demo latency; Bedrock and
-  Titan V2 are available there (see `docs/decisions.md`).
+- **Region `ap-southeast-2` (Sydney)** — closest to the owner for demo latency (see
+  `docs/decisions.md`). Model calls go to the Anthropic API over the internet, so the region
+  only places the free-tier infra, not the models.
 - **API Gateway HTTP API, not Function URLs** — keeps the free Cognito JWT authorizer. Note
   its free tier is the **12-month** kind, not always-free (CLAUDE.md Global Rule 1); the exit
   if per-request cost ever bites is Function URLs with in-handler JWT validation.
@@ -119,10 +120,9 @@ that's free — you pay per token, not for access being enabled.
 
 ## Not done by the template (manual, mostly 3b)
 
-- Grant **Bedrock model access** per-model in the Sydney console before 3b's first model call.
-- Create the two **`SecureString`** params for 3b — CloudFormation can't create SecureStrings:
+- Create the **`SecureString`** params for 3b — CloudFormation can't create SecureStrings:
   ```bash
-  aws ssm put-parameter --name /replate/serp-api-key       --type SecureString --value '<key>'
+  aws ssm put-parameter --name /replate/anthropic-api-key     --type SecureString --value '<key>'
   aws ssm put-parameter --name /replate/google-places-api-key --type SecureString --value '<key>'
   ```
   The execution roles already grant `ssm:GetParameter` on `/replate/*`; the 3b code change is

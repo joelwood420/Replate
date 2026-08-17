@@ -4,9 +4,10 @@
 # SSM behind a single endpoint on 4566, so AWS_ENDPOINT_URL is the only setting that
 # differs between local dev and a real deployment.
 #
-# NOT emulated by LocalStack Community: Bedrock, Rekognition and Cognito. Bedrock and
-# Rekognition call the real services (both cheap per call, and moderation sits inside a
-# free grant); Cognito stays stubbed via STUB_AUTH_HEADER_NAME.
+# Not local at all: model calls go to the first-party Anthropic API and moderation to
+# Rekognition (both real services, cheap per call, and moderation sits inside a free
+# grant); Cognito stays stubbed via STUB_AUTH_HEADER_NAME. LocalStack Community does not
+# emulate Rekognition or Cognito, and the Anthropic API is an external HTTPS service.
 #
 # Note the unit test suite does NOT need this running - it uses moto in-process. This is
 # for `sam local` and the marker-gated integration tests (`pytest -m integration`).

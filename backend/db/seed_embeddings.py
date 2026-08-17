@@ -2,7 +2,9 @@
 
 Phase 0 stub: source_text/cuisine_type are hand-written and the vector is a
 deterministic pseudo-embedding (shared.models.pseudo_embedding), not a real
-embedding-model call - swap for Bedrock Titan Text Embeddings V2 in Phase 3.
+embedding-model call. The real embedding provider is still to be chosen - the
+Anthropic API has no embeddings endpoint (docs/decisions.md, 2026-08-17), so this
+stays a stub until embeddings are actually wired.
 
 Run directly: `python db/seed_embeddings.py` (from backend/).
 """
