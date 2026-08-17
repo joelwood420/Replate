@@ -12,11 +12,13 @@ id had before.
 """
 
 import json
+import logging
 import threading
 
 import anthropic
 
 from shared import config as app_config
+from shared import secrets
 
 _lock = threading.Lock()
 _client = None
@@ -35,8 +37,26 @@ class AnthropicError(Exception):
     """A model call failed in a way the caller is expected to handle."""
 
 
+def _resolved_key() -> str:
+    """The Anthropic API key, from SSM when deployed or the env var locally.
+
+    An SSM failure (missing parameter, denied read, service error) degrades to
+    the no-key path rather than crashing - the same blank-key posture the stub
+    deploy runs on, which the menu-fetch caller already handles as the vision-only
+    outcome. Only successful reads are cached, so a transient error is retried.
+    """
+    param = app_config.anthropic_api_key_param()
+    if param:
+        try:
+            return secrets.get_secure_parameter(param)
+        except Exception as exc:  # noqa: BLE001 - degrade on any SSM failure
+            logging.warning("Could not read %s from SSM: %s", param, exc)
+            return ""
+    return app_config.anthropic_api_key()
+
+
 def is_configured() -> bool:
-    return bool(app_config.anthropic_api_key())
+    return bool(_resolved_key())
 
 
 def get_client():
@@ -45,7 +65,7 @@ def get_client():
         with _lock:
             if _client is None:
                 _client = anthropic.Anthropic(
-                    api_key=app_config.anthropic_api_key(),
+                    api_key=_resolved_key(),
                     # Model calls with a web_search loop are slow; the default
                     # 10-minute client timeout is generous enough, but pin it so
                     # a hung request cannot outlive the Lambda.

@@ -93,7 +93,15 @@ def places_timeout_seconds() -> float:
 
 
 def anthropic_api_key() -> str:
+    # Local dev / tests set the key directly; deployed, it comes from SSM via
+    # anthropic_api_key_param() (see anthropic_client._resolved_key).
     return os.environ.get("ANTHROPIC_API_KEY", "")
+
+
+def anthropic_api_key_param() -> str:
+    # SSM SecureString parameter name (e.g. /replate/anthropic-api-key). Set by the
+    # SAM template when deployed; blank locally, where the plain env var is used.
+    return os.environ.get("ANTHROPIC_API_KEY_PARAM", "").strip()
 
 
 def anthropic_menu_model() -> str:
