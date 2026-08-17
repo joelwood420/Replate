@@ -1,6 +1,6 @@
-import { createContext, useCallback, useMemo, useState, type ReactNode } from 'react';
-import { AuthProvider as OidcProvider, useAuth as useOidc } from 'react-oidc-context';
-import { cognitoConfig } from './cognitoConfig';
+import { createContext, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import * as cognito from './cognitoClient';
+import { initialsFromName } from './cognitoClient';
 import type { AuthHeaders } from '../apiClient';
 
 export interface AuthUser {
@@ -9,10 +9,19 @@ export interface AuthUser {
   oid: string;
 }
 
+export interface SignUpDetails {
+  name: string;
+  email: string;
+  password: string;
+}
+
 export interface AuthContextValue {
   isAuthenticated: boolean;
   user: AuthUser | null;
-  signIn: () => void;
+  signIn: (email: string, password: string) => Promise<void>;
+  signUp: (details: SignUpDetails) => Promise<{ needsConfirmation: boolean }>;
+  confirmSignUp: (email: string, code: string) => Promise<void>;
+  resendConfirmationCode: (email: string) => Promise<void>;
   signOut: () => void;
   authHeaders: AuthHeaders;
 }
@@ -24,33 +33,70 @@ const STUB_AUTH_HEADER_NAME = import.meta.env.VITE_STUB_AUTH_HEADER_NAME || 'X-D
 const STUB_DEFAULT_USER_OID =
   import.meta.env.VITE_STUB_DEFAULT_USER_OID || '00000000-0000-0000-0000-000000000001';
 const MOCK_SESSION_KEY = 'replate.mockAuth';
+const MOCK_ACCOUNTS_KEY = 'replate.mockAccounts';
 
-function initialsFromName(name: string): string {
-  return name
-    .split(' ')
-    .filter(Boolean)
-    .map((part) => part[0]!.toUpperCase())
-    .slice(0, 2)
-    .join('');
+// ---- Mock provider ------------------------------------------------------------------
+// Local dev / Phase 0: no Cognito user pool is contacted. Mirrors the real provider's
+// full sign-up -> verify -> sign-in shape (shared/auth.py's COGNITO_ENABLED=false stub
+// seam) so the custom auth screens can be built and demoed without real accounts or
+// email codes. Any 6-digit verification code is accepted.
+
+type MockAccounts = Record<string, { name: string; password: string }>;
+
+function readMockAccounts(): MockAccounts {
+  const stored = sessionStorage.getItem(MOCK_ACCOUNTS_KEY);
+  return stored ? (JSON.parse(stored) as MockAccounts) : {};
 }
 
-// Local dev / Phase 0: no Cognito user pool exists yet. Mirrors the backend's
-// COGNITO_ENABLED=false stub-auth seam (shared/auth.py) so a locally-created mock oid
-// matches STUB_DEFAULT_USER_OID and the two sides just work together.
+function nameFromEmail(email: string): string {
+  const local = email.split('@')[0] ?? 'Cook';
+  return local
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((part) => part[0]!.toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 function MockAuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(() => {
     const stored = sessionStorage.getItem(MOCK_SESSION_KEY);
     return stored ? (JSON.parse(stored) as AuthUser) : null;
   });
 
-  const signIn = useCallback(() => {
-    const mockUser: AuthUser = {
-      name: 'Elena Marchetti',
-      initials: initialsFromName('Elena Marchetti'),
-      oid: STUB_DEFAULT_USER_OID,
-    };
+  const startSession = useCallback((name: string) => {
+    const mockUser: AuthUser = { name, initials: initialsFromName(name), oid: STUB_DEFAULT_USER_OID };
     sessionStorage.setItem(MOCK_SESSION_KEY, JSON.stringify(mockUser));
     setUser(mockUser);
+  }, []);
+
+  const signIn = useCallback(
+    async (email: string, password: string) => {
+      const accounts = readMockAccounts();
+      const account = accounts[email.toLowerCase()];
+      if (account) {
+        if (account.password !== password) throw new Error('Incorrect email or password.');
+        startSession(account.name);
+      } else {
+        // No account created this session — accept it so the plain "Log in" demo works.
+        startSession(nameFromEmail(email));
+      }
+    },
+    [startSession],
+  );
+
+  const signUp = useCallback(async (details: SignUpDetails) => {
+    const accounts = readMockAccounts();
+    accounts[details.email.toLowerCase()] = { name: details.name, password: details.password };
+    sessionStorage.setItem(MOCK_ACCOUNTS_KEY, JSON.stringify(accounts));
+    return { needsConfirmation: true };
+  }, []);
+
+  const confirmSignUp = useCallback(async (_email: string, code: string) => {
+    if (!/^\d{6}$/.test(code)) throw new Error("That code isn't right — enter the 6-digit code.");
+  }, []);
+
+  const resendConfirmationCode = useCallback(async (_email: string) => {
+    /* mock: nothing to resend */
   }, []);
 
   const signOut = useCallback(() => {
@@ -63,52 +109,13 @@ function MockAuthProvider({ children }: { children: ReactNode }) {
     [user],
   );
 
-  const value: AuthContextValue = { isAuthenticated: user !== null, user, signIn, signOut, authHeaders };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-// Phase 3 seam: the real Cognito flow, structurally wired but inert until a user
-// pool exists. Unlike the MSAL bridge this replaced, it does produce a usable
-// Authorization header - API Gateway's JWT authorizer expects a bearer token, so
-// there is nothing left to fill in here once the pool is provisioned.
-function CognitoAuthBridge({ children }: { children: ReactNode }) {
-  const oidc = useOidc();
-
-  const signIn = useCallback(() => {
-    void oidc.signinRedirect();
-  }, [oidc]);
-
-  const signOut = useCallback(() => {
-    void oidc.signoutRedirect();
-  }, [oidc]);
-
-  const profile = oidc.user?.profile;
-  // Cognito puts the stable user identifier in `sub`. Entra called it `oid`; the
-  // field name is kept so nothing downstream of this context has to change.
-  const displayName = (profile?.name as string | undefined) ?? profile?.email ?? '';
-  const user: AuthUser | null = profile
-    ? {
-        name: displayName,
-        initials: initialsFromName(displayName),
-        oid: profile.sub ?? '',
-      }
-    : null;
-
-  const accessToken = oidc.user?.access_token;
-  const authHeaders = useMemo<AuthHeaders>(() => {
-    // Built up rather than returned as a ternary: a bare `{}` in one branch makes
-    // TypeScript infer `Authorization?: undefined`, which the index signature on
-    // AuthHeaders (string values only) then rejects.
-    const headers: AuthHeaders = {};
-    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-    return headers;
-  }, [accessToken]);
-
   const value: AuthContextValue = {
-    isAuthenticated: oidc.isAuthenticated,
+    isAuthenticated: user !== null,
     user,
     signIn,
+    signUp,
+    confirmSignUp,
+    resendConfirmationCode,
     signOut,
     authHeaders,
   };
@@ -116,14 +123,69 @@ function CognitoAuthBridge({ children }: { children: ReactNode }) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
+// ---- Custom Cognito provider --------------------------------------------------------
+// The real user pool via the in-app SDK (cognitoClient), replacing the hosted-UI
+// redirect. Sign-up/sign-in happen in Replate's own screens; the SDK persists tokens
+// to localStorage, so a refresh restores the session.
+
+function CustomCognitoProvider({ children }: { children: ReactNode }) {
+  const [session, setSession] = useState<{ user: AuthUser; accessToken: string } | null>(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    cognito.currentUser().then((restored) => {
+      setSession(restored);
+      setReady(true);
+    });
+  }, []);
+
+  const signIn = useCallback(async (email: string, password: string) => {
+    setSession(await cognito.signIn(email, password));
+  }, []);
+
+  const signUp = useCallback(async (details: SignUpDetails) => {
+    await cognito.signUp(details);
+    return { needsConfirmation: true };
+  }, []);
+
+  const confirmSignUp = useCallback((email: string, code: string) => cognito.confirmSignUp(email, code), []);
+
+  const resendConfirmationCode = useCallback((email: string) => cognito.resendCode(email), []);
+
+  const signOut = useCallback(() => {
+    cognito.signOut();
+    setSession(null);
+  }, []);
+
+  const authHeaders = useMemo<AuthHeaders>(() => {
+    // Built up rather than a ternary: a bare `{}` branch makes TypeScript infer
+    // `Authorization?: undefined`, which AuthHeaders' string-only index rejects.
+    const headers: AuthHeaders = {};
+    if (session) headers.Authorization = `Bearer ${session.accessToken}`;
+    return headers;
+  }, [session]);
+
+  const value: AuthContextValue = {
+    isAuthenticated: session !== null,
+    user: session?.user ?? null,
+    signIn,
+    signUp,
+    confirmSignUp,
+    resendConfirmationCode,
+    signOut,
+    authHeaders,
+  };
+
+  // Hold the app until the persisted session is restored, so a hard refresh on a
+  // protected route doesn't bounce to /signin before the session is known.
+  if (!ready) return null;
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   if (COGNITO_ENABLED) {
-    return (
-      <OidcProvider {...cognitoConfig}>
-        <CognitoAuthBridge>{children}</CognitoAuthBridge>
-      </OidcProvider>
-    );
+    return <CustomCognitoProvider>{children}</CustomCognitoProvider>;
   }
-
   return <MockAuthProvider>{children}</MockAuthProvider>;
 }

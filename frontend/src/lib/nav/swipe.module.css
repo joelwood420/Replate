@@ -1,0 +1,36 @@
+@keyframes replate-swipe-from-right {
+  from {
+    transform: translateX(22px);
+    opacity: 0.5;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes replate-swipe-from-left {
+  from {
+    transform: translateX(-22px);
+    opacity: 0.5;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.enterForward {
+  animation: replate-swipe-from-right 0.22s ease-out;
+}
+
+.enterBack {
+  animation: replate-swipe-from-left 0.22s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .enterForward,
+  .enterBack {
+    animation: none;
+  }
+}

@@ -9,9 +9,11 @@
 }
 
 .title {
-  font-family: var(--font-serif);
-  font-size: 26px;
+  font-family: var(--font-script);
+  font-size: 38px;
+  line-height: 1.15;
   color: var(--color-cream);
+  padding-bottom: 2px;
 }
 
 .subhead {

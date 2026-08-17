@@ -49,3 +49,6 @@ backend/func_start.log
 
 # graphify knowledge-graph output (regenerate with /graphify)
 graphify-out/
+
+# AWS SAM build output (regenerate with `sam build`)
+.aws-sam/

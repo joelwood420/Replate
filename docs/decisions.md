@@ -10,6 +10,37 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-17 — Custom in-app Cognito auth UI instead of the hosted UI
+
+**Decision:** Build sign-up, email verification, and sign-in as Replate's own React screens,
+talking to the existing Cognito user pool via the browser SDK (`amazon-cognito-identity-js`,
+SRP auth), rather than redirecting to Cognito's hosted UI. Account creation opens an in-app
+onboarding form (name + email + password) with a verification-code step; "Continue with Google"
+stays a placeholder. This replaces the `react-oidc-context` hosted-UI redirect that Phase 3a
+first wired.
+
+**Why:** The hosted UI is a generic AWS-styled page that breaks Replate's dark, mobile-first
+aesthetic and yanks the user out of the app mid-flow. For a portfolio project, a custom auth UI
+that matches the design and keeps the user in-app demonstrates materially more than redirecting
+to a stock page — and it's the natural home for the name/email/password fields the onboarding
+flow needs. It costs no infra change: the deployed app client already allows
+`ALLOW_USER_SRP_AUTH`, is a public client (`GenerateSecret: false`), and permits self-signup
+with email verification, so the SDK works against the existing pool and the tokens it issues
+pass the same API Gateway JWT authorizer (audience = the same client id).
+
+**Context worth recording:**
+
+- **No backend or template change.** `shared/auth.py` still reads the verified `sub`; the
+  authorizer is unchanged. Only the frontend provider and the two auth screens changed.
+- **Mock parity preserved.** `VITE_COGNITO_ENABLED=false` keeps a full fake flow (sign-up →
+  any 6-digit code → sign-in) so the UI can be built and demoed locally without a real pool or
+  email codes, mirroring the backend's stub-auth seam.
+- **Real Google sign-in is out of scope** and still requires a Cognito hosted-UI redirect
+  (`identity_provider=Google`); the button is inert for now.
+- **Known gotcha recorded:** `amazon-cognito-identity-js` references Node's `global`, absent in
+  the browser — shimmed once in `frontend/index.html` (`window.global ||= window`) so the SDK
+  loads under Vite.
+
 ## 2026-08-14 — Split Phase 3: deploy the infrastructure with stubs (3a) before wiring the real AI (3b)
 
 **Decision:** Break CLAUDE.md's combined "Phase 3 — Infra + AI feature" into two passes. **3a**

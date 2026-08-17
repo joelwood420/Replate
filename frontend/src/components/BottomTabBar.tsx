@@ -1,14 +1,12 @@
 import { Link } from 'react-router-dom';
 import styles from './BottomTabBar.module.css';
 
-type Tab = 'home' | 'saved' | 'profile';
+type Tab = 'home' | 'cookbook' | 'profile';
 
-// Profile isn't a designed/in-scope screen for Phase 2 - the tab routes to Home rather
-// than a dead link or a crash until a Profile screen exists.
 const TABS: { key: Tab; label: string; to: string }[] = [
   { key: 'home', label: 'Home', to: '/home' },
-  { key: 'saved', label: 'Saved', to: '/cookbook' },
-  { key: 'profile', label: 'Profile', to: '/home' },
+  { key: 'cookbook', label: 'Cookbook', to: '/cookbook' },
+  { key: 'profile', label: 'Profile', to: '/profile' },
 ];
 
 export function BottomTabBar({ active }: { active: Tab }) {

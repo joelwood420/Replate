@@ -60,13 +60,6 @@
   text-align: center;
 }
 
-.promptTitle {
-  font-family: var(--font-serif);
-  font-size: 21px;
-  color: var(--color-cream-bright);
-  line-height: 1.2;
-  margin-bottom: 10px;
-}
 
 .promptBody {
   font-size: 13px;

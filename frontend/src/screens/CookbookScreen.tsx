@@ -7,6 +7,7 @@ import { LoadingState } from '../components/LoadingState';
 import { setJobSaved } from '../lib/apiClient';
 import { useAuth } from '../lib/auth/useAuth';
 import { useSavedJobs } from '../lib/jobs/useSavedJobs';
+import { TAB_ROUTES, useSwipeEntryClass, useSwipeNavigation } from '../lib/nav/swipeNav';
 import styles from './CookbookScreen.module.css';
 
 const FILTERS = ['All', 'Mains', 'Sauces', 'Desserts'];
@@ -15,6 +16,8 @@ export function CookbookScreen() {
   const { authHeaders } = useAuth();
   const { jobs, isLoading, error, refetch } = useSavedJobs();
   const [activeFilter, setActiveFilter] = useState('All');
+  useSwipeNavigation(TAB_ROUTES);
+  const swipeEntry = useSwipeEntryClass();
 
   // Filter chips beyond "All" have no backing category field on the backend yet
   // (JobResults.Cuisine isn't the same as a component-type category) - "All" is the
@@ -35,13 +38,13 @@ export function CookbookScreen() {
   }
 
   return (
-    <div className={styles.screen}>
+    <div className={`${styles.screen} ${swipeEntry}`}>
       <div className={styles.header}>
         <div className={styles.title}>My Cookbook</div>
         <div className={styles.subhead}>{summary}</div>
       </div>
 
-      <div className={styles.filters}>
+      <div className={styles.filters} data-noswipe>
         {FILTERS.map((label) => (
           <FilterChip
             key={label}
@@ -69,7 +72,7 @@ export function CookbookScreen() {
         )}
       </div>
 
-      <BottomTabBar active="saved" />
+      <BottomTabBar active="cookbook" />
     </div>
   );
 }

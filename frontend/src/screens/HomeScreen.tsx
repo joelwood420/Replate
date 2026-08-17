@@ -7,15 +7,18 @@ import { RecentJobRow } from '../components/RecentJobRow';
 import { ScanCard } from '../components/ScanCard';
 import { useAuth } from '../lib/auth/useAuth';
 import { useRecentJobs } from '../lib/jobs/useRecentJobs';
+import { TAB_ROUTES, useSwipeEntryClass, useSwipeNavigation } from '../lib/nav/swipeNav';
 import styles from './HomeScreen.module.css';
 
 export function HomeScreen() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { jobs, isLoading, error, refetch } = useRecentJobs();
+  useSwipeNavigation(TAB_ROUTES);
+  const swipeEntry = useSwipeEntryClass();
 
   return (
-    <div className={styles.screen}>
+    <div className={`${styles.screen} ${swipeEntry}`}>
       <div className={styles.header}>
         <div>
           <div className={styles.greeting}>Good evening</div>

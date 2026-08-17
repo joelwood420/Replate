@@ -5,3 +5,34 @@
   justify-content: center;
   background: var(--color-bg);
 }
+
+/* Fade in, hold, fade out. Duration is kept in step with SPLASH_DURATION_MS in
+   SplashScreen.tsx so the route change happens as the logo finishes fading out. */
+.logo {
+  animation: splash-fade 2400ms ease-in-out forwards;
+}
+
+@keyframes splash-fade {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  25% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  75% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .logo {
+    animation: none;
+  }
+}

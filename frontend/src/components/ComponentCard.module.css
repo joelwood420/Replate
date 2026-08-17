@@ -1,8 +1,19 @@
 .card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   padding: 12px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.selected {
+  border-color: var(--color-gold);
+  background: var(--color-surface-raised, var(--color-surface));
 }
 
 .role {

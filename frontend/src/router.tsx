@@ -5,6 +5,8 @@ import { CaptureScreen } from './screens/CaptureScreen';
 import { CookbookScreen } from './screens/CookbookScreen';
 import { HomeScreen } from './screens/HomeScreen';
 import { JobScreen } from './screens/JobScreen';
+import { OnboardingScreen } from './screens/OnboardingScreen';
+import { ProfileScreen } from './screens/ProfileScreen';
 import { SignInScreen } from './screens/SignInScreen';
 import { SplashScreen } from './screens/SplashScreen';
 
@@ -21,6 +23,7 @@ export function AppRoutes() {
     <Routes>
       <Route path="/" element={<SplashScreen />} />
       <Route path="/signin" element={<SignInScreen />} />
+      <Route path="/onboarding" element={<OnboardingScreen />} />
       <Route
         path="/home"
         element={
@@ -50,6 +53,14 @@ export function AppRoutes() {
         element={
           <RequireAuth>
             <CookbookScreen />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/profile"
+        element={
+          <RequireAuth>
+            <ProfileScreen />
           </RequireAuth>
         }
       />

@@ -30,10 +30,17 @@ export function JobScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [isStartingRecipe, setIsStartingRecipe] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  // Which component's recipe to show; null shows the full dish (every component combined).
+  const [selectedComponent, setSelectedComponent] = useState<number | null>(null);
 
   useEffect(() => {
     if (job) setIsSaved(job.is_saved);
   }, [job?.job_id, job?.is_saved]);
+
+  // A different dish means the previous component selection no longer applies.
+  useEffect(() => {
+    setSelectedComponent(null);
+  }, [job?.job_id]);
 
   async function handleToggleSaved() {
     if (!jobId || isSaving) return;
@@ -87,6 +94,10 @@ export function JobScreen() {
   }
 
   const awaitingRecipe = job.status === 'Identified';
+  // Clicking a component filters the ingredients + method below to just that component;
+  // clicking it again (selectedComponent back to null) restores the full recipe.
+  const shownElements =
+    selectedComponent === null ? result.elements : [result.elements[selectedComponent]];
   const restaurantMeta = `${result.restaurant_name ?? 'Unknown restaurant'} · identified ${timeAgo(job.created_at)}`;
   // A failed generation reverts the job to Identified and records why, so the error
   // shows inline next to a button the user can press again.
@@ -108,7 +119,6 @@ export function JobScreen() {
 
         {awaitingRecipe ? (
           <div className={styles.reverseEngineerPrompt}>
-            <div className={styles.promptTitle}>Saved to your cookbook</div>
             <p className={styles.promptBody}>
               We know what this dish is. Reverse engineer it to get the ingredients and
               method for every component.
@@ -120,8 +130,16 @@ export function JobScreen() {
             <div className={styles.section}>
               <div className={styles.sectionLabel}>The Components</div>
               <div className={styles.componentsGrid}>
-                {result.elements.map((element) => (
-                  <ComponentCard key={element.name} role={element.role} name={element.name} />
+                {result.elements.map((element, index) => (
+                  <ComponentCard
+                    key={element.name}
+                    role={element.role}
+                    name={element.name}
+                    selected={selectedComponent === index}
+                    onClick={() =>
+                      setSelectedComponent((current) => (current === index ? null : index))
+                    }
+                  />
                 ))}
               </div>
             </div>
@@ -129,7 +147,7 @@ export function JobScreen() {
             <div className={styles.section}>
               <div className={styles.sectionLabel}>Ingredients</div>
               <div className={styles.ingredientsList}>
-                {result.elements.flatMap((element) =>
+                {shownElements.flatMap((element) =>
                   element.ingredients.map((ingredient, index) => (
                     <IngredientRow
                       key={`${element.name}-${index}`}
@@ -144,7 +162,7 @@ export function JobScreen() {
             <div className={styles.section}>
               <div className={styles.sectionLabel}>Method</div>
               <div className={styles.stepsList}>
-                {result.elements.flatMap((element) =>
+                {shownElements.flatMap((element) =>
                   element.steps.map((step) => (
                     <MethodStep key={`${element.name}-${step.step_number}`} number={step.step_number} text={step.instruction} />
                   )),
