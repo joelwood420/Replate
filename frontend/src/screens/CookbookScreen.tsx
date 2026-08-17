@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { BottomTabBar } from '../components/BottomTabBar';
 import { CookbookCard } from '../components/CookbookCard';
 import { ErrorState } from '../components/ErrorState';
 import { FilterChip } from '../components/FilterChip';
 import { LoadingState } from '../components/LoadingState';
+import { PillButton } from '../components/PillButton';
 import { setJobSaved } from '../lib/apiClient';
 import { useAuth } from '../lib/auth/useAuth';
 import { useSavedJobs } from '../lib/jobs/useSavedJobs';
@@ -16,6 +18,7 @@ export function CookbookScreen() {
   const { authHeaders } = useAuth();
   const { jobs, isLoading, error, refetch } = useSavedJobs();
   const [activeFilter, setActiveFilter] = useState('All');
+  const navigate = useNavigate();
   useSwipeNavigation(TAB_ROUTES);
   const swipeEntry = useSwipeEntryClass();
 
@@ -59,8 +62,32 @@ export function CookbookScreen() {
         {isLoading && <LoadingState label="Loading your cookbook…" />}
         {error && <ErrorState message={error} onRetry={refetch} />}
         {!isLoading && !error && visibleJobs.length === 0 && (
-          <div className={styles.empty}>
-            Nothing here yet — snap a dish and it'll be saved to your cookbook automatically.
+          <div className={styles.emptyState}>
+            <div className={styles.emptyIcon}>
+              <svg
+                width="30"
+                height="30"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M5.5 3H19a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1H5.5A1.5 1.5 0 0 1 4 18.5v-14A1.5 1.5 0 0 1 5.5 3Z" />
+                <path d="M8 3v18" />
+                <path d="M12 8h4.5M12 11h4.5" />
+              </svg>
+            </div>
+            <div className={styles.emptyTitle}>Begin your food journey</div>
+            <div className={styles.emptyText}>
+              Snap a dish and Replate saves it here — your personal cookbook of every plate
+              worth recreating.
+            </div>
+            <PillButton className={styles.emptyCta} onClick={() => navigate('/capture')}>
+              Scan your first dish
+            </PillButton>
           </div>
         )}
         {!isLoading && !error && visibleJobs.length > 0 && (
