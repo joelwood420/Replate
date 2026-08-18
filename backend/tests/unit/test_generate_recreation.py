@@ -8,7 +8,7 @@ def test_output_shape_matches_dish_elements_ingredients_steps_tables(sample_visi
     for index, element in enumerate(result["elements"], start=1):
         assert set(element.keys()) == {"name", "description", "role", "sort_order", "ingredients", "steps"}
         assert element["sort_order"] == index
-        assert element["role"] == generate_recreation._ROLES[(index - 1) % len(generate_recreation._ROLES)]
+        assert element["role"] == generate_recreation._STUB_ROLES[(index - 1) % len(generate_recreation._STUB_ROLES)]
         for ingredient in element["ingredients"]:
             assert set(ingredient.keys()) == {"ingredient_name", "amount", "unit", "sort_order"}
         for step in element["steps"]:
