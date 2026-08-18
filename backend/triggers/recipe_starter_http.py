@@ -30,6 +30,7 @@ def _load_job_for_recipe(job_id: str) -> dict | None:
     return {
         "user_id": job["user_id"],
         "status": job["status"],
+        "updated_at": job.get("updated_at"),
         "match_result": {
             "dish_name": result.get("dish_name"),
             "cuisine": result.get("cuisine"),
@@ -82,6 +83,16 @@ def build_recipe_input(job_id: str, user_oid: str) -> dict:
             "headers": {"Retry-After": str(quota["retry_after_seconds"])},
         }
 
+    # Name the execution after the job's *current* Identified state (its updated_at,
+    # captured before the flip to Generating below). Two concurrent taps of the same
+    # Identified job build the same name and collide - the intended double-tap guard.
+    # A genuine retry only happens after a prior attempt reverted the job to
+    # Identified with a fresh updated_at, so it gets a new name and actually starts.
+    # The old fixed "{job_id}-recipe" name could never restart after any attempt,
+    # because Step Functions blocks a reused name for 90 days - so a single failed
+    # (or completed) generation left the dish un-retryable and stuck in Generating.
+    execution_name = sfn.sanitize_name(f"{job_id}{RECIPE_INSTANCE_SUFFIX}-{job['updated_at']}")
+
     repository.update_job(job_id, status=JobStatus.GENERATING, error_message=None)
 
     return {
@@ -89,7 +100,8 @@ def build_recipe_input(job_id: str, user_oid: str) -> dict:
             "job_id": job_id,
             "vision_guess": job["vision_guess"],
             "match_result": job["match_result"],
-        }
+        },
+        "execution_name": execution_name,
     }
 
 
@@ -102,7 +114,7 @@ def handle_request(job_id: str, user_oid: str) -> dict:
     # user double-tapped the button. That is still a 202 - the work is in flight.
     sfn.start_execution(
         config.recipe_state_machine_arn(),
-        name=sfn.sanitize_name(f"{job_id}{RECIPE_INSTANCE_SUFFIX}"),
+        name=outcome["execution_name"],
         payload=outcome["orchestration_input"],
     )
     return {"status_code": 202, "body": {"job_id": job_id, "status": JobStatus.GENERATING}}

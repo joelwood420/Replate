@@ -101,11 +101,17 @@ def test_starting_generation_clears_a_previous_error(ddb_table):
     assert repository.get_job("job-1")["error_message"] is None
 
 
-def test_handle_request_starts_the_recipe_machine_on_a_distinct_name(monkeypatch):
+def test_handle_request_starts_the_recipe_machine_on_the_built_name(monkeypatch):
+    # build_recipe_input owns the execution name (derived from the job's Identified
+    # updated_at so retries get a fresh, non-colliding name); handle_request just
+    # uses it.
     monkeypatch.setattr(
         starter,
         "build_recipe_input",
-        lambda job_id, user_oid: {"orchestration_input": {"job_id": job_id}},
+        lambda job_id, user_oid: {
+            "orchestration_input": {"job_id": job_id},
+            "execution_name": f"{job_id}-recipe-2026-08-18T00-00-00-000000-00-00",
+        },
     )
     monkeypatch.setenv("RECIPE_STATE_MACHINE_ARN", "arn:aws:states:::stateMachine:recipe")
     started = {}
@@ -119,11 +125,22 @@ def test_handle_request_starts_the_recipe_machine_on_a_distinct_name(monkeypatch
     outcome = starter.handle_request("job-1", _OWNER)
 
     assert started["arn"] == "arn:aws:states:::stateMachine:recipe"
-    # Stage 1 already used the bare job id, and Step Functions refuses a name used
-    # in the last 90 days - so reusing it would collide with the finished stage-1
-    # execution rather than starting anything.
-    assert started["name"] == "job-1-recipe"
+    assert started["name"] == "job-1-recipe-2026-08-18T00-00-00-000000-00-00"
     assert outcome == {"status_code": 202, "body": {"job_id": "job-1", "status": JobStatus.GENERATING}}
+
+
+def test_execution_name_is_distinct_across_retries(ddb_table):
+    """A fresh Identified state (new updated_at) yields a new execution name, so a
+    retried generation is not blocked by Step Functions' 90-day name reuse rule."""
+    _job()
+    first = starter.build_recipe_input("job-1", _OWNER)["execution_name"]
+
+    # Revert to Identified with a new updated_at, as MarkRecipeFailed would.
+    repository.update_job("job-1", status=JobStatus.IDENTIFIED)
+    second = starter.build_recipe_input("job-1", _OWNER)["execution_name"]
+
+    assert first != second
+    assert first.startswith("job-1-recipe-")
 
 
 def test_a_double_tap_is_still_accepted(monkeypatch):
@@ -131,7 +148,10 @@ def test_a_double_tap_is_still_accepted(monkeypatch):
     monkeypatch.setattr(
         starter,
         "build_recipe_input",
-        lambda job_id, user_oid: {"orchestration_input": {"job_id": job_id}},
+        lambda job_id, user_oid: {
+            "orchestration_input": {"job_id": job_id},
+            "execution_name": f"{job_id}-recipe-x",
+        },
     )
     monkeypatch.setattr(starter.sfn, "start_execution", lambda *a, **k: False)
 
