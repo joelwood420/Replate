@@ -65,13 +65,32 @@ stubbed.
    VITE_COGNITO_AUTHORITY = <CognitoIssuer output>
    VITE_COGNITO_CLIENT_ID = <UserPoolClientId output>
    ```
-3. **Build and publish the React app** to the site bucket:
+3. **Build and publish the React app** to the site bucket. Publish in **two passes** so the
+   cache headers are right — this matters: a single header-less `s3 sync` leaves `index.html`
+   with no `Cache-Control`, and browsers then serve a stale app shell (old JS) on the next
+   deploy without revalidating. The hashed `assets/*` files are content-addressed so they're
+   safe to cache forever; `index.html` must always be revalidated.
    ```bash
    cd ../frontend && npm run build
-   aws s3 sync dist/ "s3://<SiteBucketName output>/" --delete
+
+   # 1. Hashed assets first — immutable, and --delete prunes superseded files.
+   aws s3 sync dist/ "s3://<SiteBucketName output>/" --delete \
+     --exclude "index.html" \
+     --cache-control "public, max-age=31536000, immutable"
+
+   # 2. index.html last — never silently cached, so a deploy is picked up immediately.
+   aws s3 cp dist/index.html "s3://<SiteBucketName output>/index.html" \
+     --cache-control "no-cache" \
+     --content-type "text/html; charset=utf-8"
+
    aws cloudfront create-invalidation --distribution-id <CloudFrontDistributionId output> --paths "/*"
    ```
    Until this runs the CloudFront URL serves nothing — the site bucket starts empty.
+
+   > **Note:** the CloudFront invalidation only clears the *edge* cache. It does not touch a
+   > browser that already cached a header-less `index.html` (or registered a service worker)
+   > from an earlier deploy — that profile needs a manual **Clear site data**. The two-pass
+   > headers above are what prevent this happening to returning users going forward.
 4. **Create a demo user** (Cognito has no self-serve sign-up UI wired):
    ```bash
    aws cognito-idp admin-create-user --user-pool-id <UserPoolId output> --username you@example.com

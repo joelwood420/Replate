@@ -473,7 +473,11 @@ Resources:
     Properties:
       FunctionName: !Sub "${AWS::StackName}-generate-recreation"
       Handler: activities.generate_recreation.handler
-      Timeout: 120
+      # The real recipe call (claude-sonnet-5, structured output) can run well past
+      # the 30s global default and the old 120s - the state machine allows this task
+      # up to 300s (statemachines/dish-recipe.asl.json), so give the Lambda 240 and
+      # keep the client timeout (ANTHROPIC_TIMEOUT_SECONDS) below it.
+      Timeout: 240
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref Table

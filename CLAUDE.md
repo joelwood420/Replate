@@ -364,6 +364,8 @@ Do not start this phase until Phase 0's test suite is green.
 2. Put the Anthropic API key into Parameter Store as a `SecureString` (a one-time manual step —
    CloudFormation cannot create `SecureString` values). No per-model console access grant is
    needed on the first-party API.
+   **✓ Done (2026-08-18):** `/replate/anthropic-api-key` created as a `SecureString`
+   (default AWS-managed SSM key, so the Lambda's `SSMParameterReadPolicy` covers decryption).
 3. Create the DynamoDB table from the template, not the console, so local and prod stay in
    lockstep.
 4. Finalize the AI feature against real resources:

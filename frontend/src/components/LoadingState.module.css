@@ -15,7 +15,18 @@
   border-radius: 50%;
   border: 2px solid var(--color-gold-track);
   border-top-color: var(--color-gold);
-  animation: replate-spin 0.9s linear infinite;
+  /* Local keyframe: a global `replate-spin` referenced from a CSS module gets
+     rewritten to a scoped name that doesn't resolve, so the spinner never turns. */
+  animation: loader-spin 0.9s linear infinite;
+}
+
+@keyframes loader-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .label {

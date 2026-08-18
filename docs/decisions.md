@@ -10,6 +10,29 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-18 — Recipe generation model: Claude Sonnet 5
+
+**Decision:** Wire the "Reverse engineer" step (`generate_recreation`, the stage-2 recipe
+generator) to a real Anthropic call on **`claude-sonnet-5`**, via structured outputs
+(`output_config.format`). Deployed to prod ahead of the rest of Phase 3 — the vision and
+menu models stay stubbed/key-gated for now. Kept as the `AnthropicGeneratorModel` parameter
+so the model is a one-line change per environment.
+
+**Why:** This is the heaviest-*output* call in the pipeline, and output tokens dominate its
+cost. Sonnet 5 and Opus 5 are the same quality tier for this task — producing per-component
+ingredient lists and method steps from a known dish is culinary knowledge plus structured
+formatting, not deep reasoning — but Sonnet 5's output is $15/MTok vs Opus 5's $25, so Opus
+would mostly add cost for marginal polish on a home-cook recipe. Sonnet 5 also supports
+`output_config.format` (Sonnet 4.6 does not), which pins the element/ingredient/step schema
+and removes fragile JSON parsing. It matches the menu-fetch model already in use, so there's
+one capability profile and one cost line to reason about, consistent with the project's
+AWS/model cost-discipline rule. Haiku was ruled out: this is the app's headline feature and
+Sonnet's stronger grounding is worth the gap. If recipe volume ever makes the ~30%
+new-tokenizer token premium matter, `ANTHROPIC_GENERATOR_MODEL` flips to 4.6 or Haiku with
+no code change.
+
+---
+
 ## 2026-08-17 — Model calls go through the first-party Anthropic API, not Amazon Bedrock
 
 **Decision:** Route Claude calls through the **first-party Anthropic API** (`anthropic` SDK,

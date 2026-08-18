@@ -144,6 +144,57 @@ def web_search_completion(
     return text
 
 
+def generate_structured(
+    model: str,
+    messages: list[dict],
+    schema: dict,
+    system: str | None = None,
+    max_tokens: int = 4096,
+    effort: str = "medium",
+) -> dict:
+    """Run a Messages call constrained to a JSON schema and return parsed JSON.
+
+    Uses `output_config.format` (structured outputs) so the reply validates
+    against `schema` - no fragile fenced-JSON parsing, unlike the web_search
+    path which cannot use structured outputs alongside a server tool. `effort`
+    defaults to medium: this backs the heaviest-output call in the pipeline
+    (recipe generation), so thinking depth is bounded deliberately rather than
+    left at the `high` default.
+    """
+    if not is_configured():
+        raise AnthropicError("ANTHROPIC_API_KEY is not set")
+    if not model:
+        raise AnthropicError("no Anthropic model id configured for this call")
+
+    request = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": list(messages),
+        "output_config": {
+            "effort": effort,
+            "format": {"type": "json_schema", "schema": schema},
+        },
+    }
+    if system:
+        request["system"] = system
+
+    client = get_client()
+    try:
+        response = client.messages.create(**request)
+    except (anthropic.APIError, anthropic.APIConnectionError) as exc:
+        raise AnthropicError(f"{type(exc).__name__}: {exc}") from exc
+
+    if response.stop_reason == "refusal":
+        raise AnthropicError("Anthropic declined the request (stop_reason=refusal)")
+
+    text = _collect_text(response.content)
+    if not text:
+        raise AnthropicError("Anthropic returned no text content")
+    # output_config guarantees valid JSON, but parse_json_response also tolerates
+    # a stray fence, costing nothing.
+    return parse_json_response(text)
+
+
 def parse_json_response(raw: str) -> dict:
     """Parse a model's JSON reply, tolerating a markdown code fence around it.
 

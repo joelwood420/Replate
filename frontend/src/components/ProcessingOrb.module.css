@@ -6,8 +6,8 @@
 }
 
 .orb {
-  width: 88px;
-  height: 88px;
+  width: 96px;
+  height: 96px;
   position: relative;
   display: flex;
   align-items: center;
@@ -18,42 +18,89 @@
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  border: 1px solid var(--color-gold-track);
+  border: 1.5px solid var(--color-gold-track);
 }
 
+/* The rotating layer carries both the comet trail and the leading dot, so the
+   dot travels the full circumference of the track. */
 .spinner {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  animation: replate-spin 1.6s linear infinite;
+  animation: orb-spin 1.4s linear infinite;
 }
 
+/* Defined locally rather than reusing the global `replate-spin`: CSS Modules
+   rewrites animation names inside a *.module.css to a scoped identifier, so a
+   reference to a keyframe declared in a plain global stylesheet resolves to
+   nothing and the element never animates. Keeping the keyframe in this module
+   guarantees the name matches. */
+@keyframes orb-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Comet trail: a gold arc that fades out behind the leading dot. The radial
+   mask keeps only the ring, matching the track width. */
 .arc {
   position: absolute;
   inset: 0;
   border-radius: 50%;
   background: conic-gradient(
-    from 230deg,
+    from 200deg,
     transparent 0deg,
-    oklch(76% 0.1 82 / 0.12) 60deg,
-    oklch(76% 0.1 82 / 0.55) 110deg,
-    var(--color-gold) 130deg,
-    transparent 131deg,
+    oklch(76% 0.1 82 / 0.15) 70deg,
+    oklch(76% 0.1 82 / 0.55) 120deg,
+    var(--color-gold) 158deg,
+    transparent 160deg,
     transparent 360deg
   );
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 9px), #000 calc(100% - 9px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 9px), #000 calc(100% - 9px));
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 6px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 6px));
 }
 
+/* Leading dot — the "orb" the user watches go around the circle. Sits on the
+   track (top centre) and rides the spinner's rotation; the pulsing glow makes
+   the travel unmistakable. */
 .dot {
   position: absolute;
-  width: 8px;
-  height: 8px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
-  top: 0.5px;
-  left: calc(50% - 4px);
+  top: -1.5px;
+  left: calc(50% - 6px);
   background: var(--color-orb-dot);
-  box-shadow: 0 0 8px 2px oklch(76% 0.1 82 / 0.9);
+  box-shadow:
+    0 0 6px 2px var(--color-gold),
+    0 0 14px 4px oklch(76% 0.1 82 / 0.75);
+  animation: orb-dot-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes orb-dot-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 6px 2px var(--color-gold),
+      0 0 12px 3px oklch(76% 0.1 82 / 0.6);
+  }
+  50% {
+    box-shadow:
+      0 0 8px 3px var(--color-gold),
+      0 0 20px 6px oklch(76% 0.1 82 / 0.85);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 3s;
+  }
+  .dot {
+    animation: none;
+  }
 }
 
 .glyph {
@@ -77,6 +124,23 @@
   font-size: 13px;
   color: var(--color-muted-light);
   letter-spacing: 0.02em;
-  animation: replate-fade 2.4s ease-in-out;
+  /* Local keyframe, not the global `replate-fade` - see the note on .spinner:
+     a global keyframe referenced from a CSS module doesn't resolve. */
+  animation: orb-fade 2.4s ease-in-out;
   white-space: nowrap;
+}
+
+@keyframes orb-fade {
+  0% {
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
 }

@@ -18,7 +18,7 @@ region = "ap-southeast-2"
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = true
 resolve_s3 = true
-# Stub deploy: paid integrations are off. The ANTHROPIC_API_KEY stays blank (put it in
-# SSM for the Phase 3b real-AI pass) so no model call fires, and moderation is disabled.
-# The menu model id can stay at its template default - it does nothing without the key.
-parameter_overrides = "ModerationEnabled=false"
+# Moderation stays off. The recipe generator is now wired to a real model
+# (claude-sonnet-5) - it fires against the ANTHROPIC_API_KEY held in SSM. Vision
+# and menu models stay at their template defaults (still stubbed / key-gated).
+parameter_overrides = "ModerationEnabled=false AnthropicGeneratorModel=claude-sonnet-5"

@@ -17,12 +17,22 @@ so a transient SSM error is retried on the next call.
 import threading
 
 import boto3
+from botocore.config import Config
 
 from shared import config
 
-_lock = threading.Lock()
+# Reentrant on purpose: get_secure_parameter holds this lock while calling
+# get_client(), which acquires it again on the same thread. A plain Lock
+# deadlocks there (it hangs until the Lambda times out); RLock does not.
+_lock = threading.RLock()
 _client = None
 _cache: dict[str, str] = {}
+
+# Bound the SSM call so a network problem surfaces as a fast, logged error rather
+# than hanging until the Lambda's own timeout. anthropic_client._resolved_key
+# already degrades a failed read to the no-key (stub) path, so a bad read never
+# blocks the pipeline; it just logs why.
+_SSM_TIMEOUT = Config(connect_timeout=5, read_timeout=10, retries={"max_attempts": 2})
 
 
 def get_client():
@@ -30,7 +40,7 @@ def get_client():
     if _client is None:
         with _lock:
             if _client is None:
-                kwargs = {"region_name": config.aws_region()}
+                kwargs = {"region_name": config.aws_region(), "config": _SSM_TIMEOUT}
                 endpoint = config.aws_endpoint_url()
                 if endpoint:
                     kwargs["endpoint_url"] = endpoint
