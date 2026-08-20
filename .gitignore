@@ -52,3 +52,9 @@ graphify-out/
 
 # AWS SAM build output (regenerate with `sam build`)
 .aws-sam/
+
+# Claude Code local settings / state (per-machine, not shared)
+.claude/
+
+# impeccable working state (config, cache, critiques) - regenerate via /impeccable
+.impeccable/

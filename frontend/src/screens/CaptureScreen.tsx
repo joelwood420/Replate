@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CaptureViewfinder } from '../components/CaptureViewfinder';
 import { ErrorState } from '../components/ErrorState';
+import { IconCamera, IconClose, IconFlipCamera, IconLibrary } from '../components/icons';
 import { RestaurantSearchPanel } from '../components/RestaurantSearchPanel';
 import {
   createJob,
@@ -165,7 +166,7 @@ export function CaptureScreen() {
 
       <div className={styles.topBar}>
         <button type="button" className={styles.iconButton} onClick={() => navigate(-1)} aria-label="Close">
-          ×
+          <IconClose />
         </button>
         <div className={styles.locationPill}>
           <span className={styles.locationDot} />
@@ -173,7 +174,7 @@ export function CaptureScreen() {
         </div>
         {mode === 'live' ? (
           <button type="button" className={styles.iconButton} onClick={flipCamera} aria-label="Flip camera">
-            ⟳
+            <IconFlipCamera />
           </button>
         ) : (
           <button
@@ -182,7 +183,7 @@ export function CaptureScreen() {
             onClick={handleUseCameraInstead}
             aria-label="Use camera instead"
           >
-            ✕
+            <IconCamera />
           </button>
         )}
       </div>
@@ -229,7 +230,7 @@ export function CaptureScreen() {
               </button>
               {mode === 'live' ? (
                 <button type="button" className={styles.flipButton} onClick={flipCamera} aria-label="Flip camera">
-                  ⇄
+                  <IconFlipCamera size={20} />
                 </button>
               ) : (
                 <button
@@ -238,7 +239,7 @@ export function CaptureScreen() {
                   onClick={handleLibraryClick}
                   aria-label="Choose a different photo"
                 >
-                  📁
+                  <IconLibrary size={20} />
                 </button>
               )}
             </div>
@@ -250,6 +251,13 @@ export function CaptureScreen() {
           </button>
         )}
       </div>
+
+      {isSubmitting && (
+        <div className={styles.sendingOverlay} role="status" aria-live="polite">
+          <span className={styles.sendingSpinner} aria-hidden="true" />
+          <span className={styles.sendingText}>Sending your dish…</span>
+        </div>
+      )}
     </div>
   );
 }

@@ -39,13 +39,11 @@
 .back {
   left: 20px;
   color: var(--color-cream);
-  font-size: 15px;
 }
 
 .remove {
   right: 20px;
   color: var(--color-gold);
-  font-size: 20px;
 }
 
 .overlayText {

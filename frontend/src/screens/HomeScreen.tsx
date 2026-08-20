@@ -10,6 +10,13 @@ import { useRecentJobs } from '../lib/jobs/useRecentJobs';
 import { TAB_ROUTES, useSwipeEntryClass, useSwipeNavigation } from '../lib/nav/swipeNav';
 import styles from './HomeScreen.module.css';
 
+function timeGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+
 export function HomeScreen() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -21,7 +28,7 @@ export function HomeScreen() {
     <div className={`${styles.screen} ${swipeEntry}`}>
       <div className={styles.header}>
         <div>
-          <div className={styles.greeting}>Good evening</div>
+          <div className={styles.greeting}>{timeGreeting()}</div>
           <div className={styles.name}>{user?.name.split(' ')[0] ?? 'there'}</div>
         </div>
         <Avatar initials={user?.initials ?? ''} />

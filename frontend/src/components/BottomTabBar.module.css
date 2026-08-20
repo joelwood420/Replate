@@ -2,7 +2,7 @@
   display: flex;
   justify-content: space-around;
   align-items: center;
-  padding: 12px 0 6px;
+  padding: 10px 0 8px;
   border-top: 1px solid var(--color-border-divider);
 }
 
@@ -12,17 +12,15 @@
   align-items: center;
   gap: 4px;
   text-decoration: none;
+  /* Icon inherits this via currentColor; the label overrides its own colour. */
+  color: var(--color-muted);
+  transition: color 0.15s ease;
 }
 
-.dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: transparent;
-}
-
-.dotActive {
-  background: var(--color-gold);
+/* Active tab: the icon lights gold and the label brightens to cream — the understated
+   "you are here" the candlelit system calls for, no pill highlight or fill. */
+.itemActive {
+  color: var(--color-gold);
 }
 
 .label {
@@ -30,6 +28,6 @@
   color: var(--color-muted);
 }
 
-.labelActive {
+.itemActive .label {
   color: var(--color-cream);
 }

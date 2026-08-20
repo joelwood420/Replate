@@ -1,4 +1,5 @@
 import type { MatchMethod } from '../lib/apiClient';
+import { IconCheck } from './icons';
 import styles from './ConfidenceBadge.module.css';
 
 // No mock exists for the non-menu-matched states - this is a judgment-call extension so a
@@ -16,7 +17,11 @@ export function ConfidenceBadge({ matchMethod }: { matchMethod: MatchMethod }) {
 
   return (
     <div className={`${styles.badge} ${variant}`}>
-      {copy.showCheck && <span className={styles.check}>✓</span>}
+      {copy.showCheck && (
+        <span className={styles.check}>
+          <IconCheck size={11} />
+        </span>
+      )}
       <span>{copy.text}</span>
     </div>
   );

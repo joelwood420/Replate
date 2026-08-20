@@ -32,11 +32,46 @@
   flex-direction: column;
 }
 
+/* Each component's method is its own block (heading + its own 1..n steps), so a
+   multi-component recipe reads as distinct sub-recipes instead of one run-on list
+   whose numbering restarts without explanation. */
+.methodGroups {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  padding-bottom: 24px;
+}
+
+.methodGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.componentHeading {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.componentHeadingRole {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-gold);
+}
+
+.componentHeadingName {
+  font-family: var(--font-serif);
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--color-cream);
+}
+
 .stepsList {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding-bottom: 24px;
 }
 
 .footer {

@@ -1,16 +1,7 @@
 import type { MatchMethod } from '../lib/apiClient';
 import { ConfidenceBadge } from './ConfidenceBadge';
+import { IconBack, IconPlus, IconTrash } from './icons';
 import styles from './RecipeHero.module.css';
-
-function TrashIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M3 6h18" />
-      <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
-      <path d="M6 6l1 14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-14" />
-    </svg>
-  );
-}
 
 interface RecipeHeroProps {
   imageUrl: string;
@@ -38,7 +29,7 @@ export function RecipeHero({
       <img src={imageUrl} alt={dishName} className={styles.image} />
       <div className={styles.scrim} />
       <button type="button" className={styles.back} onClick={onBack} aria-label="Back">
-        ←
+        <IconBack size={16} />
       </button>
       {mode === 'cookbook' && (
         <button
@@ -47,7 +38,7 @@ export function RecipeHero({
           onClick={onToggleSaved}
           aria-label={isSaved ? 'Remove from cookbook' : 'Add to cookbook'}
         >
-          {isSaved ? <TrashIcon /> : '＋'}
+          {isSaved ? <IconTrash size={15} /> : <IconPlus size={16} />}
         </button>
       )}
       <div className={styles.overlayText}>

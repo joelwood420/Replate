@@ -5,7 +5,7 @@ import { ErrorState } from '../components/ErrorState';
 import { IngredientRow } from '../components/IngredientRow';
 import { MethodStep } from '../components/MethodStep';
 import { PillButton } from '../components/PillButton';
-import { ProcessingOrb } from '../components/ProcessingOrb';
+import { ProcessingOrb, type OrbStage } from '../components/ProcessingOrb';
 import { RecipeHero } from '../components/RecipeHero';
 import { reverseEngineerJob, setJobSaved } from '../lib/apiClient';
 import { useAuth } from '../lib/auth/useAuth';
@@ -13,12 +13,20 @@ import { formatQuantity, timeAgo } from '../lib/format';
 import { useJobPolling } from '../lib/jobs/useJobPolling';
 import styles from './JobScreen.module.css';
 
-function ProcessingShell() {
+function ProcessingShell({ stage = 'identify' }: { stage?: OrbStage }) {
   return (
     <div className={styles.processingScreen}>
-      <ProcessingOrb />
+      <ProcessingOrb stage={stage} />
     </div>
   );
+}
+
+// The backend has no structured error code: a moderation rejection lands in `Failed`
+// with error_message = "This photo was rejected by image moderation (...)" (see
+// backend/activities/moderate_image.py). Detecting it by that signature lets us swap in
+// kinder, non-accusatory copy and never surface the raw category list to the diner.
+function isModerationRejection(message: string | undefined): boolean {
+  return !!message && message.toLowerCase().includes('image moderation');
 }
 
 export function JobScreen() {
@@ -71,7 +79,14 @@ export function JobScreen() {
   }
 
   if (error) {
-    return <ErrorState message={error} onRetry={refetch} />;
+    return (
+      <ErrorState
+        title="Something went wrong"
+        message="We couldn't load this dish just now. It's usually a quick hiccup."
+        onRetry={refetch}
+        secondaryAction={{ label: 'Back to home', onClick: () => navigate('/home') }}
+      />
+    );
   }
 
   if (isLoading || !job) {
@@ -79,25 +94,49 @@ export function JobScreen() {
   }
 
   if (job.status === 'Failed') {
-    return <ErrorState message={job.error_message ?? 'This scan failed. Try another photo.'} />;
+    const moderation = isModerationRejection(job.error_message);
+    return (
+      <ErrorState
+        tone={moderation ? 'moderation' : 'error'}
+        title={moderation ? "Let's try a different shot" : "That scan didn't work"}
+        message={
+          moderation
+            ? 'We couldn’t use this photo. Aim for the dish itself — the plate front and centre, in good light — and snap it again.'
+            : 'We couldn’t identify this one, and it’s usually the photo. Get the whole plate in frame, in good light, and give it another go.'
+        }
+        primaryAction={{ label: 'Take another photo', onClick: () => navigate('/capture', { replace: true }) }}
+        secondaryAction={{ label: 'Back to home', onClick: () => navigate('/home', { replace: true }) }}
+      />
+    );
   }
 
-  // Stage 1 (identifying the dish) and stage 2 (generating the recipe) share the same
-  // full-screen loading experience.
+  // Both stages use the full-screen orb, but stage 2 (Generating) gets the heavier,
+  // reassured "generate" treatment — it's the slow, expensive one worth waiting for.
   if (job.status === 'Queued' || job.status === 'Processing' || job.status === 'Generating') {
-    return <ProcessingShell />;
+    return <ProcessingShell stage={job.status === 'Generating' ? 'generate' : 'identify'} />;
   }
 
   const { result } = job;
   if (!result) {
-    return <ErrorState message="This dish finished processing but no result was found." />;
+    return (
+      <ErrorState
+        title="That came back empty"
+        message="This dish finished processing but didn’t return anything to cook. Scanning it again usually fixes it."
+        primaryAction={{ label: 'Take another photo', onClick: () => navigate('/capture', { replace: true }) }}
+        secondaryAction={{ label: 'Back to home', onClick: () => navigate('/home', { replace: true }) }}
+      />
+    );
   }
 
   const awaitingRecipe = job.status === 'Identified';
-  // Clicking a component filters the ingredients + method below to just that component;
-  // clicking it again (selectedComponent back to null) restores the full recipe.
+  // With nothing selected the dish shows in full: every component's ingredients as one
+  // list plus every component's method. Clicking a component focuses both the ingredients
+  // and the method to just that component; clicking it again restores the full dish.
   const shownElements =
     selectedComponent === null ? result.elements : [result.elements[selectedComponent]];
+  // Per-component method headings only earn their place on a genuinely multi-component
+  // dish; a single-component dish is just one numbered list with nothing to disambiguate.
+  const showComponentHeadings = result.elements.length > 1;
   const restaurantMeta = `${result.restaurant_name ?? 'Unknown restaurant'} · identified ${timeAgo(job.created_at)}`;
   // A failed generation reverts the job to Identified and records why, so the error
   // shows inline next to a button the user can press again.
@@ -161,12 +200,28 @@ export function JobScreen() {
 
             <div className={styles.section}>
               <div className={styles.sectionLabel}>Method</div>
-              <div className={styles.stepsList}>
-                {shownElements.flatMap((element) =>
-                  element.steps.map((step) => (
-                    <MethodStep key={`${element.name}-${step.step_number}`} number={step.step_number} text={step.instruction} />
-                  )),
-                )}
+              <div className={styles.methodGroups}>
+                {shownElements.map((element) => (
+                  <div key={element.name} className={styles.methodGroup}>
+                    {showComponentHeadings && (
+                      <div className={styles.componentHeading}>
+                        {element.role && (
+                          <span className={styles.componentHeadingRole}>{element.role}</span>
+                        )}
+                        <span className={styles.componentHeadingName}>{element.name}</span>
+                      </div>
+                    )}
+                    <div className={styles.stepsList}>
+                      {element.steps.map((step) => (
+                        <MethodStep
+                          key={`${element.name}-${step.step_number}`}
+                          number={step.step_number}
+                          text={step.instruction}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </>

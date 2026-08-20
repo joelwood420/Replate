@@ -22,15 +22,8 @@
   margin-top: 2px;
 }
 
-.filters {
-  padding: 10px 22px;
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-}
-
 .body {
-  padding: 6px 22px;
+  padding: 18px 22px 6px;
   flex: 1;
 }
 

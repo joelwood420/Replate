@@ -4,6 +4,7 @@ version = 0.1
 
 [default.global.parameters]
 stack_name = "replate"
+region = "ap-southeast-2"
 
 [default.build.parameters]
 # numpy in the dependencies layer is a compiled wheel; building it for the Lambda
@@ -21,4 +22,7 @@ resolve_s3 = true
 # Moderation stays off. The recipe generator is now wired to a real model
 # (claude-sonnet-5) - it fires against the ANTHROPIC_API_KEY held in SSM. Vision
 # and menu models stay at their template defaults (still stubbed / key-gated).
-parameter_overrides = "ModerationEnabled=false AnthropicGeneratorModel=claude-sonnet-5"
+parameter_overrides = "AnthropicApiKeyParam=\"/replate/anthropic-api-key\" AnthropicMenuModel=\"claude-sonnet-5\" AnthropicVisionModel=\"\" AnthropicGeneratorModel=\"claude-sonnet-5\" ModerationEnabled=\"false\" RateLimitEnabled=\"true\" LocalDevOrigin=\"http://localhost:5173\" LogRetentionDays=\"14\" UploadRetentionDays=\"7\""
+s3_prefix = "replate"
+disable_rollback = true
+image_repositories = []

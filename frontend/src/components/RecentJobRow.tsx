@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import type { JobSummary } from '../lib/apiClient';
 import { timeAgo } from '../lib/format';
+import { IconChevron } from './icons';
 import styles from './RecentJobRow.module.css';
 
 export function RecentJobRow({ job }: { job: JobSummary }) {
@@ -15,7 +16,9 @@ export function RecentJobRow({ job }: { job: JobSummary }) {
         <div className={styles.dish}>{job.dish_name ?? 'Identifying…'}</div>
         <div className={styles.meta}>{meta || 'Processing'}</div>
       </div>
-      <div className={styles.chevron}>›</div>
+      <div className={styles.chevron}>
+        <IconChevron size={16} />
+      </div>
     </Link>
   );
 }

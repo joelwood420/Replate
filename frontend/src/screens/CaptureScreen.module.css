@@ -47,7 +47,6 @@
   align-items: center;
   justify-content: center;
   color: var(--color-cream);
-  font-size: 16px;
 }
 
 .locationPill {
@@ -150,7 +149,6 @@
   align-items: center;
   justify-content: center;
   color: var(--color-cream);
-  font-size: 16px;
 }
 
 .hiddenFileInput {
@@ -173,4 +171,49 @@
   font-family: var(--font-sans);
   text-decoration: underline;
   padding: 0;
+}
+
+/* Explicit feedback for the multi-call photo submit — the highest-commitment tap in the
+   flow. Covers the camera to block double-taps and names what's happening. A plain gold
+   ring spinner (no glow — the orb keeps its monopoly on light). */
+.sendingOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: oklch(10% 0.006 55 / 0.72);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.sendingSpinner {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--color-gold-track);
+  border-top-color: var(--color-gold);
+  animation: sending-spin 0.9s linear infinite;
+}
+
+@keyframes sending-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sendingText {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--color-cream-soft);
+  letter-spacing: 0.02em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sendingSpinner {
+    animation-duration: 2.4s;
+  }
 }

@@ -94,11 +94,39 @@
   }
 }
 
+/* Stage 2 (generate) — the slow, expensive reduction that rebuilds every component.
+   Same orb DNA as identify, but heavier: a slower spin and a gentle breathing scale so
+   the costly wait reads as a different, deliberate event, not the quick identify glance.
+   No new glow is introduced — the single dot bloom stays the system's only light. */
+.orbGenerate {
+  animation: orb-breathe 3.6s ease-in-out infinite;
+}
+
+.orbGenerate .spinner,
+.orbGenerate .dot {
+  animation-duration: 2.2s;
+}
+
+@keyframes orb-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.045);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .spinner {
+  .spinner,
+  .orbGenerate .spinner {
     animation-duration: 3s;
   }
-  .dot {
+  .dot,
+  .orbGenerate .dot {
+    animation: none;
+  }
+  .orbGenerate {
     animation: none;
   }
 }
@@ -128,6 +156,23 @@
      a global keyframe referenced from a CSS module doesn't resolve. */
   animation: orb-fade 2.4s ease-in-out;
   white-space: nowrap;
+}
+
+/* Generate cycles phrases more slowly; stretch the fade to match its 3.2s interval so a
+   phrase doesn't finish fading and then sit blank before the next one swaps in. */
+.phraseSlow {
+  animation-duration: 3.2s;
+}
+
+.subline {
+  margin: 2px 0 0;
+  max-width: 30ch;
+  padding: 0 40px;
+  text-align: center;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-muted);
 }
 
 @keyframes orb-fade {

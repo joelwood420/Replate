@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Logo } from '../components/Logo';
+import { PillButton } from '../components/PillButton';
 import { useAuth } from '../lib/auth/useAuth';
 import styles from './SignInScreen.module.css';
 
@@ -65,9 +66,9 @@ export function SignInScreen() {
 
         {error && <div className={styles.error}>{error}</div>}
 
-        <button type="submit" className={styles.primaryButton} disabled={!canSubmit}>
+        <PillButton variant="footer" type="submit" disabled={!canSubmit}>
           {busy ? 'Signing in…' : 'Log in'}
-        </button>
+        </PillButton>
       </form>
 
       <div className={styles.spacer} />

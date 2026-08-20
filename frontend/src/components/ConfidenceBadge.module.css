@@ -16,8 +16,9 @@
 }
 
 .check {
+  display: inline-flex;
+  align-items: center;
   color: var(--color-gold);
-  font-size: 11px;
 }
 
 .unmatched {

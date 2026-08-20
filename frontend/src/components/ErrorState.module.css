@@ -3,14 +3,59 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: 14px;
   min-height: 200px;
-  padding: 40px 22px;
+  padding: 44px 30px;
   text-align: center;
 }
 
+.medallion {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-gold-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 2px;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: 21px;
+  line-height: 1.2;
+  color: var(--color-cream);
+}
+
 .message {
+  margin: 0;
   font-size: 13px;
   color: var(--color-muted-light);
-  line-height: 1.5;
+  line-height: 1.55;
+  max-width: 300px;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.ghost {
+  background: transparent;
+  border: none;
+  color: var(--color-muted-light);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  padding: 8px 18px;
+  border-radius: var(--radius-pill);
+  transition: color 0.15s ease;
+}
+
+.ghost:hover {
+  color: var(--color-cream);
 }

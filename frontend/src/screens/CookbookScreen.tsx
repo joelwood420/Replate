@@ -1,9 +1,7 @@
-import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BottomTabBar } from '../components/BottomTabBar';
 import { CookbookCard } from '../components/CookbookCard';
 import { ErrorState } from '../components/ErrorState';
-import { FilterChip } from '../components/FilterChip';
 import { LoadingState } from '../components/LoadingState';
 import { PillButton } from '../components/PillButton';
 import { setJobSaved } from '../lib/apiClient';
@@ -12,20 +10,12 @@ import { useSavedJobs } from '../lib/jobs/useSavedJobs';
 import { TAB_ROUTES, useSwipeEntryClass, useSwipeNavigation } from '../lib/nav/swipeNav';
 import styles from './CookbookScreen.module.css';
 
-const FILTERS = ['All', 'Mains', 'Sauces', 'Desserts'];
-
 export function CookbookScreen() {
   const { authHeaders } = useAuth();
   const { jobs, isLoading, error, refetch } = useSavedJobs();
-  const [activeFilter, setActiveFilter] = useState('All');
   const navigate = useNavigate();
   useSwipeNavigation(TAB_ROUTES);
   const swipeEntry = useSwipeEntryClass();
-
-  // Filter chips beyond "All" have no backing category field on the backend yet
-  // (JobResults.Cuisine isn't the same as a component-type category) - "All" is the
-  // only chip guaranteed meaningful until a real category field exists.
-  const visibleJobs = jobs;
 
   // Dishes are saved automatically at capture time, so the cookbook holds a mix of
   // reverse-engineered recipes and dishes still waiting to be.
@@ -47,21 +37,10 @@ export function CookbookScreen() {
         <div className={styles.subhead}>{summary}</div>
       </div>
 
-      <div className={styles.filters} data-noswipe>
-        {FILTERS.map((label) => (
-          <FilterChip
-            key={label}
-            label={label}
-            active={activeFilter === label}
-            onClick={() => setActiveFilter(label)}
-          />
-        ))}
-      </div>
-
       <div className={styles.body}>
         {isLoading && <LoadingState label="Loading your cookbook…" />}
         {error && <ErrorState message={error} onRetry={refetch} />}
-        {!isLoading && !error && visibleJobs.length === 0 && (
+        {!isLoading && !error && jobs.length === 0 && (
           <div className={styles.emptyState}>
             <div className={styles.emptyIcon}>
               <svg
@@ -90,9 +69,9 @@ export function CookbookScreen() {
             </PillButton>
           </div>
         )}
-        {!isLoading && !error && visibleJobs.length > 0 && (
+        {!isLoading && !error && jobs.length > 0 && (
           <div className={styles.grid}>
-            {visibleJobs.map((job) => (
+            {jobs.map((job) => (
               <CookbookCard key={job.job_id} job={job} onToggleSaved={handleToggleSaved} />
             ))}
           </div>

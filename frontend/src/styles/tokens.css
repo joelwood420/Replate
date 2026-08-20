@@ -2,6 +2,8 @@
   --color-bg: oklch(14% 0.008 55);
   --color-bg-camera: oklch(10% 0.006 55);
   --color-surface: oklch(19% 0.012 60);
+  /* One tonal step above surface, for a selected/raised card fill. */
+  --color-surface-raised: oklch(23% 0.013 60);
   --color-border: oklch(30% 0.01 60);
   --color-border-divider: oklch(28% 0.01 60);
   --color-border-hairline: oklch(24% 0.01 60);
@@ -25,11 +27,15 @@
   --color-muted: oklch(62% 0.02 75);
   --color-muted-mid: oklch(70% 0.02 75);
   --color-muted-light: oklch(80% 0.02 75);
-  --color-muted-dim: oklch(55% 0.02 75);
-  --color-placeholder-text: oklch(45% 0.01 60);
+  --color-muted-dim: oklch(60% 0.02 75);
+  --color-placeholder-text: oklch(52% 0.012 60);
 
   --color-stripe-a: oklch(24% 0.01 60);
   --color-stripe-b: oklch(21% 0.01 60);
+
+  /* The one semantic non-gold hue: a warm terracotta-red for form/validation errors.
+     Kept close to the warm world (hue 40) rather than a cold alarm red. */
+  --color-error: oklch(66% 0.15 40);
 
   --font-serif: 'Playfair Display', serif;
   --font-sans: 'Manrope', sans-serif;

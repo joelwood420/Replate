@@ -10,6 +10,25 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-20 — Cookbook filter chips removed rather than made functional
+
+**Decision:** Delete the `Mains / Sauces / Desserts` filter chips from the Cookbook screen
+outright (leaving the dish grid and the header summary), rather than wiring them up or
+keeping a lone `All` chip.
+
+**Why:** The chips were a false affordance — they repainted on tap but never filtered
+(`visibleJobs = jobs` unconditionally), because no whole-dish category field exists on the
+backend (a component's `role` and the dish `cuisine` are neither of them a Mains/Sauces/
+Desserts taxonomy). A control that responds but does nothing erodes trust. The honest
+alternative considered was a status filter (`All / To cook / Cooked`) backed by the existing
+`job.status`, but that adds a feature beyond a distill pass, and the header summary
+("N dishes · M reverse-engineered") already surfaces that split; removal was chosen as the
+leanest fix that stops the UI from lying. The `FilterChip` component itself is kept — it is a
+documented design-system primitive and may back a real filter later. Surfaced by an
+`/impeccable critique` of the frontend (P1 finding).
+
+---
+
 ## 2026-08-18 — Recipe generation model: Claude Sonnet 5
 
 **Decision:** Wire the "Reverse engineer" step (`generate_recreation`, the stage-2 recipe

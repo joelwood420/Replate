@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Logo } from '../components/Logo';
+import { PillButton } from '../components/PillButton';
 import { useAuth } from '../lib/auth/useAuth';
 import styles from './OnboardingScreen.module.css';
 
@@ -105,9 +106,9 @@ export function OnboardingScreen() {
 
           {error && <div className={styles.error}>{error}</div>}
 
-          <button type="submit" className={styles.primaryButton} disabled={!canSubmitCode}>
+          <PillButton variant="footer" type="submit" disabled={!canSubmitCode}>
             {busy ? 'Verifying…' : 'Verify & continue'}
-          </button>
+          </PillButton>
         </form>
 
         <button type="button" className={styles.backLink} onClick={handleResend}>
@@ -160,21 +161,10 @@ export function OnboardingScreen() {
 
         {error && <div className={styles.error}>{error}</div>}
 
-        <button type="submit" className={styles.primaryButton} disabled={!canSubmitForm}>
+        <PillButton variant="footer" type="submit" disabled={!canSubmitForm}>
           {busy ? 'Creating…' : 'Create account'}
-        </button>
+        </PillButton>
       </form>
-
-      <div className={styles.divider}>
-        <span className={styles.dividerLine} />
-        <span className={styles.dividerText}>or</span>
-        <span className={styles.dividerLine} />
-      </div>
-
-      {/* Placeholder: Google sign-in is not wired up yet. */}
-      <button type="button" className={styles.googleButton}>
-        Continue with Google
-      </button>
 
       <div className={styles.spacer} />
 
