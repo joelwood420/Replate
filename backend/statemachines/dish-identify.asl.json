@@ -167,7 +167,32 @@
           }
         }
       ],
-      "Next": "MatchMenuItem"
+      "Next": "IsFood"
+    },
+
+    "IsFood": {
+      "Comment": "The vision guess doubles as an 'is this even food' gate. A non-food photo (a pet, a landscape, an empty plate) is a normal terminal outcome, not a failure, so it skips the match and menu spend and ends like a moderation rejection.",
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.parallel[0].is_food",
+          "BooleanEquals": false,
+          "Next": "MarkJobNotFood"
+        }
+      ],
+      "Default": "MatchMenuItem"
+    },
+
+    "MarkJobNotFood": {
+      "Comment": "Not a dish. Marked Failed for the user with a friendly reason, but ended rather than Failed - the same normal-terminal-outcome shape as MarkJobRejected.",
+      "Type": "Task",
+      "Resource": "${MarkJobFailedFunctionArn}",
+      "Parameters": {
+        "job_id.$": "$.job_id",
+        "error_message.$": "$.parallel[0].not_food_reason"
+      },
+      "ResultPath": null,
+      "End": true
     },
 
     "MatchMenuItem": {

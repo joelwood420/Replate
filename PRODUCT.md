@@ -102,9 +102,11 @@ Two mechanisms competitors could not truthfully copy without doing the same work
 ## Evidence on Hand
 
 - **Working software:** a full React frontend (six screens, ~17+ components) and a Python/AWS
-  backend pipeline exist and are tested (~133 backend tests). A live stub deploy runs at
-  `https://d8j5itd2nds9.cloudfront.net/home` (Phase 3a: real auth + infra live, paid AI
-  integrations off — "Reverse engineer" returns stub output until Phase 3b).
+  backend pipeline exist and are tested (~133 backend tests). A live deploy runs at
+  `https://d8j5itd2nds9.cloudfront.net/home` (Phase 3a: real auth + infra live). The vision
+  model (preliminary dish identification) and stage-2 recipe generation ("Reverse engineer")
+  now run real Anthropic Claude calls (`claude-sonnet-5`); image moderation stays off for now
+  (the last of the Phase 3b real-AI pass).
 - **Documentation:** `README.md`, `docs/api.md`, `docs/architecture.md`, `docs/user-flow.md`,
   `docs/decisions.md`, `CLAUDE.md` (phase plan).
 - **No real user testimonials, benchmarks, press, pricing, or usage metrics exist yet** —

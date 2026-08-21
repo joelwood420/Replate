@@ -10,6 +10,27 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-22: Vision guess wired to a real model (Claude Sonnet 5)
+
+**Decision:** Wire the stage-1 vision guess (`vision_guess`, the preliminary dish/element
+breakdown read from the uploaded photo) to a real Anthropic call on Claude Sonnet 5
+(`claude-sonnet-5`), replacing the canned, hash-picked stub. It runs at `effort="low"`, reads
+the photo from the uploads bucket, base64-encodes it into an image block, and returns a
+structured breakdown. A blank `ANTHROPIC_VISION_MODEL` still degrades to the stub so local
+runs and the smoke test need no model spend.
+
+**Why:** Sonnet 5 balances quality and cost on what is the frequent, at-the-table stage-1
+call, and its accuracy is backstopped by the menu match (`match_menu_item`), which trusts the
+restaurant's real menu over the vision guess. Frontier-level naming precision is therefore not
+needed here, since a wrong guess is corrected downstream. Reusing the same model the recipe
+generator already runs (see 2026-08-18) keeps it to one model and one cost profile to reason
+about. Claude Haiku 4.5 was considered as a cheaper option and stays a valid future switch if
+per-scan cost becomes a concern; Claude Opus 5 was judged overkill for a guess that gets
+corrected by the match step. No infrastructure change was needed: the vision Lambda already
+held S3 read and SSM read permissions, and the call reuses the existing account API key.
+
+---
+
 ## 2026-08-20 — Cookbook filter chips removed rather than made functional
 
 **Decision:** Delete the `Mains / Sauces / Desserts` filter chips from the Cookbook screen

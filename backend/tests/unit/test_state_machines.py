@@ -132,6 +132,26 @@ def test_only_an_explicit_false_verdict_blocks():
     assert all(c.get("BooleanEquals") is False for c in choice["Choices"])
 
 
+def test_a_non_food_photo_skips_the_match_and_ends_successfully():
+    """The vision guess doubles as a food gate: a non-food photo skips the match and
+    menu spend and ends like a moderation rejection, not as an execution failure."""
+    assert IDENTIFY["States"]["IdentifyAndFetchMenu"]["Next"] == "IsFood"
+
+    choice = IDENTIFY["States"]["IsFood"]
+    not_food = [c for c in choice["Choices"] if c.get("BooleanEquals") is False]
+
+    assert len(not_food) == 1
+    assert not_food[0]["Variable"] == "$.parallel[0].is_food"
+    assert not_food[0]["Next"] == "MarkJobNotFood"
+    assert choice["Default"] == "MatchMenuItem"
+    assert IDENTIFY["States"]["MarkJobNotFood"]["End"] is True
+    # The user-facing reason comes from the vision guess.
+    assert (
+        IDENTIFY["States"]["MarkJobNotFood"]["Parameters"]["error_message.$"]
+        == "$.parallel[0].not_food_reason"
+    )
+
+
 def test_vision_runs_concurrently_with_the_menu_branch():
     parallel = IDENTIFY["States"]["IdentifyAndFetchMenu"]
 

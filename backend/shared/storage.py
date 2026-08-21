@@ -104,6 +104,19 @@ def generate_read_url(key: str) -> str:
     )
 
 
+def read_object(key: str) -> tuple[bytes, str]:
+    """Read an uploaded object's bytes and content type.
+
+    Used by the vision guess to pull the photo into the Lambda and base64-encode
+    it for the model - unlike moderation, which hands Rekognition an S3 reference
+    and never sees the bytes. Returns the object's stored ContentType so the caller
+    can pick the right image media type, defaulting to JPEG (what the uploads are).
+    """
+    response = get_client().get_object(Bucket=app_config.s3_bucket_uploads(), Key=key)
+    body = response["Body"].read()
+    return body, response.get("ContentType") or "image/jpeg"
+
+
 def object_exists(key: str) -> bool:
     """Whether the client has actually uploaded to a key we handed out.
 
