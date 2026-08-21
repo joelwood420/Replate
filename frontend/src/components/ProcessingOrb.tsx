@@ -1,5 +1,22 @@
 import { useEffect, useState } from 'react';
 import styles from './ProcessingOrb.module.css';
+import { MoltenOrb } from './MoltenOrb';
+
+// The molten shader is the app's one live-light showpiece, but it's strictly additive: honour
+// prefers-reduced-motion by not mounting it at all, leaving the calm CSS orb as the whole
+// experience. Read once and track changes so toggling the OS setting takes effect live.
+function usePrefersReducedMotion() {
+  const [reduced, setReduced] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onChange = () => setReduced(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return reduced;
+}
 
 /**
  * The two pipeline stages share the orb's DNA but not its weight. Stage 1 (identify) is
@@ -58,10 +75,18 @@ export function ProcessingOrb({ stage = 'identify' }: { stage?: OrbStage }) {
   }, [stage, phrases.length, intervalMs]);
 
   const isGenerate = stage === 'generate';
+  const reducedMotion = usePrefersReducedMotion();
 
   return (
     <div className={styles.wrap}>
       <div className={`${styles.orb} ${isGenerate ? styles.orbGenerate : ''}`}>
+        {!reducedMotion && (
+          <MoltenOrb
+            className={styles.molten}
+            intensity={isGenerate ? 1 : 0.35}
+            warm={isGenerate ? 1 : 0}
+          />
+        )}
         <div className={styles.track} />
         <div className={styles.spinner}>
           <div className={styles.arc} />
