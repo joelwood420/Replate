@@ -507,7 +507,16 @@ Do not start this phase until Phases 3, 4 and 5 are done.
    + pgvector, or S3 Vectors). Note OpenSearch Serverless has a minimum billed capacity and no
    free tier, so this is a "when it is actually needed" change, per Global Rule 1.
 
-**Explicitly out of scope for Phase 6:** anything not related to technique grounding.
+7. **Set honest accuracy expectations in the UI.** Add an unobtrusive note (for example on the
+   capture screen, or near the result's confidence badge) that Replate is designed for
+   restaurant dishes: the menu match is what keeps identification honest, so a home-cooked meal
+   with no restaurant menu to match against (the `vision_only_low` outcome) may be less
+   accurate. This is UX copy rather than technique grounding, but it belongs with this phase's
+   "be honest about accuracy" theme, and it is a small standalone frontend change that could
+   also land earlier if wanted.
+
+**Explicitly out of scope for Phase 6:** anything beyond technique grounding and the
+accuracy-expectation UI note above.
 
 ---
 
