@@ -382,12 +382,12 @@ Do not start this phase until Phase 0's test suite is green.
      guess and the real menu items) and persist which of the three confidence outcomes
      occurred — this is the anti-hallucination mechanism, so add specific test coverage for
      all three outcomes, not just the happy path.
-   - Embeddings: pick a real embedding provider (Anthropic has none), seed 1024-d vectors into
-     the `EMBEDDINGS` partition, retrieved by in-Lambda cosine similarity. Until then the
-     pseudo-embedding stub stands. Revisit the brute-force scan only if the corpus grows large
-     enough that scanning it stops being trivially cheap.
+   - Embeddings: **moved to Phase 6 (the final phase).** The technique-grounding retrieval is
+     deferred; the pseudo-embedding stub stands until then, so recipe generation runs on the
+     matched menu item + vision breakdown alone. See Phase 6.
    - Structured generator: final Anthropic API call producing the per-element ingredient lists +
-     steps, grounded in the matched menu item (if any) + retrieved technique embeddings — the
+     steps, grounded in the matched menu item (if any) + retrieved technique embeddings (a stub
+     until Phase 6) — the
      heaviest-output, highest-cost call in the pipeline, so budget and rate-limit around it
      specifically (see step 6).
 5. Real Cognito JWT validation on the API, replacing the `X-Debug-User-Oid` stub on both the
@@ -403,7 +403,8 @@ Do not start this phase until Phase 0's test suite is green.
     always-free or 12-month, and what's the overage rate — per Global Rule 1.
 
 **Explicitly out of scope for Phase 3:** GitHub Actions workflows (deployment stays manual
-this phase), staging environment.
+this phase), staging environment, and the real embedding provider / technique-corpus grounding
+(moved to Phase 6, the final phase).
 
 ---
 
@@ -473,6 +474,42 @@ deployed instance), all wired into the GitHub Actions pipeline.
 
 ---
 
+## Phase 6 — Recipe grounding (real embeddings / RAG) *(final phase)*
+
+**Goal:** make the culinary-technique retrieval real, so recipe generation is grounded in
+trusted technique references rather than the model's unaided knowledge. This hardens the
+*method* (the how); it is separate from the menu match, which already hardens the dish
+*identity* (the what). Deliberately last: the generator is already usable without it (it runs
+on the matched menu item + vision breakdown), so this is quality polish, not a blocker.
+
+Do not start this phase until Phases 3, 4 and 5 are done.
+
+1. **Decide whether the corpus is worth it first.** A technique-RAG step only improves output
+   if the corpus holds something the model does not already know well: authoritative, unusual,
+   or curated technique beyond its training. If a curated corpus is not worth building, the
+   honest outcome of this phase may be "skip retrieval, rely on the model," which is a valid,
+   defensible result. Decide this before wiring anything.
+2. **Pick a real embedding provider.** Anthropic has no embeddings endpoint, so this needs a
+   third-party provider. Record the choice and reasoning in `docs/decisions.md` (Global Rule
+   6). Keep the 1024-d width or re-baseline the `EMBEDDING_DIM` constant to the provider's.
+3. **Build and seed the corpus.** Curate the technique/reference snippets, embed them, and seed
+   the vectors into the `EMBEDDINGS` partition via `backend/db/seed_embeddings.py`.
+4. **Wire real semantic retrieval.** Replace `models.pseudo_embedding` with a real
+   embed-the-query call in `query_culinary_embeddings`; the in-Lambda cosine scan over the
+   `EMBEDDINGS` partition stays as-is.
+5. **Alternative to weigh:** instead of a static embedded corpus, ground the generator with the
+   server-side `web_search` tool at generation time (the mechanism the menu fetch already uses),
+   pulling live technique references for the specific dish. More current and no corpus to
+   curate, at the cost of latency and per-call spend. Pick one and record why.
+6. **Scale the vector store only if needed.** The brute-force in-Lambda scan is fine for a small
+   corpus. Only if it outgrows that, move to a real vector index (OpenSearch Serverless, Aurora
+   + pgvector, or S3 Vectors). Note OpenSearch Serverless has a minimum billed capacity and no
+   free tier, so this is a "when it is actually needed" change, per Global Rule 1.
+
+**Explicitly out of scope for Phase 6:** anything not related to technique grounding.
+
+---
+
 ## Future (not yet scoped — do not build ahead of this)
 
 - Staging environment: second CloudFormation stack, second Cognito app client (or a different
@@ -481,9 +518,5 @@ deployed instance), all wired into the GitHub Actions pipeline.
   against staging instead of post-deploy against prod.
 - Push-based result delivery (API Gateway WebSockets or AWS IoT Core over MQTT) replacing the
   3-second poll, if polling ever becomes a real cost or UX problem.
-- A vector index (OpenSearch Serverless, Aurora + pgvector, or S3 Vectors) if the culinary
-  embedding corpus outgrows a brute-force in-Lambda scan. Note OpenSearch Serverless has a
-  minimum billed capacity and no free tier — this is a "when it's actually needed" change,
-  per Global Rule 1.
 - Any paid-tier upgrades once free-tier limits are actually being approached in practice
   (DynamoDB capacity, Cognito MAU, CloudFront transfer, etc.).
