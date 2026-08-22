@@ -1,15 +1,11 @@
-# End-to-end tests (Phase 5). Runs the Playwright journey against the deployed prod site
-# after a deploy succeeds, plus on manual dispatch. Not a pre-merge gate: there is no staging
-# environment yet, so this runs post-deploy and a failure is an alert/rollback signal rather
-# than a merge blocker. Each happy-path run spends real Anthropic tokens + web_search and
-# consumes the demo user's rate-limit quota, so the suite is kept lean. See docs/decisions.md.
-name: E2E (post-deploy)
+# End-to-end tests (Phase 5). Manual only: a full happy-path run drives the real pipeline
+# (vision + menu web_search + recipe generation) and has cost noticeably more than a normal
+# recipe generation, so it is not wired to run automatically on deploy. Trigger it by hand
+# (Actions tab -> "E2E (manual)" -> Run workflow) when you want to validate the live journey.
+# See docs/decisions.md.
+name: E2E (manual)
 
 on:
-  workflow_run:
-    # Must match the `name:` of the deploy workflows exactly.
-    workflows: ["Deploy frontend", "Deploy infra and backend"]
-    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -25,10 +21,6 @@ concurrency:
 jobs:
   e2e:
     name: Playwright journey against prod
-    # workflow_run fires on any completion; only proceed on a successful deploy (or a manual run).
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
