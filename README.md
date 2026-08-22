@@ -17,13 +17,39 @@ part, and nobody needs it while they're still sitting at the table.
 **https://d8j5itd2nds9.cloudfront.net/home** — the React site, served from CloudFront
 (stack `replate`, region `ap-southeast-2`).
 
-> This is the **Phase 3a deploy** with the Phase 3b real-AI pass now underway. Real Cognito
-> auth and the full infrastructure are live, and both the **vision model** (the preliminary
-> dish identification) and **stage-2 recipe generation** ("Reverse engineer") now run real
-> Anthropic Claude calls (`claude-sonnet-5`), reading the `ANTHROPIC_API_KEY` from Parameter
-> Store at runtime. Image moderation stays off for now (`ModerationEnabled=false`); the non-food vision gate covers relevance but is not a safety classifier, so it should be switched back on before uploads open to the public. Deploys are automated (Phase 4):
-> merging to `main` runs GitHub Actions that `sam deploy` the stack and publish the React site
-> to this URL. See [`infra/README.md`](infra/README.md) for the CI/CD setup.
+> **Status:** live and real. Real Cognito auth, real AWS infrastructure, and real Anthropic
+> Claude calls (`claude-sonnet-5`) for both the vision identification and the "Reverse engineer"
+> recipe generation (the key is read from SSM Parameter Store at runtime). Deploys are automated:
+> merging to `main` runs GitHub Actions that `sam deploy` the stack and publish this site, and
+> every PR runs the backend + frontend test suites; the Playwright e2e suite is run manually.
+> The remaining work is Phase 6 (real technique embeddings — a pseudo-embedding stub for now)
+> and image moderation, which stays off (`ModerationEnabled=false`) and should be switched on
+> before uploads open to the public. See [`infra/README.md`](infra/README.md) for the CI/CD setup.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/02-home.jpg" alt="Home screen" /><br/>
+      <sub><b>Home</b> — scan a dish, plus your recently identified plates.</sub>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/04-recipe.jpg" alt="Reverse-engineered recipe" /><br/>
+      <sub><b>Reverse-engineered recipe</b> — per-component breakdown with ingredients and method, cross-checked against the restaurant's menu.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/03-cookbook.jpg" alt="Cookbook" /><br/>
+      <sub><b>Cookbook</b> — every dish you've identified, saved automatically.</sub>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/01-signin.jpg" alt="Sign in" /><br/>
+      <sub><b>Sign in</b> — Amazon Cognito authentication.</sub>
+    </td>
+  </tr>
+</table>
 
 ## Where things are
 
