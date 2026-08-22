@@ -120,6 +120,51 @@ never-expire group), `sam delete` removes those too — nothing lingers. The one
 remove is the `SecureString` in Parameter Store (CloudFormation never created it) — delete
 `/replate/anthropic-api-key` by hand if you want it gone.
 
+## CI/CD (Phase 4)
+
+Deployment is automated with GitHub Actions, prod only. The manual `sam` commands above still
+work and are the fallback; day to day, merging to `main` deploys. Auth is OIDC to an IAM role,
+so there are no AWS keys in GitHub. See `docs/decisions.md` (2026-08-22).
+
+- `.github/workflows/deploy-infra.yml` runs `sam build` + `sam deploy` on any push to `main`
+  under `infra/**` or `backend/**` (or on manual dispatch). Functions and infra are one stack,
+  so this single workflow deploys the backend too.
+- `.github/workflows/deploy-frontend.yml` builds the React app and publishes it (the same
+  two-pass sync + CloudFront invalidation as above) on any push to `main` under `frontend/**`.
+  It reads `ApiBaseUrl`, `UserPoolId` and `UserPoolClientId` from the stack outputs at build
+  time, so the site never drifts from the deployed API and user pool.
+- `.github/workflows/ci.yml` runs on every pull request: `sam validate --lint`, a frontend
+  `npm run build`, and a backend compile check. Full test automation is Phase 5.
+- `.github/workflows/teardown.yml` is manual only and deletes the stack (type the stack name to
+  confirm).
+
+### One-time bootstrap
+
+The deploy role cannot live in this stack (it is what deploys this stack), so it has its own
+small template. Deploy it once:
+
+```bash
+aws cloudformation deploy \
+  --template-file infra/github-oidc.yaml \
+  --stack-name replate-github-oidc \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region ap-southeast-2
+```
+
+Then, in the GitHub repo settings (Settings -> Secrets and variables -> Actions -> Variables),
+add three Actions **variables**:
+
+| Variable | Value |
+|---|---|
+| `AWS_REGION` | `ap-southeast-2` |
+| `SAM_STACK_NAME` | `replate` |
+| `AWS_DEPLOY_ROLE_ARN` | the `DeployRoleArn` output of the bootstrap stack |
+
+No Actions **secrets** are needed: OIDC replaces access keys, and the Anthropic key stays in
+SSM Parameter Store. If the account already has a GitHub OIDC provider, pass its ARN as the
+`ExistingOIDCProviderArn` parameter so the bootstrap reuses it instead of failing on a
+duplicate.
+
 ## Deliberate deviations
 
 - **Region `ap-southeast-2` (Sydney)** — closest to the owner for demo latency (see
@@ -145,5 +190,5 @@ remove is the `SecureString` in Parameter Store (CloudFormation never created it
   ```
   The execution roles already grant `ssm:GetParameter` on `/replate/*`; the 3b code change is
   reading them at runtime instead of from the (empty) env vars.
-- **CI/CD** — deployment stays manual this phase; GitHub Actions with OIDC federated
-  credentials is Phase 4.
+- **CI/CD** is done (Phase 4): see the "CI/CD (Phase 4)" section above. The only manual,
+  one-time step is deploying `github-oidc.yaml` and setting the three Actions variables.

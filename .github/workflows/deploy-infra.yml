@@ -1,0 +1,47 @@
+# Deploy the SAM stack (Phase 4). Functions and infrastructure are one stack, so this single
+# workflow deploys the backend too - there is no separate deploy-backend.yml (see
+# docs/decisions.md, 2026-08-22). Auth is OIDC to an IAM role; no long-lived AWS keys.
+name: Deploy infra and backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - infra/**
+      - backend/**
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+# Never let two stack deploys overlap.
+concurrency:
+  group: deploy-infra
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: sam build and deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+      # sam build containerizes (use_container = true in samconfig.toml) to build numpy for the
+      # Lambda platform. ubuntu-latest ships Docker, so no extra setup is needed.
+      - name: sam build
+        working-directory: infra
+        run: sam build
+      # region, capabilities, resolve_s3 and parameter_overrides all come from samconfig.toml.
+      - name: sam deploy
+        working-directory: infra
+        run: sam deploy --no-confirm-changeset --no-fail-on-empty-changeset

@@ -1,0 +1,142 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Replate CI/CD bootstrap (Phase 4). Creates the GitHub Actions OIDC provider and the IAM role
+  that GitHub assumes to deploy the main stack. This lives in its own stack on purpose: the role
+  is what grants permission to deploy the "replate" stack, so it cannot be created by that stack.
+  Deploy once by hand:
+    aws cloudformation deploy --template-file infra/github-oidc.yaml \
+      --stack-name replate-github-oidc --capabilities CAPABILITY_NAMED_IAM --region ap-southeast-2
+  Then set the DeployRoleArn output as the AWS_DEPLOY_ROLE_ARN GitHub Actions variable.
+
+# ---------------------------------------------------------------------------------------
+Parameters:
+  GitHubOrg:
+    Type: String
+    Default: "joelwood420"
+    Description: GitHub owner (user or org) of the repository.
+  GitHubRepo:
+    Type: String
+    Default: "Replate"
+    Description: Repository name. The trust policy is scoped to this repo only.
+  DeployBranch:
+    Type: String
+    Default: "main"
+    Description: >
+      Branch allowed to assume the role. Only pushes and workflow_dispatch runs on this branch
+      get AWS credentials; pull-request checks assume no role.
+  ExistingOIDCProviderArn:
+    Type: String
+    Default: ""
+    Description: >
+      Leave blank to create the GitHub OIDC provider. If the account already has one for
+      token.actions.githubusercontent.com, pass its ARN here so this stack reuses it instead of
+      failing on a duplicate.
+
+Conditions:
+  CreateProvider: !Equals [!Ref ExistingOIDCProviderArn, ""]
+
+# ---------------------------------------------------------------------------------------
+Resources:
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      # AWS no longer verifies this thumbprint for the well-known GitHub IdP, but the property
+      # is still required by CloudFormation.
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ReplateGitHubDeployRole
+      Description: Assumed by GitHub Actions (Phase 4) to deploy the Replate SAM stack and site.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - CreateProvider
+                - !Ref GitHubOIDCProvider
+                - !Ref ExistingOIDCProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "token.actions.githubusercontent.com:aud": sts.amazonaws.com
+                "token.actions.githubusercontent.com:sub": !Sub "repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${DeployBranch}"
+      Policies:
+        - PolicyName: ReplateDeployPermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # CloudFormation drives every resource change; it also creates the SAM-managed
+              # artifact bucket stack when resolve_s3 is used.
+              - Sid: CloudFormation
+                Effect: Allow
+                Action: cloudformation:*
+                Resource: "*"
+              # SAM artifact upload, the frontend site sync, and emptying buckets before delete.
+              - Sid: S3
+                Effect: Allow
+                Action: s3:*
+                Resource: "*"
+              # The services the "replate" stack is made of. Scoped by service/action; resource
+              # is "*" because CloudFormation names these resources at deploy time, so their ARNs
+              # are not known in advance. ssm is read-only (functions read the key at runtime).
+              - Sid: StackServices
+                Effect: Allow
+                Action:
+                  - lambda:*
+                  - dynamodb:*
+                  - sqs:*
+                  - states:*
+                  - cognito-idp:*
+                  - cloudfront:*
+                  - apigateway:*
+                  - logs:*
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:DescribeParameters
+                Resource: "*"
+              # SAM creates the Lambda and Step Functions execution roles (CAPABILITY_IAM).
+              - Sid: IamForStackRoles
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:UpdateAssumeRolePolicy
+                Resource: "*"
+              # PassRole is the one worth narrowing: only the compute services the stack runs on.
+              - Sid: PassExecutionRoles
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    iam:PassedToService:
+                      - lambda.amazonaws.com
+                      - states.amazonaws.com
+
+# ---------------------------------------------------------------------------------------
+Outputs:
+  DeployRoleArn:
+    Description: Set this as the AWS_DEPLOY_ROLE_ARN GitHub Actions variable.
+    Value: !GetAtt DeployRole.Arn
+  OIDCProviderArn:
+    Description: The GitHub OIDC provider ARN (created here, or the one you passed in).
+    Value: !If [CreateProvider, !Ref GitHubOIDCProvider, !Ref ExistingOIDCProviderArn]

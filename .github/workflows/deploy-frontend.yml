@@ -1,0 +1,80 @@
+# Build and publish the React site (Phase 4). Config (API URL, Cognito ids) is read from the
+# deployed stack's outputs at build time, so the site never drifts from the infrastructure it
+# talks to. Publish is two-pass on purpose: hashed assets cache forever, index.html never does,
+# so a returning browser is not served a stale app shell (see infra/README.md).
+name: Deploy frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - frontend/**
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-frontend
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Read stack outputs
+        id: outputs
+        run: |
+          json=$(aws cloudformation describe-stacks \
+            --stack-name "${{ vars.SAM_STACK_NAME }}" \
+            --query "Stacks[0].Outputs" --output json)
+          get() { echo "$json" | jq -r ".[] | select(.OutputKey==\"$1\") | .OutputValue"; }
+          {
+            echo "api_base_url=$(get ApiBaseUrl)"
+            echo "user_pool_id=$(get UserPoolId)"
+            echo "user_pool_client_id=$(get UserPoolClientId)"
+            echo "site_bucket=$(get SiteBucketName)"
+            echo "distribution_id=$(get CloudFrontDistributionId)"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build
+        working-directory: frontend
+        # VITE_COGNITO_ENABLED must be true or the deployed site ships mock auth (the default).
+        env:
+          VITE_API_BASE_URL: ${{ steps.outputs.outputs.api_base_url }}
+          VITE_COGNITO_ENABLED: "true"
+          VITE_COGNITO_USER_POOL_ID: ${{ steps.outputs.outputs.user_pool_id }}
+          VITE_COGNITO_CLIENT_ID: ${{ steps.outputs.outputs.user_pool_client_id }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Publish to S3 (two-pass) and invalidate CloudFront
+        working-directory: frontend
+        env:
+          SITE_BUCKET: ${{ steps.outputs.outputs.site_bucket }}
+          DISTRIBUTION_ID: ${{ steps.outputs.outputs.distribution_id }}
+        run: |
+          # 1. Hashed assets first: immutable, and --delete prunes superseded files.
+          aws s3 sync dist/ "s3://$SITE_BUCKET/" --delete \
+            --exclude "index.html" \
+            --cache-control "public, max-age=31536000, immutable"
+          # 2. index.html last: never silently cached, so the deploy is picked up immediately.
+          aws s3 cp dist/index.html "s3://$SITE_BUCKET/index.html" \
+            --cache-control "no-cache" \
+            --content-type "text/html; charset=utf-8"
+          aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*"
