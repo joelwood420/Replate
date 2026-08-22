@@ -18,6 +18,20 @@ Parameters:
     Type: String
     Default: "Replate"
     Description: Repository name. The trust policy is scoped to this repo only.
+  GitHubOwnerId:
+    Type: String
+    Default: "220981823"
+    Description: >
+      Immutable numeric ID of the GitHub owner. GitHub now issues immutable OIDC subject
+      claims that embed the owner and repo IDs (repo:<org>@<ownerId>/<repo>@<repoId>:...),
+      so the trust policy must match that form, not the legacy repo:<org>/<repo>:... form.
+      Find it at https://api.github.com/users/joelwood420 (the "id" field).
+  GitHubRepoId:
+    Type: String
+    Default: "1302097302"
+    Description: >
+      Immutable numeric ID of the repository, for the same reason as GitHubOwnerId. Find it
+      at https://api.github.com/repos/joelwood420/Replate (the "id" field).
   DeployBranch:
     Type: String
     Default: "main"
@@ -75,7 +89,11 @@ Resources:
             Condition:
               StringEquals:
                 "token.actions.githubusercontent.com:aud": sts.amazonaws.com
-                "token.actions.githubusercontent.com:sub": !Sub "repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${DeployBranch}"
+                # Immutable subject form: GitHub embeds the owner and repo numeric IDs in the
+                # sub, so this must be repo:<org>@<ownerId>/<repo>@<repoId>:ref:... . The
+                # legacy repo:<org>/<repo>:ref:... form never matches and STS denies every
+                # assume with a misleading "Not authorized to perform sts:AssumeRoleWithWebIdentity".
+                "token.actions.githubusercontent.com:sub": !Sub "repo:${GitHubOrg}@${GitHubOwnerId}/${GitHubRepo}@${GitHubRepoId}:ref:refs/heads/${DeployBranch}"
       Policies:
         - PolicyName: ReplateDeployPermissions
           PolicyDocument:
