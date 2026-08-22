@@ -12,6 +12,12 @@ less than one that shows where the thinking changed.
 
 ## 2026-08-22: Phase 5 testing in CI (pytest + Vitest on every PR, Playwright e2e post-deploy)
 
+**Update 2026-08-23 (supersedes the e2e cadence below):** e2e now runs **manually only**
+(`workflow_dispatch`), not post-deploy. A half-finished happy-path run cost over $1 versus
+~12c for a normal recipe generation, so an automatic run on every deploy was not worth the
+spend. Trigger it by hand to validate the live journey. The rest of this entry (unit tests on
+every PR, real ESLint) still stands.
+
 **Decision:** Wire the existing backend pytest suite (unit via moto, integration via LocalStack)
 and a new frontend Vitest suite into `ci.yml` so both run on every pull request, and add real
 ESLint (typescript-eslint + react-hooks) as a frontend lint gate replacing the tsc-only `lint`

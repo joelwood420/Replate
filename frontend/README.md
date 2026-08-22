@@ -63,7 +63,7 @@ Tests sit next to the code as `*.test.ts(x)` and run under Vitest in a jsdom env
 (`src/test/setup.ts` registers jest-dom matchers and Testing Library cleanup). They mock at the
 `apiClient` / `AuthContext` seams — `src/test/renderWithAuth.tsx` is the auth wrapper. Lint and
 the Vitest suite both run on every pull request via `.github/workflows/ci.yml`. The Playwright
-end-to-end suite lives in [`../e2e`](../e2e) and runs post-deploy against prod (see
+end-to-end suite lives in [`../e2e`](../e2e) and is run manually against prod (see
 [`../infra/README.md`](../infra/README.md)).
 
 > Note: `lint` used to be an alias for `tsc --noEmit`. That type-check now lives under
