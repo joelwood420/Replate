@@ -78,7 +78,7 @@ flowchart TB
 
     subgraph External["External APIs (3rd-party)"]
         Anthropic["Anthropic API<br/>Claude — vision, menu (web_search), generation"]
-        Places["Google Places<br/>restaurant lookup + typeahead"]
+        Places["Restaurant lookup<br/>OSM Overpass (GPS) + Google Places (typeahead)"]
     end
 
     Browser -- "sign in (OIDC)" --> Cognito
@@ -112,9 +112,11 @@ flowchart TB
 > `frontend/src/lib/jobs/useJobPolling.ts` is the seam to swap if that changes — on AWS the
 > alternatives are API Gateway WebSockets or AWS IoT Core over MQTT.
 
-**Everything except the Anthropic API, Google Places and (only its endpoint) Rekognition
-authenticates via IAM.** Rekognition itself is IAM; the two stored credentials in the whole
-system are the Anthropic API key and the Google Places key, both held in Parameter Store as
+**Everything except the Anthropic API, OSM Overpass, Google Places and (only its endpoint)
+Rekognition authenticates via IAM.** Rekognition itself is IAM, and OSM Overpass is a key-less
+public API; the two stored credentials in the whole system are the Anthropic API key and the
+Google Places key (the latter only for the manual name-search typeahead, since the GPS lookup
+uses key-less Overpass), both held in Parameter Store as
 `SecureString` parameters. The Anthropic API is reached over plain HTTPS egress — there is no
 VPC and therefore no NAT Gateway, which is the most common way a nominally serverless AWS
 project starts costing real money.
@@ -175,7 +177,8 @@ monthly grants with 12-month trial grants, and the difference only shows up a ye
 | API Gateway (HTTP API) | 1M requests/month | **12 months** | Per-million requests | No |
 | Rekognition | 5,000 images/month | **12 months** | Per-image | No |
 | Anthropic API | **None** — pay per token | — | Per input/output token (+ per web_search) | No |
-| Google Places | Provider-specific | — | Billed by Google | — |
+| Google Places (name typeahead only) | Provider-specific | — | Billed by Google | — |
+| OSM Overpass (GPS lookup) | Free, fair use | Always | None (public instance) | No |
 
 **Nothing in this design carries a fixed hourly cost**, provided DynamoDB stays on provisioned
 capacity at or below 25 RCU/WCU, no VPC (and therefore no NAT Gateway) is introduced, and no
@@ -203,8 +206,9 @@ IAM role** (no long-lived access keys) is Phase 4.
 
 Two things the template cannot do, which stay manual:
 
-- **The `SecureString` parameters** (Anthropic API key, Google Places key) must be created with
-  `aws ssm put-parameter` — CloudFormation cannot create `SecureString` values.
+- **The `SecureString` parameters** (Anthropic API key, and the Google Places key only if the
+  name-search typeahead is wired) must be created with `aws ssm put-parameter` — CloudFormation
+  cannot create `SecureString` values. The GPS lookup needs no key (OSM Overpass).
 - **Cognito's hosted-UI domain and the SPA callback URLs** need the CloudFront distribution
   domain, which doesn't exist until the first deploy — so the SPA client config is a two-pass
   step, exactly as the Entra app registration was.

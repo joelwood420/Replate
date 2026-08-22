@@ -74,3 +74,45 @@ def test_search_restaurants_propagates_http_errors(monkeypatch):
 
     with pytest.raises(httpx.HTTPStatusError):
         places.search_restaurants("Luigi's", None, None)
+
+
+def test_nearby_restaurants_parses_sorts_and_skips_unnamed(monkeypatch):
+    canned = {
+        "elements": [
+            {"type": "node", "id": 2, "lat": 40.720, "lon": -74.010,
+             "tags": {"amenity": "restaurant", "name": "Far Place", "website": "https://far"}},
+            {"type": "node", "id": 1, "lat": 40.7128, "lon": -74.0060,
+             "tags": {"amenity": "restaurant", "name": "Near Place",
+                      "addr:housenumber": "10", "addr:street": "Main St", "addr:city": "NYC"}},
+            {"type": "way", "id": 5, "center": {"lat": 40.7130, "lon": -74.0062},
+             "tags": {"amenity": "cafe", "name": "Way Cafe"}},
+            # No name -> skipped, it cannot identify a restaurant.
+            {"type": "node", "id": 9, "lat": 40.713, "lon": -74.006, "tags": {"amenity": "restaurant"}},
+        ]
+    }
+    monkeypatch.setattr(places.httpx, "post", lambda *a, **k: _mock_response(canned))
+
+    result = places.nearby_restaurants(40.7128, -74.0060)
+
+    assert len(result) == 3
+    assert result[0]["name"] == "Near Place"  # nearest-first
+    near = result[0]
+    assert near["restaurant_id"] == "osm-node-1"
+    assert near["address"] == "10 Main St, NYC"
+    assert near["distance_m"] <= result[-1]["distance_m"]
+    assert result[0]["distance_m"] <= result[1]["distance_m"] <= result[2]["distance_m"]
+
+
+def test_nearby_restaurants_raises_placeserror_on_http_error(monkeypatch):
+    response = MagicMock()
+    response.raise_for_status.side_effect = httpx.HTTPStatusError("bad", request=MagicMock(), response=MagicMock())
+    monkeypatch.setattr(places.httpx, "post", lambda *a, **k: response)
+
+    with pytest.raises(places.PlacesError):
+        places.nearby_restaurants(40.7, -74.0)
+
+
+def test_nearby_restaurants_empty_when_no_elements(monkeypatch):
+    monkeypatch.setattr(places.httpx, "post", lambda *a, **k: _mock_response({"elements": []}))
+
+    assert places.nearby_restaurants(40.7, -74.0) == []

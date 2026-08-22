@@ -136,7 +136,22 @@ def test_a_throttled_upload_carries_the_retry_after_header(ddb_table, monkeypatc
 # --- activity handlers ------------------------------------------------------
 
 
-def test_geocode_handler_wraps_candidates_in_the_state_machine_envelope(ddb_table):
+def test_geocode_handler_wraps_candidates_in_the_state_machine_envelope(monkeypatch, ddb_table):
+    monkeypatch.setattr(
+        geocode_restaurant_candidates.places,
+        "nearby_restaurants",
+        lambda lat, lon: [
+            {
+                "restaurant_id": "osm-node-1",
+                "name": "Luigi's",
+                "address": "1 St",
+                "latitude": 40.71,
+                "longitude": -74.0,
+                "distance_m": 40,
+                "menu_source_url": None,
+            }
+        ],
+    )
     result = geocode_restaurant_candidates.handler(
         {"job_id": "job-1", "latitude": 40.7128, "longitude": -74.0060}
     )
@@ -158,9 +173,13 @@ def test_geocode_handler_reports_no_candidate_without_failing(ddb_table):
     assert result["restaurant_id"] is None
 
 
-def test_select_handler_emits_the_same_envelope_shape(ddb_table):
+def test_select_handler_emits_the_same_envelope_shape(monkeypatch, ddb_table):
     """Both branches feed one Choice state, so their outputs must agree."""
     repository.upsert_restaurant("place-1", "Luigi's", "123 Main St", 40.7, -74.0, None)
+    monkeypatch.setattr(geocode_restaurant_candidates.places, "nearby_restaurants", lambda lat, lon: [])
+    # Empty from Overpass triggers the Claude fallback; stub it so the test makes no
+    # real web_search call (the envelope shape is all this asserts).
+    monkeypatch.setattr(geocode_restaurant_candidates, "_claude_nearby", lambda lat, lon: [])
 
     selected = select_restaurant_candidate.handler({"job_id": "job-1", "restaurant_id": "place-1"})
     geocoded = geocode_restaurant_candidates.handler(

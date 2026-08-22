@@ -10,6 +10,26 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-22: GPS restaurant lookup uses OpenStreetMap Overpass, not Google Places
+
+**Decision:** Implement the GPS-to-nearby-restaurants lookup (`geocode_restaurant_candidates`)
+against OpenStreetMap's Overpass API instead of Google Places, with a best-effort Claude
+web_search fallback when Overpass is unavailable or returns nothing. Overpass needs no API key
+and no billing account. The manual name-search path (`restaurant_search_http`) still calls
+Google Places and is unchanged for now.
+
+**Why:** Google Cloud requires a billing account to use the Places API, which the project owner
+did not want to set up. Overpass is free and key-less, which also removes the "wire a Google
+Places SSM key" task from the infra work and fits the project's cost-discipline rule. The
+tradeoff is coverage: OSM is strong in cities and patchier in rural areas, and the public
+Overpass instance is fair-use and rate-limited, so production-scale use would mean self-hosting
+or a paid instance later. The Claude fallback reuses the web_search tool already wired for menu
+fetch, so a transient Overpass failure still yields candidates rather than dropping straight to
+the no-restaurant outcome. Distance is computed in-process with a haversine, since Overpass
+returns coordinates but not distance.
+
+---
+
 ## 2026-08-22: Vision guess wired to a real model (Claude Sonnet 5)
 
 **Decision:** Wire the stage-1 vision guess (`vision_guess`, the preliminary dish/element

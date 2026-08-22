@@ -1,50 +1,24 @@
-from shared import models, repository
+"""Reverse-geocode the uploaded GPS to nearby restaurant candidates.
 
+Was a canned stub. Now uses OpenStreetMap's Overpass API (free, no API key, no
+billing account, unlike Google Places, see docs/decisions.md 2026-08-22), with a
+best-effort Claude web_search fallback when Overpass is unavailable or finds
+nothing. No candidates at all is a valid outcome, not an error: it produces the
+vision-only low-confidence match downstream.
+"""
+
+import hashlib
+
+from shared import anthropic_client, config, models, places, repository
+
+#: The (0, 0) sentinel for "no usable GPS". Short-circuited so a job without
+#: coordinates never makes a network call.
 NULL_ISLAND = (0.0, 0.0)
 
-CANNED_CANDIDATES = [
-    {
-        "restaurant_id": "stub-1",
-        "name": "Trattoria Roma",
-        "delta": 0.0005,
-        "distance_m": 55,
-        "menu_source_url": "https://example.com/menus/stub-1",
-    },
-    {
-        "restaurant_id": "stub-2",
-        "name": "Bangkok Kitchen",
-        "delta": 0.0012,
-        "distance_m": 140,
-        "menu_source_url": "https://example.com/menus/stub-2",
-    },
-    {
-        "restaurant_id": "stub-3",
-        "name": "The Burger Joint",
-        "delta": 0.0020,
-        "distance_m": 230,
-        "menu_source_url": "https://example.com/menus/stub-3",
-    },
-]
-
-
-def _stub_lookup(latitude: float, longitude: float) -> list[dict]:
-    if (latitude, longitude) == NULL_ISLAND:
-        return []
-
-    candidates = []
-    for entry in CANNED_CANDIDATES:
-        candidates.append(
-            {
-                "restaurant_id": entry["restaurant_id"],
-                "name": entry["name"],
-                "address": f"{100 + entry['distance_m']} Sample Ave",
-                "latitude": round(latitude + entry["delta"], 6),
-                "longitude": round(longitude + entry["delta"], 6),
-                "distance_m": entry["distance_m"],
-                "menu_source_url": entry["menu_source_url"],
-            }
-        )
-    return sorted(candidates, key=lambda c: c["distance_m"])
+_CLAUDE_NEARBY_SYSTEM = (
+    "You find real, currently-operating restaurants near a set of GPS coordinates. Use the "
+    "web_search tool. Return only real places, closest first."
+)
 
 
 def _persist(job_id: str, candidates: list[dict]) -> None:
@@ -60,8 +34,67 @@ def _persist(job_id: str, candidates: list[dict]) -> None:
     repository.put_job_candidates(job_id, candidates)
 
 
+def _claude_nearby(latitude: float, longitude: float) -> list[dict]:
+    """Fallback when Overpass fails or returns nothing.
+
+    Uses the Anthropic web_search tool already wired for menu fetch. Coordinates are a weak
+    query for a search engine, so this is a backstop, not the primary path: any failure or
+    unparseable reply just yields no candidates, which is a valid vision-only outcome.
+    """
+    model = config.anthropic_menu_model()
+    if not (model and anthropic_client.is_configured()):
+        return []
+
+    prompt = (
+        f"Find up to 5 real restaurants closest to latitude {latitude}, longitude {longitude}. "
+        'Return ONLY a JSON object of the form {"restaurants": [{"name": ..., "address": ..., '
+        '"latitude": ..., "longitude": ..., "website": ...}]}. Use null for anything unknown.'
+    )
+    try:
+        raw = anthropic_client.web_search_completion(
+            model=model,
+            system=_CLAUDE_NEARBY_SYSTEM,
+            messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+        )
+        data = anthropic_client.parse_json_response(raw)
+    except (anthropic_client.AnthropicError, ValueError):
+        return []
+
+    candidates = []
+    for restaurant in data.get("restaurants", []):
+        name = restaurant.get("name")
+        if not name:
+            continue
+        candidates.append(
+            {
+                # No stable OSM id here, so derive a deterministic one from the name.
+                "restaurant_id": "claude-" + hashlib.sha1(name.lower().encode("utf-8")).hexdigest()[:12],
+                "name": name,
+                "address": restaurant.get("address"),
+                "latitude": restaurant.get("latitude"),
+                "longitude": restaurant.get("longitude"),
+                # A text search cannot give a reliable distance; the model is asked to
+                # return closest-first, so order stands in for it.
+                "distance_m": None,
+                "menu_source_url": restaurant.get("website"),
+            }
+        )
+    return candidates
+
+
 def run(activity_input: dict) -> list[dict]:
-    candidates = _stub_lookup(activity_input["latitude"], activity_input["longitude"])
+    latitude = activity_input["latitude"]
+    longitude = activity_input["longitude"]
+    if (latitude, longitude) == NULL_ISLAND:
+        return []
+
+    try:
+        candidates = places.nearby_restaurants(latitude, longitude)
+    except places.PlacesError:
+        candidates = []
+    if not candidates:
+        candidates = _claude_nearby(latitude, longitude)
+
     if candidates:
         _persist(activity_input["job_id"], candidates)
     return candidates

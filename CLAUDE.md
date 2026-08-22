@@ -252,7 +252,7 @@ what brings the existing code up to it.
 2. Orchestration as **Step Functions Standard workflows**. This is a dependency chain, not
    simple parallel fan-out — model it accordingly:
    - Task: reverse-geocode the uploaded GPS coordinates → candidate restaurant(s) nearby
-     (Google Places) — stubbed lookup, real persistence.
+     (OpenStreetMap Overpass, key-less, with a Claude web_search fallback), real persistence.
    - Task: fetch the top candidate restaurant's menu (one Anthropic API call with the
      server-side `web_search` tool, extracted into structured menu items — most restaurant APIs
      don't return full menu text). Cache keyed by restaurant, gated on `MenuLastFetchedAt`.
@@ -369,7 +369,10 @@ Do not start this phase until Phase 0's test suite is green.
 3. Create the DynamoDB table from the template, not the console, so local and prod stay in
    lockstep.
 4. Finalize the AI feature against real resources:
-   - Restaurant lookup: real Google Places calls against the uploaded GPS.
+   - Restaurant lookup: real OpenStreetMap Overpass calls against the uploaded GPS (key-less,
+     with a Claude web_search fallback), replacing the earlier Google Places plan for the GPS
+     path. See docs/decisions.md, 2026-08-22. The manual name-search typeahead still uses
+     Google Places.
    - Menu fetch: real Anthropic API call with the server-side `web_search` tool (see Global
      Rule 1 — check per-token and per-web_search cost).
    - Vision model call: Anthropic API Claude — implement retries, timeouts, and structured-output
