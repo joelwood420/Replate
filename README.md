@@ -21,9 +21,9 @@ part, and nobody needs it while they're still sitting at the table.
 > auth and the full infrastructure are live, and both the **vision model** (the preliminary
 > dish identification) and **stage-2 recipe generation** ("Reverse engineer") now run real
 > Anthropic Claude calls (`claude-sonnet-5`), reading the `ANTHROPIC_API_KEY` from Parameter
-> Store at runtime. Image moderation stays off for now (`ModerationEnabled=false`); the non-food vision gate covers relevance but is not a safety classifier, so it should be switched back on before uploads open to the public. A frontend
-> deploy (`npm run build` → `aws s3 sync` → CloudFront invalidation) pushes local changes to
-> this URL.
+> Store at runtime. Image moderation stays off for now (`ModerationEnabled=false`); the non-food vision gate covers relevance but is not a safety classifier, so it should be switched back on before uploads open to the public. Deploys are automated (Phase 4):
+> merging to `main` runs GitHub Actions that `sam deploy` the stack and publish the React site
+> to this URL. See [`infra/README.md`](infra/README.md) for the CI/CD setup.
 
 ## Where things are
 
@@ -31,7 +31,7 @@ part, and nobody needs it while they're still sitting at the table.
 |---|---|
 | [`backend/`](backend/README.md) | Python on AWS Lambda + Step Functions — run it locally against LocalStack |
 | [`frontend/`](frontend/README.md) | React (Vite + TypeScript), mobile-first — `npm run dev` |
-| [`infra/`](infra/README.md) | AWS SAM template for the production environment (Phase 3, not written yet) |
+| [`infra/`](infra/README.md) | AWS SAM template for the production environment, deployed by GitHub Actions on merge to `main` |
 | [`docs/`](docs/) | [API reference](docs/api.md), [architecture](docs/architecture.md), [user flow](docs/user-flow.md), and the [decision log](docs/decisions.md) |
 | [`CLAUDE.md`](CLAUDE.md) | Project rules and the phase-by-phase build plan |
 

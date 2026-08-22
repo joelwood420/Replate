@@ -1,0 +1,60 @@
+# Manual teardown (Phase 4). Deletes the whole "replate" stack for cost control between demo
+# periods. Most of the stack scales to zero, so this is for peace of mind, not a standing bill.
+# Guarded: you must type the stack name to confirm.
+name: Teardown (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type the stack name (e.g. replate) to confirm deletion"
+        required: true
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  teardown:
+    name: Empty buckets and delete the stack
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "${{ vars.SAM_STACK_NAME }}" ]; then
+            echo "Confirmation did not match stack name '${{ vars.SAM_STACK_NAME }}'. Aborting."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      # CloudFormation cannot delete a non-empty S3 bucket, so empty both first.
+      - name: Empty buckets then sam delete
+        working-directory: infra
+        run: |
+          get_output() {
+            aws cloudformation describe-stacks --stack-name "${{ vars.SAM_STACK_NAME }}" \
+              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
+          }
+          SITE_BUCKET=$(get_output SiteBucketName)
+          UPLOADS_BUCKET=$(get_output UploadsBucketName)
+          for b in "$SITE_BUCKET" "$UPLOADS_BUCKET"; do
+            if [ -n "$b" ] && [ "$b" != "None" ]; then
+              echo "Emptying s3://$b"
+              aws s3 rm "s3://$b/" --recursive
+            fi
+          done
+          sam delete --stack-name "${{ vars.SAM_STACK_NAME }}" --region "${{ vars.AWS_REGION }}" --no-prompts
+
+      - name: What is intentionally left behind
+        run: |
+          echo "Not deleted: the SSM SecureString /replate/anthropic-api-key and the"
+          echo "replate-github-oidc bootstrap stack. Redeploying later does not recreate either."

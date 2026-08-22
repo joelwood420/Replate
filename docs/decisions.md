@@ -10,6 +10,42 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-22: CI/CD via GitHub Actions and OIDC, deploying the SAM stack as one unit
+
+**Decision:** Automate Phase 4 deployment with GitHub Actions, prod only. Merges to `main`
+deploy the whole SAM stack (`deploy-infra.yml`) and publish the React site
+(`deploy-frontend.yml`); every pull request runs a minimal check (`ci.yml`: `sam validate
+--lint`, a frontend `npm run build`, and a backend compile check); a manual `teardown.yml`
+deletes the stack for cost control. GitHub authenticates to AWS through an OIDC federated IAM
+role, not stored access keys. That role and the GitHub OIDC provider are created by a separate,
+hand-deployed CloudFormation stack (`infra/github-oidc.yaml`), and the role is scoped to only
+the services this stack manages. There is no separate backend deploy workflow: the Lambda
+functions and their infrastructure are one SAM stack, so one `sam deploy` ships both. The
+frontend workflow reads its build-time config (API URL, Cognito pool and client ids) from the
+deployed stack's outputs rather than from stored copies.
+
+**Why:** OIDC removes the standing risk of long-lived AWS keys sitting in GitHub secrets, which
+is the explicit Phase 4 requirement. The deploy role cannot live in the application stack it
+deploys (it is what grants permission to deploy that stack), so it needs a small separate
+bootstrap stack; keeping that as its own CloudFormation template rather than console clicks
+keeps it reproducible and reviewable. A scoped role over a broad power-user one demonstrates
+least privilege and limits blast radius, accepting that a future new resource type may need the
+policy widened (a deploy-time AccessDenied makes that gap obvious). Folding the backend into the
+infra deploy avoids a second workflow racing the first over the same stack. Deriving the
+frontend config from stack outputs at build time means the site can never drift from the
+infrastructure it talks to, and keeps Cognito/API values out of committed files. The PR check is
+deliberately minimal (lint plus build, no pytest or LocalStack) because Phase 4 only needs to
+catch obvious breakage; the full unit and e2e suites are Phase 5.
+
+**Context worth recording:**
+- Non-secret config (region `ap-southeast-2`, stack name `replate`, the deploy role ARN) is
+  stored as GitHub Actions variables. No Actions secrets are needed: OIDC replaces keys and the
+  Anthropic key stays in SSM Parameter Store.
+- The teardown workflow does not delete the SSM SecureString or the bootstrap OIDC stack, so
+  redeploying later does not require recreating either.
+
+---
+
 ## 2026-08-22: GPS restaurant lookup uses OpenStreetMap Overpass, not Google Places
 
 **Decision:** Implement the GPS-to-nearby-restaurants lookup (`geocode_restaurant_candidates`)
