@@ -64,7 +64,14 @@ Resources:
                 - CreateProvider
                 - !Ref GitHubOIDCProvider
                 - !Ref ExistingOIDCProviderArn
-            Action: sts:AssumeRoleWithWebIdentity
+            # configure-aws-credentials tags the session with 7 GitHub context tags by default
+            # (repo, branch, actor, commit, etc.), so the trust policy must allow sts:TagSession
+            # alongside the assume call. Without it the tagging half is denied and STS returns a
+            # misleading "Not authorized to perform sts:AssumeRoleWithWebIdentity". The tags are
+            # worth keeping for CloudTrail deploy attribution.
+            Action:
+              - sts:AssumeRoleWithWebIdentity
+              - sts:TagSession
             Condition:
               StringEquals:
                 "token.actions.githubusercontent.com:aud": sts.amazonaws.com
