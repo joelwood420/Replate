@@ -137,10 +137,11 @@ so there are no AWS keys in GitHub. See `docs/decisions.md` (2026-08-22).
   job (`npm ci` → ESLint → Vitest → build); the backend unit suite (`pytest`); and the backend
   integration suite (LocalStack via `docker compose`, then `pytest -m integration`). These are
   the checks to mark **required** for merge to `main` (see the Phase 5 section below).
-- `.github/workflows/e2e.yml` runs the Playwright journey against the deployed prod site after a
-  deploy succeeds (`workflow_run`) or on manual dispatch. It is **not** a pre-merge gate
-  (post-deploy by necessity — there is no staging yet), so a failure is an alert/rollback signal.
-  Prerequisites are in the Phase 5 section below.
+- `.github/workflows/e2e.yml` runs the Playwright journey against the deployed prod site
+  **manually only** (`workflow_dispatch` — Actions tab -> "E2E (manual)" -> Run workflow). A
+  full happy-path run drives the real pipeline and costs noticeably more than a normal recipe
+  generation, so it is not wired to any automatic trigger. Prerequisites are in the Phase 5
+  section below.
 - `.github/workflows/teardown.yml` is manual only and deletes the stack (type the stack name to
   confirm).
 
@@ -174,7 +175,9 @@ duplicate.
 ## Testing in CI/CD (Phase 5)
 
 Unit tests run on every PR (the `ci.yml` jobs above). The Playwright e2e journey runs
-post-deploy against prod via `e2e.yml`. Two one-time setup steps make e2e able to run:
+**manually** against prod via `e2e.yml` (`workflow_dispatch`) — a full run drives the real,
+paid pipeline, so it is triggered by hand, not on deploy. Two one-time setup steps make e2e
+able to run:
 
 1. **A demo Cognito user.** e2e signs in through the in-app `/signin` form, so it needs a
    permanent-password account with no email-code step. Create one with the welcome email
@@ -211,9 +214,10 @@ required status checks on `main` (Settings -> Branches -> add a branch protectio
 - `Backend integration tests (LocalStack)`
 - `Lint SAM template` (optional but cheap)
 
-E2E is intentionally **not** a required check — it runs post-deploy. Each happy-path e2e run
+E2E is intentionally **not** a required check — it is manual-only. Each happy-path e2e run
 spends real Anthropic tokens + web_search and consumes the demo user's rate-limit quota, which
-is why the suite is kept lean (one happy path plus two no-cost failure paths).
+is why it is triggered by hand and the suite is kept lean (one happy path plus two no-cost
+failure paths).
 
 ## Deliberate deviations
 
