@@ -4,50 +4,72 @@ import httpx
 
 from shared import config
 
-PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
-FIELD_MASK = "places.id,places.displayName,places.formattedAddress,places.location"
-LOCATION_BIAS_RADIUS_M = 5000.0
+# All restaurant lookups run on OpenStreetMap: no API key, no billing account (chosen over
+# Google Places, see docs/decisions.md 2026-08-22). Both endpoints are fair-use public
+# instances, so send a descriptive User-Agent per the OSM policy.
+OSM_USER_AGENT = "Replate/1.0 (dish identification; https://github.com/joelwood420/Replate)"
 
-# GPS -> nearby restaurants via OpenStreetMap's Overpass API. Chosen over Google Places
-# because it needs no API key and no billing account (see docs/decisions.md, 2026-08-22).
-# The public instance is fair-use, so send a descriptive User-Agent per the OSM policy.
+# GPS -> nearby restaurants (Overpass).
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-OVERPASS_USER_AGENT = "Replate/1.0 (dish identification; https://github.com/joelwood420/Replate)"
+OVERPASS_USER_AGENT = OSM_USER_AGENT
 NEARBY_RADIUS_M = 250
 # OSM amenity tags for "a place you would photograph a dish at".
 _FOOD_AMENITIES = ("restaurant", "cafe", "fast_food", "bar", "pub", "bistro")
+
+# Name typeahead / manual search (Nominatim).
+NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
+SEARCH_LIMIT = 8
+# ~0.1 deg box (roughly 11km) around the device, used to bias ranking, not to restrict.
+SEARCH_VIEWBOX_DELTA = 0.1
 
 
 class PlacesError(Exception):
     """A nearby-restaurant lookup failed transiently; the caller may fall back."""
 
 
-def _to_candidate(place: dict) -> dict:
-    location = place.get("location", {})
+def _viewbox(latitude: float, longitude: float, delta: float = SEARCH_VIEWBOX_DELTA) -> str:
+    # Nominatim viewbox is left,top,right,bottom (lon/lat order).
+    return f"{longitude - delta},{latitude + delta},{longitude + delta},{latitude - delta}"
+
+
+def _nominatim_candidate(place: dict) -> dict:
+    # jsonv2 gives a `name` for a POI; fall back to the first part of display_name.
+    display = place.get("display_name", "")
+    name = place.get("name") or display.split(",")[0]
     return {
-        "place_id": place["id"],
-        "name": place.get("displayName", {}).get("text", ""),
-        "address": place.get("formattedAddress", ""),
-        "latitude": location.get("latitude"),
-        "longitude": location.get("longitude"),
+        # Same id scheme as the Overpass GPS path, so a restaurant found by name and later
+        # by GPS resolve to the same REST# item.
+        "place_id": f"osm-{place['osm_type']}-{place['osm_id']}",
+        "name": name,
+        "address": display or None,
+        "latitude": float(place["lat"]),
+        "longitude": float(place["lon"]),
     }
 
 
 def search_restaurants(query: str, latitude: float | None, longitude: float | None) -> list[dict]:
-    body: dict = {"textQuery": query, "includedType": "restaurant"}
-    if latitude is not None and longitude is not None:
-        body["locationBias"] = {
-            "circle": {"center": {"latitude": latitude, "longitude": longitude}, "radius": LOCATION_BIAS_RADIUS_M}
-        }
+    """Restaurant name search via OpenStreetMap Nominatim (key-less).
 
-    headers = {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": config.google_places_api_key(),
-        "X-Goog-FieldMask": FIELD_MASK,
-    }
-    response = httpx.post(PLACES_SEARCH_URL, json=body, headers=headers, timeout=config.places_timeout_seconds())
+    Device coordinates only bias ranking (viewbox, unbounded), matching the previous
+    Google behaviour. Prefers results tagged as an eatery, falling back to the raw results
+    when none are so tagged, so an oddly-tagged restaurant is not dropped.
+    """
+    params: dict = {"q": query, "format": "jsonv2", "limit": SEARCH_LIMIT, "addressdetails": 1}
+    if latitude is not None and longitude is not None:
+        params["viewbox"] = _viewbox(latitude, longitude)
+        params["bounded"] = 0
+
+    response = httpx.get(
+        NOMINATIM_SEARCH_URL,
+        params=params,
+        headers={"User-Agent": OSM_USER_AGENT},
+        timeout=config.places_timeout_seconds(),
+    )
     response.raise_for_status()
-    return [_to_candidate(place) for place in response.json().get("places", [])]
+    results = response.json()
+
+    eateries = [p for p in results if p.get("class") == "amenity" and p.get("type") in _FOOD_AMENITIES]
+    return [_nominatim_candidate(p) for p in (eateries or results)]
 
 
 def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:

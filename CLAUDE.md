@@ -68,14 +68,15 @@ that also grounds itself against culinary technique/recipe embeddings.
 3. **One phase at a time.** Implement strictly in phase order (below). Don't start Phase 3
    work while Phase 0 is incomplete, and don't reach ahead into a later phase's resources
    (e.g. don't provision cloud infra during the port — assume LocalStack/mocks until Phase 3).
-4. **No secrets in code or SAM templates.** API keys (Anthropic API, Google Places, etc.) go in
+4. **No secrets in code or SAM templates.** API keys (the Anthropic API key) go in
    **AWS Systems Manager Parameter Store** as `SecureString` parameters and are read at
    runtime or referenced from the template — never hardcoded or committed. Prefer Parameter
    Store over Secrets Manager: Standard-tier parameters are free, whereas Secrets Manager
    bills per secret per month. Anything that can use **IAM instead of a key should** —
    S3, DynamoDB, SQS and Rekognition all authenticate via the Lambda execution role, so they
-   need no stored credential at all. The Anthropic API and Google Places are the exceptions
-   (they take keys); model calls moved off IAM-authenticated Bedrock deliberately — see
+   need no stored credential at all. The Anthropic API is the only exception (it takes a key);
+   restaurant lookups use key-less OpenStreetMap (Overpass + Nominatim), so no Places key is
+   needed. Model calls moved off IAM-authenticated Bedrock deliberately — see
    `docs/decisions.md` (2026-08-17).
 5. **Don't fabricate AWS pricing.** Pricing and free-tier terms change; if a cost claim
    matters for a decision, note that it should be re-verified against the current AWS /
@@ -292,7 +293,7 @@ what brings the existing code up to it.
 - Connect from Python via `boto3`. For interactive poking-around, use the AWS CLI against the
   LocalStack endpoint or NoSQL Workbench — the same tooling works against real DynamoDB later,
   so there's no switch between local and prod.
-- Unit tests: `pytest` with external calls (Anthropic API, Google Places, Rekognition)
+- Unit tests: `pytest` with external calls (Anthropic API, OpenStreetMap, Rekognition)
   mocked — no real credentials needed to run the suite.
 - Integration-style local tests: a smaller set hitting LocalStack directly (SQS round-trip,
   presigned URL generation, real DynamoDB writes/queries, the embedding scan) to catch what
@@ -369,10 +370,10 @@ Do not start this phase until Phase 0's test suite is green.
 3. Create the DynamoDB table from the template, not the console, so local and prod stay in
    lockstep.
 4. Finalize the AI feature against real resources:
-   - Restaurant lookup: real OpenStreetMap Overpass calls against the uploaded GPS (key-less,
-     with a Claude web_search fallback), replacing the earlier Google Places plan for the GPS
-     path. See docs/decisions.md, 2026-08-22. The manual name-search typeahead still uses
-     Google Places.
+   - Restaurant lookup: real OpenStreetMap calls against the uploaded GPS (Overpass, key-less,
+     with a Claude web_search fallback), replacing the earlier Google Places plan. See
+     docs/decisions.md, 2026-08-22. The manual name-search typeahead uses OSM Nominatim, so no
+     Google dependency remains.
    - Menu fetch: real Anthropic API call with the server-side `web_search` tool (see Global
      Rule 1 — check per-token and per-web_search cost).
    - Vision model call: Anthropic API Claude — implement retries, timeouts, and structured-output
@@ -456,7 +457,7 @@ deployed instance), all wired into the GitHub Actions pipeline.
 4. **Where e2e runs:** against the deployed prod environment after a deploy (a `post-deploy`
    job, or a dedicated `e2e.yml` triggered after the deploy workflows succeed), since there's
    no staging environment yet — be mindful this means e2e runs incur real Anthropic API (tokens
-   + web_search) and Google Places cost and consume Cognito MAU, so keep the suite lean (happy
+   + web_search) cost and consume Cognito MAU (OpenStreetMap lookups are free), so keep the suite lean (happy
    path + a couple of key failure paths) rather than exhaustive.
 5. **Test data hygiene:** use a dedicated test/demo user account (not a real user) for e2e
    runs, and clean up any DynamoDB items / S3 objects the run creates afterward (or tag them

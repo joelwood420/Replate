@@ -26,7 +26,6 @@ This deploys with every **paid** integration off, so it runs end-to-end at no pe
 |---|---|---|
 | Anthropic model calls (menu, vision, recipe) | `ANTHROPIC_API_KEY` blank | create the `SecureString` param |
 | Rekognition moderation | `ModerationEnabled=false` | `true` |
-| Google Places | env key empty; SSM param not yet created | create the `SecureString` param |
 
 Everything else is real: real Cognito sign-in, real API Gateway JWT authorizer, real
 DynamoDB/SQS/S3/Step Functions/CloudFront. See `docs/decisions.md` (2026-08-14) for why the

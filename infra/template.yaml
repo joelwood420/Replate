@@ -97,11 +97,10 @@ Globals:
         # ANTHROPIC_API_KEY is read at runtime from the SSM SecureString named by
         # ANTHROPIC_API_KEY_PARAM (docs/decisions.md, 2026-08-17); the blank env var is
         # only the local/absent fallback, and model calls degrade to the no-key path if
-        # the parameter is missing. GOOGLE_PLACES_API_KEY is still read at runtime from
-        # SSM in 3b; empty here so restaurant search degrades instead of KeyError-ing.
+        # the parameter is missing. Restaurant lookups use key-less OpenStreetMap
+        # (Overpass for GPS, Nominatim for name search), so no Places key is needed.
         ANTHROPIC_API_KEY_PARAM: !Ref AnthropicApiKeyParam
         ANTHROPIC_API_KEY: ""
-        GOOGLE_PLACES_API_KEY: ""
 
 # ---------------------------------------------------------------------------------------
 Resources:

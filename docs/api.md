@@ -156,8 +156,7 @@ so this is now mainly how a user removes one.
 ## `GET /restaurants/search`
 
 Restaurant name typeahead, backing the manual-selection flow shown when an uploaded photo has
-no EXIF GPS. Real Google Places Text Search, called server-side so the client never holds the
-Places API key.
+no EXIF GPS. Backed by OpenStreetMap Nominatim, called server-side. No API key is required.
 
 **Query params:** `query` (required), `latitude`/`longitude` (optional). The coordinates only
 *bias result ranking* — they are not a hard filter, and never become the job's location.
@@ -168,7 +167,7 @@ Places API key.
 ```
 A `place_id` from here is what goes into `POST /jobs`'s `selected_restaurant`.
 
-**400** if `query` is missing or blank. **502** if the Places API is unreachable.
+**400** if `query` is missing or blank. **502** if the Nominatim service is unreachable.
 
 ## Rate limits
 

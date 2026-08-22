@@ -11,7 +11,7 @@
     "RestaurantCandidate": {
       "type": "object",
       "properties": {
-        "place_id": { "type": "string", "description": "Google Places place_id, used as Restaurants.RestaurantId." },
+        "place_id": { "type": "string", "description": "OpenStreetMap id (osm-<type>-<id>), used as Restaurants.RestaurantId." },
         "name": { "type": "string" },
         "address": { "type": ["string", "null"] },
         "latitude": { "type": "number", "minimum": -90, "maximum": 90 },
@@ -298,7 +298,7 @@
 
     "GET /restaurants/search": {
       "auth": "X-Debug-User-Oid header required",
-      "description": "Restaurant name typeahead backing the manual-selection flow, used when an uploaded photo has no EXIF GPS. Proxies Google Places Text Search server-side so the client never holds the Places API key. A place_id returned here is what goes into POST /jobs's selected_restaurant.",
+      "description": "Restaurant name typeahead backing the manual-selection flow, used when an uploaded photo has no EXIF GPS. Backed by OpenStreetMap Nominatim server-side; no API key required. A place_id returned here is what goes into POST /jobs's selected_restaurant.",
       "request": {
         "query": {
           "query": { "type": "string", "minLength": 1, "description": "Required. Blank or whitespace-only is a 400." },
@@ -321,7 +321,7 @@
         "400": { "$ref": "#/$defs/ErrorResponse" },
         "502": {
           "allOf": [{ "$ref": "#/$defs/ErrorResponse" }],
-          "description": "The Places API was unreachable or returned an error status."
+          "description": "The Nominatim service was unreachable or returned an error status."
         }
       }
     }

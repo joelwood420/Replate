@@ -77,10 +77,6 @@ def cognito_enabled() -> bool:
     return os.environ.get("COGNITO_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 
 
-def google_places_api_key() -> str:
-    return os.environ["GOOGLE_PLACES_API_KEY"]
-
-
 def places_timeout_seconds() -> float:
     return float(os.environ.get("PLACES_TIMEOUT_SECONDS", "8"))
 

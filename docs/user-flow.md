@@ -24,7 +24,7 @@ flowchart TD
         Choice -->|"Live"| LiveGPS["Device geolocation"]
         Choice -->|"Upload existing photo"| ExifCheck{"EXIF GPS<br/>in the photo?"}
         ExifCheck -->|"Found"| ExifGPS["Use the photo's<br/>EXIF coordinates"]
-        ExifCheck -->|"Not found<br/>(screenshot, re-saved,<br/>location tagging off)"| Search["Search for the restaurant<br/>by name (Google Places)<br/>device location only biases ranking"]
+        ExifCheck -->|"Not found<br/>(screenshot, re-saved,<br/>location tagging off)"| Search["Search for the restaurant<br/>by name (OSM Nominatim)<br/>device location only biases ranking"]
         Search --> SelectRestaurant["Tap a result to select it"]
     end
 
