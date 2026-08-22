@@ -123,6 +123,24 @@ The unit suite uses [moto](https://github.com/getmoto/moto) for in-process Dynam
 needs nothing running. The integration suite hits LocalStack for real and **skips rather
 than fails** when nothing is listening.
 
+Both suites run in CI on every pull request (`.github/workflows/ci.yml`): `backend-unit`
+runs `pytest`, and `backend-integration` starts LocalStack with `docker compose up -d`, waits
+for its health endpoint, bootstraps + seeds, then runs `pytest -m integration`. The health
+wait is load-bearing: because the integration fixtures *skip* on an unreachable endpoint, CI
+blocks until LocalStack is up so the tests genuinely run rather than passing all-skipped.
+
+Two LocalStack details worth knowing (both set in `docker-compose.yml`):
+
+- **The image is pinned to `localstack/localstack:3.8.1`, not `:latest`.** The `:latest` tag
+  drifted to a 2026 build that refuses to start without a LocalStack Pro auth token (exit 55).
+  3.8.1 is the last-known token-free Community image covering S3/SQS/DynamoDB/Step Functions/SSM.
+  Bump it deliberately, checking a new tag still starts token-free.
+- **`S3_SKIP_SIGNATURE_VALIDATION=0`** makes LocalStack enforce S3 signatures; without it the
+  "upload URL is write-only" security test cannot verify anything (unsigned or wrong-verb GETs
+  return 200). One further check, that an anonymous read is denied, is S3 Block Public Access
+  behaviour LocalStack Community does not emulate, so `test_the_bucket_is_not_publicly_readable`
+  skips against LocalStack and only runs against real S3.
+
 ## What's real vs. stubbed
 
 | Step | State |

@@ -10,6 +10,38 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-22: Phase 5 testing in CI (pytest + Vitest on every PR, Playwright e2e post-deploy)
+
+**Decision:** Wire the existing backend pytest suite (unit via moto, integration via LocalStack)
+and a new frontend Vitest suite into `ci.yml` so both run on every pull request, and add real
+ESLint (typescript-eslint + react-hooks) as a frontend lint gate replacing the tsc-only `lint`
+script. A new lean Playwright e2e suite (one full happy-path journey plus two no-cost failure
+paths) runs against the deployed prod stack after the deploy workflows succeed on `main`
+(`e2e.yml`, triggered by `workflow_run`), not as a pre-merge check.
+
+**Why (e2e post-deploy on main):** running e2e against the real prod deployment is the truest
+signal that the live journey works end to end, and current merge/deploy volume is low enough
+that the per-run Anthropic cost (real vision, menu web_search, and recipe generation on
+`claude-sonnet-5`) is acceptable for now. It cannot be a pre-merge gate because there is no
+staging environment yet (the app only exists once deployed), so an e2e failure is treated as an
+alert or rollback trigger rather than a merge blocker. That gap closes when staging is introduced.
+
+**Why (real ESLint):** a real lint gate is expected of a production-quality repo and signals
+engineering discipline for a portfolio project, catching what `tsc --noEmit` alone does not
+(react-hooks dependency rules and unsafe patterns).
+
+**Context worth recording:**
+- The e2e suite is kept lean deliberately (one happy path, plus unauthenticated-redirect and
+  bad-login), because only the happy path spends Anthropic money; the two failure paths are free.
+- E2E uses a pre-provisioned demo Cognito user (admin-created, permanent password) driven through
+  the in-app `/signin` form, not the hosted UI. Its email and password are GitHub Actions secrets
+  (`E2E_USER_EMAIL`, `E2E_USER_PASSWORD`); a post-run cleanup step deletes that user's DynamoDB
+  job items so e2e data does not pollute real usage metrics.
+- The backend and frontend unit jobs are intended to be required status checks on `main`; e2e is
+  not, since it runs post-deploy.
+
+---
+
 ## 2026-08-22: CI/CD via GitHub Actions and OIDC, deploying the SAM stack as one unit
 
 **Decision:** Automate Phase 4 deployment with GitHub Actions, prod only. Merges to `main`

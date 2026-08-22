@@ -14,12 +14,20 @@
 
 services:
   localstack:
-    image: localstack/localstack:latest
+    # Pinned to a specific Community release, not :latest. The :latest tag drifted to a
+    # 2026 build that fails to start without a LocalStack Pro auth token (exit 55). 3.8.1 is
+    # the last-known token-free Community image that covers everything here. Bump this
+    # deliberately after checking a new tag still starts token-free.
+    image: localstack/localstack:3.8.1
     ports:
       - "4566:4566" # single edge endpoint for every service
     environment:
       SERVICES: "s3,sqs,dynamodb,stepfunctions,ssm"
       DEBUG: "${LOCALSTACK_DEBUG:-0}"
+      # Enforce S3 signature checking (LocalStack skips it by default). Without this,
+      # unsigned or wrong-verb GETs return 200 and the "upload URL is write-only" /
+      # "bucket is not publicly readable" integration tests cannot actually verify anything.
+      S3_SKIP_SIGNATURE_VALIDATION: "0"
       # Persist between restarts so a seeded table survives `docker compose down`.
       PERSISTENCE: "1"
     volumes:

@@ -133,8 +133,14 @@ so there are no AWS keys in GitHub. See `docs/decisions.md` (2026-08-22).
   two-pass sync + CloudFront invalidation as above) on any push to `main` under `frontend/**`.
   It reads `ApiBaseUrl`, `UserPoolId` and `UserPoolClientId` from the stack outputs at build
   time, so the site never drifts from the deployed API and user pool.
-- `.github/workflows/ci.yml` runs on every pull request: `sam validate --lint`, a frontend
-  `npm run build`, and a backend compile check. Full test automation is Phase 5.
+- `.github/workflows/ci.yml` runs on every pull request: `sam validate --lint`; the frontend
+  job (`npm ci` → ESLint → Vitest → build); the backend unit suite (`pytest`); and the backend
+  integration suite (LocalStack via `docker compose`, then `pytest -m integration`). These are
+  the checks to mark **required** for merge to `main` (see the Phase 5 section below).
+- `.github/workflows/e2e.yml` runs the Playwright journey against the deployed prod site after a
+  deploy succeeds (`workflow_run`) or on manual dispatch. It is **not** a pre-merge gate
+  (post-deploy by necessity — there is no staging yet), so a failure is an alert/rollback signal.
+  Prerequisites are in the Phase 5 section below.
 - `.github/workflows/teardown.yml` is manual only and deletes the stack (type the stack name to
   confirm).
 
@@ -165,6 +171,50 @@ SSM Parameter Store. If the account already has a GitHub OIDC provider, pass its
 `ExistingOIDCProviderArn` parameter so the bootstrap reuses it instead of failing on a
 duplicate.
 
+## Testing in CI/CD (Phase 5)
+
+Unit tests run on every PR (the `ci.yml` jobs above). The Playwright e2e journey runs
+post-deploy against prod via `e2e.yml`. Two one-time setup steps make e2e able to run:
+
+1. **A demo Cognito user.** e2e signs in through the in-app `/signin` form, so it needs a
+   permanent-password account with no email-code step. Create one with the welcome email
+   suppressed and the address pre-verified (a fake domain is fine — nothing is emailed):
+   ```bash
+   POOL=<UserPoolId output>
+   aws cognito-idp admin-create-user --user-pool-id "$POOL" \
+     --username e2e-demo@replate.test --message-action SUPPRESS \
+     --user-attributes Name=email,Value=e2e-demo@replate.test Name=email_verified,Value=true
+   aws cognito-idp admin-set-user-password --user-pool-id "$POOL" \
+     --username e2e-demo@replate.test --password '<Passw0rd!>' --permanent
+   ```
+   The password must satisfy the pool policy: **>= 8 chars, upper + lower + digit** (symbols
+   optional). The e2e cleanup step resolves this user's `sub` from the email and deletes only
+   that user's job items after each run.
+2. **Two GitHub Actions secrets** (Settings -> Secrets and variables -> Actions -> Secrets),
+   which the workflow injects as the demo credentials:
+
+   | Secret | Value |
+   |---|---|
+   | `E2E_USER_EMAIL` | `e2e-demo@replate.test` |
+   | `E2E_USER_PASSWORD` | the permanent password set above |
+
+   The e2e job reuses the existing OIDC deploy role and the three Actions *variables* from the
+   Phase 4 bootstrap — the deploy role already grants the DynamoDB + Cognito access the cleanup
+   step needs, so no extra AWS config is required.
+
+**Make the PR checks required.** So a red suite blocks merge, mark these `ci.yml` job names as
+required status checks on `main` (Settings -> Branches -> add a branch protection rule for
+`main` -> "Require status checks to pass"):
+
+- `Frontend lint, test, build`
+- `Backend unit tests`
+- `Backend integration tests (LocalStack)`
+- `Lint SAM template` (optional but cheap)
+
+E2E is intentionally **not** a required check — it runs post-deploy. Each happy-path e2e run
+spends real Anthropic tokens + web_search and consumes the demo user's rate-limit quota, which
+is why the suite is kept lean (one happy path plus two no-cost failure paths).
+
 ## Deliberate deviations
 
 - **Region `ap-southeast-2` (Sydney)** — closest to the owner for demo latency (see
@@ -190,5 +240,8 @@ duplicate.
   ```
   The execution roles already grant `ssm:GetParameter` on `/replate/*`; the 3b code change is
   reading them at runtime instead of from the (empty) env vars.
-- **CI/CD** is done (Phase 4): see the "CI/CD (Phase 4)" section above. The only manual,
-  one-time step is deploying `github-oidc.yaml` and setting the three Actions variables.
+- **CI/CD** is done (Phase 4): see the "CI/CD (Phase 4)" section above. The one-time step is
+  deploying `github-oidc.yaml` and setting the three Actions variables.
+- **Phase 5 testing** adds two manual, one-time steps: create the e2e demo Cognito user and set
+  the `E2E_USER_EMAIL` / `E2E_USER_PASSWORD` Actions secrets, then mark the PR test jobs as
+  required status checks on `main`. See "Testing in CI/CD (Phase 5)" above.

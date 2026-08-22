@@ -1,0 +1,16 @@
+{
+  "name": "replate-e2e",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Playwright end-to-end suite. Runs post-deploy against the deployed prod site.",
+  "scripts": {
+    "test": "playwright test",
+    "cleanup": "node scripts/cleanup.mjs"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.700.0",
+    "@aws-sdk/client-dynamodb": "^3.700.0",
+    "@playwright/test": "^1.49.1"
+  }
+}
