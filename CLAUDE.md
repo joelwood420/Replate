@@ -34,9 +34,10 @@ that also grounds itself against culinary technique/recipe embeddings.
 - CI/CD: GitHub Actions
 
 > **This project moved from Azure to AWS on 2026-08-14.** Phases 1 and 2 were originally
-> built on Azure Functions + Azure SQL and have not been ported yet — see **Phase 0** below,
-> which is the current active phase. `docs/decisions.md` records the migration and its
-> reasoning; the pre-migration Bicep is recoverable from git history at commit `07354af`.
+> built on Azure Functions + Azure SQL and have since been ported to AWS (Phase 0). Phases 0
+> through 3 are done; **Phase 4 (CI/CD) is the current phase.** `docs/decisions.md` records the
+> migration and its reasoning; the pre-migration Bicep is recoverable from git history at
+> commit `07354af`.
 
 ## Global rules (apply in every phase)
 
@@ -91,7 +92,7 @@ that also grounds itself against culinary technique/recipe embeddings.
 
 ---
 
-## Phase 0 — Port the existing Azure code to AWS *(current phase)*
+## Phase 0 — Port the existing Azure code to AWS *(done)*
 
 **Goal:** the Phase 1 backend and Phase 2 frontend run locally against AWS emulators and AWS
 SDKs, with behaviour unchanged. This is a port, not a redesign — resist the urge to improve
@@ -237,7 +238,7 @@ template (Phase 3), CI/CD. Behaviour changes beyond the `web_search` split above
 
 ---
 
-## Phase 1 — Backend only *(built on Azure; being ported in Phase 0)*
+## Phase 1 — Backend only *(done)*
 
 **Goal:** working backend code, runnable locally against emulators, no cloud resources.
 
@@ -307,7 +308,7 @@ already present on the request — wire real validation in Phase 3), CI/CD.
 
 ---
 
-## Phase 2 — Frontend only *(built; auth layer being ported in Phase 0)*
+## Phase 2 — Frontend only *(done)*
 
 **Goal:** working React app that talks to the Phase 1 backend, no infra/CI yet.
 
@@ -335,7 +336,7 @@ AI feature logic (that's Phase 3).
 
 ---
 
-## Phase 3 — Infra only + AI feature
+## Phase 3 — Infra only + AI feature *(done)*
 
 **Goal:** all AWS resources provisioned via SAM/CloudFormation, and the AI feature (GPS →
 restaurant lookup, menu scraping, vision model, menu-matching/grounding, per-element
@@ -408,7 +409,7 @@ this phase), staging environment, and the real embedding provider / technique-co
 
 ---
 
-## Phase 4 — CI/CD
+## Phase 4 — CI/CD *(current phase)*
 
 **Goal:** automate what Phases 0-3 built manually, still prod-only.
 
