@@ -21,7 +21,7 @@ part, and nobody needs it while they're still sitting at the table.
 > auth and the full infrastructure are live, and both the **vision model** (the preliminary
 > dish identification) and **stage-2 recipe generation** ("Reverse engineer") now run real
 > Anthropic Claude calls (`claude-sonnet-5`), reading the `ANTHROPIC_API_KEY` from Parameter
-> Store at runtime. Image moderation stays off for now (`ModerationEnabled=false`). A frontend
+> Store at runtime. Image moderation stays off for now (`ModerationEnabled=false`); the non-food vision gate covers relevance but is not a safety classifier, so it should be switched back on before uploads open to the public. A frontend
 > deploy (`npm run build` → `aws s3 sync` → CloudFront invalidation) pushes local changes to
 > this URL.
 
