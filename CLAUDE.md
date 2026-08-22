@@ -35,7 +35,7 @@ that also grounds itself against culinary technique/recipe embeddings.
 
 > **This project moved from Azure to AWS on 2026-08-14.** Phases 1 and 2 were originally
 > built on Azure Functions + Azure SQL and have since been ported to AWS (Phase 0). Phases 0
-> through 3 are done; **Phase 4 (CI/CD) is the current phase.** `docs/decisions.md` records the
+> through 4 are done; **Phase 5 (unit + e2e testing in CI/CD) is the current phase.** `docs/decisions.md` records the
 > migration and its reasoning; the pre-migration Bicep is recoverable from git history at
 > commit `07354af`.
 
@@ -409,7 +409,7 @@ this phase), staging environment, and the real embedding provider / technique-co
 
 ---
 
-## Phase 4 — CI/CD *(current phase)*
+## Phase 4 — CI/CD *(done)*
 
 **Goal:** automate what Phases 0-3 built manually, still prod-only.
 
@@ -440,7 +440,7 @@ in the pipeline (Phase 5).
 
 ---
 
-## Phase 5 — Unit testing + e2e testing in CI/CD
+## Phase 5 — Unit testing + e2e testing in CI/CD *(current phase)*
 
 **Goal:** the backend unit tests and frontend tests run automatically on every PR, plus a
 proper end-to-end test suite exercising the full flow against prod (or a production-like

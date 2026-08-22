@@ -1,6 +1,8 @@
-# PR checks (Phase 4). Minimal, on-every-PR breakage catch: lint the infra template, build
-# the frontend (which type-checks), and compile-check the backend. No AWS credentials are
-# used here. Full unit + e2e test automation is Phase 5.
+# PR checks (Phase 5). Runs on every pull request: lint the SAM template, run the frontend
+# lint + Vitest + build, run the backend unit suite (moto, in-process), and run the backend
+# integration suite against LocalStack. No AWS credentials are used here. These jobs are meant
+# to be required status checks on `main`. The Playwright e2e suite runs post-deploy in e2e.yml,
+# not here, because it needs the deployed prod stack. See docs/decisions.md (Phase 5 entry).
 name: PR checks
 
 on:
@@ -26,8 +28,8 @@ jobs:
         working-directory: infra
         run: sam validate --lint --region ap-southeast-2
 
-  frontend-build:
-    name: Build frontend
+  frontend:
+    name: Frontend lint, test, build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,27 +38,84 @@ jobs:
           node-version: "20"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: npm ci and build
+      - name: Install
         working-directory: frontend
-        # Placeholder build-time config. This job only proves the app compiles (npm run build
-        # runs tsc -b first); it does not publish. deploy-frontend.yml injects the real values.
+        run: npm ci
+      - name: Lint (ESLint)
+        working-directory: frontend
+        run: npm run lint
+      - name: Unit tests (Vitest)
+        working-directory: frontend
+        run: npm run test
+      - name: Build (tsc -b type-check + vite build)
+        working-directory: frontend
+        # Placeholder build-time config. This step only proves the app compiles; it does not
+        # publish. deploy-frontend.yml injects the real values from the stack outputs.
         env:
           VITE_API_BASE_URL: https://example.invalid
           VITE_COGNITO_ENABLED: "false"
-        run: |
-          npm ci
-          npm run build
+        run: npm run build
 
-  backend-compile:
-    name: Compile-check backend
+  backend-unit:
+    name: Backend unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install dev deps and compileall
+      - name: Install dev deps
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements-dev.txt
-          python -m compileall backend
+      # pytest.ini's `addopts = -m "not integration"` scopes bare pytest to the moto-backed
+      # unit suite - no Docker, no LocalStack, no credentials. Covers the three menu-match
+      # confidence-outcome tests in tests/unit/test_match_menu_item.py.
+      - name: pytest (unit)
+        working-directory: backend
+        run: pytest
+
+  backend-integration:
+    name: Backend integration tests (LocalStack)
+    runs-on: ubuntu-latest
+    env:
+      AWS_ENDPOINT_URL: http://localhost:4566
+      AWS_DEFAULT_REGION: ap-southeast-2
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      DDB_TABLE_NAME: replate
+      S3_BUCKET_UPLOADS: replate-uploads
+      SQS_QUEUE_NAME: replate-jobs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Start LocalStack
+        working-directory: backend
+        run: docker compose up -d
+      # The integration fixtures SKIP (not fail) when the endpoint is unreachable, so a broken
+      # LocalStack would let this job pass green with every test skipped. Block until health is
+      # reported and fail the job if it never comes up, so the tests genuinely run.
+      - name: Wait for LocalStack to be healthy
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:4566/_localstack/health >/dev/null; then
+              echo "LocalStack ready"; exit 0
+            fi
+            sleep 2
+          done
+          echo "LocalStack did not become healthy in time" >&2
+          docker compose -f backend/docker-compose.yml logs || true
+          exit 1
+      - name: Install dev deps and bootstrap resources
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          python scripts/bootstrap_local.py
+          python db/seed_embeddings.py
+      # CLI -m integration overrides pytest.ini's default -m "not integration".
+      - name: pytest (integration)
+        working-directory: backend
+        run: pytest -m integration

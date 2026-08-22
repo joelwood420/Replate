@@ -49,12 +49,25 @@ provisioned.
 | `VITE_COGNITO_AUTHORITY`, `VITE_COGNITO_CLIENT_ID` | Phase 3 placeholders — unused while `VITE_COGNITO_ENABLED=false` |
 | `VITE_STUB_AUTH_HEADER_NAME`, `VITE_STUB_DEFAULT_USER_OID` | Must match the backend's `STUB_AUTH_HEADER_NAME`/`STUB_DEFAULT_USER_OID` |
 
-## Build / typecheck
+## Build, lint, test
 
 ```bash
-npm run build   # tsc -b && vite build
-npm run lint     # tsc --noEmit only
+npm run build      # tsc -b && vite build (type-check + bundle)
+npm run typecheck  # tsc --noEmit only
+npm run lint       # ESLint (typescript-eslint + react-hooks)
+npm run test       # Vitest unit/component tests (jsdom)
+npm run test:watch # Vitest in watch mode
 ```
+
+Tests sit next to the code as `*.test.ts(x)` and run under Vitest in a jsdom environment
+(`src/test/setup.ts` registers jest-dom matchers and Testing Library cleanup). They mock at the
+`apiClient` / `AuthContext` seams — `src/test/renderWithAuth.tsx` is the auth wrapper. Lint and
+the Vitest suite both run on every pull request via `.github/workflows/ci.yml`. The Playwright
+end-to-end suite lives in [`../e2e`](../e2e) and runs post-deploy against prod (see
+[`../infra/README.md`](../infra/README.md)).
+
+> Note: `lint` used to be an alias for `tsc --noEmit`. That type-check now lives under
+> `typecheck`, and `lint` runs real ESLint.
 
 ## Architecture notes
 
