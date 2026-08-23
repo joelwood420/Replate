@@ -1,29 +1,28 @@
-import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Logo } from '../components/Logo';
-import { useAuth } from '../lib/auth/useAuth';
 import styles from './SplashScreen.module.css';
 
-// Long enough for the logo to fade in, hold, and fade back out (see the `.logo`
-// animation in the stylesheet) before we route on. Keep the two in step.
-const SPLASH_DURATION_MS = 2400;
-
+/**
+ * The boot splash: "the flame ignites." A single gold spark catches, blooms into
+ * candlelight that lights the wordmark from within, then settles into a slow candle
+ * flicker that loops until the boot gate (AppBootGate) reveals the app, so it holds
+ * gracefully whether the load is instant or a cold start.
+ *
+ * Purely presentational; the gate owns timing. Honors prefers-reduced-motion by
+ * showing the fully-lit scene with no ignition or flicker. The medallion, wordmark,
+ * and tagline mirror the splash Logo so the brand mark stays consistent.
+ */
 export function SplashScreen() {
-  const navigate = useNavigate();
-  const { isAuthenticated } = useAuth();
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      // Already-signed-in users skip the login page entirely and land on Home.
-      navigate(isAuthenticated ? '/home' : '/signin', { replace: true });
-    }, SPLASH_DURATION_MS);
-    return () => clearTimeout(timer);
-  }, [isAuthenticated, navigate]);
-
   return (
     <div className={styles.screen}>
-      <div className={styles.logo}>
-        <Logo variant="splash" />
+      <div className={styles.vignette} aria-hidden="true" />
+      <div className={styles.stage}>
+        <div className={styles.bloom} aria-hidden="true" />
+        <div className={styles.mark} aria-hidden="true">
+          R
+        </div>
+        <div className={styles.textBlock}>
+          <div className={styles.wordmark}>REPLATE</div>
+          <div className={styles.tagline}>reverse-engineer any dish</div>
+        </div>
       </div>
     </div>
   );

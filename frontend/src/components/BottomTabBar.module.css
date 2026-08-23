@@ -1,8 +1,16 @@
 .bar {
+  /* Pin to the bottom of the viewport, staying inside the phone column. Sticky (not
+     fixed) keeps it within the 480px column on desktop and pins to the visible
+     bottom on mobile even when 100vh overshoots the dynamic viewport. */
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
   display: flex;
   justify-content: space-around;
   align-items: center;
-  padding: 10px 0 8px;
+  /* Opaque field so scrolled content passes behind it, and honor the iOS home-bar inset. */
+  background: var(--color-bg);
+  padding: 10px 0 max(8px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--color-border-divider);
 }
 
