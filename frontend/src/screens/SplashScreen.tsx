@@ -6,13 +6,19 @@ import styles from './SplashScreen.module.css';
  * flicker that loops until the boot gate (AppBootGate) reveals the app, so it holds
  * gracefully whether the load is instant or a cold start.
  *
+ * When the gate signals `exiting`, the candlelight hands off to the room: the bloom
+ * flares wide, the medallion and wordmark recede into the brightness, and the whole
+ * layer dissolves to reveal the app mounted behind it — the flame that was the only
+ * light in the room opening up to unveil it, instead of a hard cut.
+ *
  * Purely presentational; the gate owns timing. Honors prefers-reduced-motion by
- * showing the fully-lit scene with no ignition or flicker. The medallion, wordmark,
- * and tagline mirror the splash Logo so the brand mark stays consistent.
+ * showing the fully-lit scene with no ignition or flicker (and a plain cross-fade on
+ * exit). The medallion, wordmark, and tagline mirror the splash Logo so the brand
+ * mark stays consistent.
  */
-export function SplashScreen() {
+export function SplashScreen({ exiting = false }: { exiting?: boolean }) {
   return (
-    <div className={styles.screen}>
+    <div className={`${styles.screen}${exiting ? ` ${styles.exiting}` : ''}`}>
       <div className={styles.vignette} aria-hidden="true" />
       <div className={styles.stage}>
         <div className={styles.bloom} aria-hidden="true" />
