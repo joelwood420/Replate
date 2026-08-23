@@ -68,6 +68,29 @@ def ensure_user(user_oid: str, email: str | None = None, display_name: str | Non
     )
 
 
+def get_profile(user_oid: str) -> dict:
+    """The user's profile, creating the item lazily if this is their first read.
+
+    `ensure_user` is insert-if-absent, so a returning user's stored fields are
+    preserved; a brand-new user gets an item with null email/display_name.
+    """
+    ensure_user(user_oid)
+    return ddb.strip_keys(ddb.get(ddb.user_pk(user_oid), ddb.SK_PROFILE))
+
+
+def update_profile(user_oid: str, display_name: str) -> dict:
+    """Set the user's display name, returning the updated profile.
+
+    `ensure_user` runs first so the item always carries `created_at`/`user_id`/
+    `email`; an `UpdateItem` on a missing key would otherwise create a partial item.
+    """
+    ensure_user(user_oid)
+    updated = ddb.update(
+        ddb.user_pk(user_oid), ddb.SK_PROFILE, {"display_name": display_name}
+    )
+    return ddb.strip_keys(updated)
+
+
 # --------------------------------------------------------------------------
 # Jobs
 # --------------------------------------------------------------------------

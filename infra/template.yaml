@@ -303,6 +303,38 @@ Resources:
             Path: /jobs/{jobId}/save
             Method: PATCH
 
+  ProfileGetFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-profile-get"
+      Handler: triggers.profile_http.get_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /profile
+            Method: GET
+
+  ProfileUpdateFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-profile-update"
+      Handler: triggers.profile_http.update_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /profile
+            Method: PUT
+
   ReverseEngineerFunction:
     Type: AWS::Serverless::Function
     Properties:

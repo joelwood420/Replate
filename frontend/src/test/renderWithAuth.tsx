@@ -16,6 +16,7 @@ export function makeAuthValue(overrides: Partial<AuthContextValue> = {}): AuthCo
     confirmSignUp: async () => {},
     resendConfirmationCode: async () => {},
     signOut: () => {},
+    updateDisplayName: () => {},
     authHeaders: { 'X-Debug-User-Oid': 'oid-test' },
     ...overrides,
   };

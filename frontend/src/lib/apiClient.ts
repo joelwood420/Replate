@@ -191,6 +191,31 @@ export function listJobs(
   return request(`/jobs${query}`, { method: 'GET' }, authHeaders);
 }
 
+export interface UserProfile {
+  display_name: string | null;
+  email: string | null;
+  created_at: string | null;
+}
+
+export function getProfile(authHeaders: AuthHeaders): Promise<UserProfile> {
+  return request('/profile', { method: 'GET' }, authHeaders);
+}
+
+export function updateProfile(
+  displayName: string,
+  authHeaders: AuthHeaders,
+): Promise<UserProfile> {
+  return request(
+    '/profile',
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ display_name: displayName }),
+    },
+    authHeaders,
+  );
+}
+
 export function setJobSaved(
   jobId: string,
   saved: boolean,

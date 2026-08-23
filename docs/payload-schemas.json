@@ -33,6 +33,16 @@
       "required": ["error"],
       "additionalProperties": false
     },
+    "Profile": {
+      "type": "object",
+      "properties": {
+        "display_name": { "type": ["string", "null"] },
+        "email": { "type": ["string", "null"] },
+        "created_at": { "type": ["string", "null"], "format": "date-time" }
+      },
+      "required": ["display_name", "email", "created_at"],
+      "additionalProperties": false
+    },
     "RateLimitedResponse": {
       "type": "object",
       "description": "429 body. Sent with a Retry-After header carrying the same number of seconds. Scanning and recipe generation have separate quotas - see docs/api.md.",
@@ -293,6 +303,33 @@
         },
         "403": { "$ref": "#/$defs/ErrorResponse" },
         "404": { "$ref": "#/$defs/ErrorResponse" }
+      }
+    },
+
+    "GET /profile": {
+      "auth": "X-Debug-User-Oid header required",
+      "description": "The caller's profile. Created lazily on first read, so a new user gets null display_name/email.",
+      "response": {
+        "200": { "$ref": "#/$defs/Profile" }
+      }
+    },
+
+    "PUT /profile": {
+      "auth": "X-Debug-User-Oid header required",
+      "description": "Updates the caller's display name. email is the sign-in identity and is not editable here; profile photo is not yet supported.",
+      "request": {
+        "body": {
+          "type": "object",
+          "properties": {
+            "display_name": { "type": "string", "minLength": 1, "maxLength": 80, "description": "Trimmed before validation; blank or over 80 chars is a 400." }
+          },
+          "required": ["display_name"],
+          "additionalProperties": false
+        }
+      },
+      "response": {
+        "200": { "$ref": "#/$defs/Profile" },
+        "400": { "$ref": "#/$defs/ErrorResponse" }
       }
     },
 

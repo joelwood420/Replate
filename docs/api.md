@@ -153,6 +153,27 @@ so this is now mainly how a user removes one.
 
 **403/404** same ownership rules as `GET /jobs/{jobId}`.
 
+## `GET /profile`
+
+The caller's profile. Created lazily on first read, so a brand-new user gets an item with
+null `display_name`/`email`.
+
+**200 response:**
+```json
+{ "display_name": "Amara Silva", "email": "amara@example.com", "created_at": "..." }
+```
+
+## `PUT /profile`
+
+Update the caller's display name. `email` is the sign-in identity and is not editable here;
+profile photo is not yet supported.
+
+**Body:** `{"display_name": "Amara Silva"}`
+
+**200 response:** the updated profile, same shape as `GET /profile`.
+
+**400** if `display_name` is missing, blank after trimming, or longer than 80 characters.
+
 ## `GET /restaurants/search`
 
 Restaurant name typeahead, backing the manual-selection flow shown when an uploaded photo has
