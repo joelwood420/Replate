@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -15,7 +16,13 @@ import { useAuth } from '../auth/useAuth';
 // backend/shared/repository.list_jobs), so fetching a generous cap once and
 // deriving the Home and Cookbook views client-side costs the same as a single
 // old fetch - and lets tab switches render straight from cache with no spinner.
-const FULL_LIST_LIMIT = 100;
+//
+// The cap must be large enough to hold the user's ENTIRE list, because the
+// Cookbook's saved filter now runs client-side over this one read. A smaller cap
+// (say 100) would drop a saved dish that falls outside the newest-N total jobs,
+// even when the user has few saved items - so this is effectively "all jobs".
+// If a user ever exceeds it, the fix is real server-side paging, not a bigger cap.
+const FULL_LIST_LIMIT = 1000;
 
 export interface JobListState {
   jobs: JobSummary[];
@@ -53,7 +60,12 @@ export function JobsProvider({ children }: { children: ReactNode }) {
     if (!isAuthenticated) return;
     if (inFlight.current) return; // dedupe overlapping refreshes (mount + focus, etc.)
     inFlight.current = true;
-    if (!hasData.current) setIsLoading(true); // spinner only when nothing is cached yet
+    if (!hasData.current) {
+      // Spinner only when nothing is cached yet. Clear any prior error so a retry
+      // shows the spinner alone, not the spinner and the stale error banner together.
+      setIsLoading(true);
+      setError(null);
+    }
     listJobs({ limit: FULL_LIST_LIMIT }, authHeaders)
       .then((result) => {
         setJobs(result);
@@ -96,7 +108,10 @@ export function JobsProvider({ children }: { children: ReactNode }) {
     setJobs((prev) => prev.map((job) => (job.job_id === jobId ? { ...job, ...changes } : job)));
   }, []);
 
-  const value: JobsStore = { jobs, isLoading, error, refetch, patchJob };
+  const value = useMemo<JobsStore>(
+    () => ({ jobs, isLoading, error, refetch, patchJob }),
+    [jobs, isLoading, error, refetch, patchJob],
+  );
   return <JobsContext.Provider value={value}>{children}</JobsContext.Provider>;
 }
 

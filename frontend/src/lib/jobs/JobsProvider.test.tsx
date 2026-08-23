@@ -47,7 +47,7 @@ describe('JobsProvider', () => {
     mockedListJobs.mockReset();
   });
 
-  it('loads the full list once with a generous cap and the auth headers', async () => {
+  it('loads the full list once with a whole-list cap and the auth headers', async () => {
     mockedListJobs.mockResolvedValue(sampleJobs);
     const { result } = renderHook(() => useJobsStore(), { wrapper: wrapperFor(makeAuthValue()) });
 
@@ -57,9 +57,21 @@ describe('JobsProvider', () => {
     expect(result.current.jobs).toEqual(sampleJobs);
     expect(result.current.error).toBeNull();
     expect(mockedListJobs).toHaveBeenCalledWith(
-      { limit: 100 },
+      { limit: 1000 },
       { 'X-Debug-User-Oid': 'oid-test' },
     );
+  });
+
+  it('clears a prior error when a retry begins', async () => {
+    mockedListJobs.mockRejectedValueOnce(new Error('network down'));
+    const { result } = renderHook(() => useJobsStore(), { wrapper: wrapperFor(makeAuthValue()) });
+    await waitFor(() => expect(result.current.error).toBe('network down'));
+
+    // Retry succeeds: error must be cleared (not left set alongside the spinner).
+    mockedListJobs.mockResolvedValueOnce(sampleJobs);
+    act(() => result.current.refetch());
+    await waitFor(() => expect(result.current.jobs).toEqual(sampleJobs));
+    expect(result.current.error).toBeNull();
   });
 
   it('surfaces an error when the initial fetch fails and nothing is cached', async () => {

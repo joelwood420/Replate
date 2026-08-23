@@ -26,12 +26,14 @@ export function CookbookScreen() {
       : `${jobs.length} ${jobs.length === 1 ? 'dish' : 'dishes'} · ${reverseEngineered} reverse-engineered`;
 
   async function handleToggleSaved(jobId: string, saved: boolean) {
-    // Update the shared cache first so the card drops/stays instantly, then
-    // reconcile with the server; revert if the write fails.
+    // Update the shared cache first so the card drops/stays instantly; the patch
+    // is authoritative for the UI, so there's no immediate refetch. Refetching here
+    // would be a full list re-read per toggle and, because list reads are eventually
+    // consistent, could momentarily read back the pre-write value and revert the
+    // card. A later focus/mount refresh reconciles. Revert only if the write fails.
     patchJob(jobId, { is_saved: saved });
     try {
       await setJobSaved(jobId, saved, authHeaders);
-      refetch();
     } catch {
       patchJob(jobId, { is_saved: !saved });
     }

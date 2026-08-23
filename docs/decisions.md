@@ -14,8 +14,9 @@ less than one that shows where the thinking changed.
 
 **Decision:** Home and Cookbook no longer fetch `GET /api/jobs` independently on every mount.
 A single `JobsProvider` (mounted above the router) fetches the user's full job list once with a
-generous cap (`limit=100`) and holds it; `useRecentJobs` and `useSavedJobs` became pure
-client-side derivations (slice newest N / filter `is_saved`) over that one cache. The cache is
+cap high enough to hold the whole list (`limit=1000`) and holds it; `useRecentJobs` and
+`useSavedJobs` became pure client-side derivations (slice newest N / filter `is_saved`) over that
+one cache. The cache is
 stale-while-revalidate: it renders instantly on every tab visit and refreshes in the background,
 so the loading spinner shows only on the first load, and a failed background refresh keeps the
 stale data instead of erroring. It prefetches as soon as the user authenticates, and the save
@@ -31,8 +32,12 @@ spinner and makes tab switching feel instant, at no extra backend cost.
 **Context worth recording:**
 - Routes are statically imported, so the component code was never the bottleneck; the fetch was.
   Caching, not code-preloading, was the right lever.
-- `limit=100` is a client-side slice cap on an already-full partition read, not a paging change;
-  if a user ever exceeds it the fix is a larger cap or real paging, not a schema change.
+- The cap must cover the user's ENTIRE list, not just a page. Because the Cookbook's `is_saved`
+  filter now runs client-side over this one read, a smaller cap (e.g. 100) would silently drop a
+  saved dish that sits outside the newest-N total jobs, even when the user has few saved items -
+  the old server-side `saved=true` query filtered before applying the limit, so it never had this
+  problem. `limit=1000` is therefore "effectively all jobs"; if a user ever exceeds it the fix is
+  real server-side paging, not a bigger number.
 
 ---
 
