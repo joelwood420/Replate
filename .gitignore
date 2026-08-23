@@ -58,3 +58,8 @@ graphify-out/
 
 # impeccable working state (config, cache, critiques) - regenerate via /impeccable
 .impeccable/
+
+# Claude Design canvas scratch (mockups/published artifacts, not app source)
+*.dc.html
+canvas.json
+replate-profile-page.html

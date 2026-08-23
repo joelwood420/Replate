@@ -136,3 +136,19 @@ export function IconTrash({ size = 14, className }: IconProps) {
     </svg>
   );
 }
+
+export function IconHeart({ size = 20, className }: IconProps) {
+  return (
+    <svg {...svgProps(size, className)}>
+      <path d="M12 20.5s-7-4.4-9.2-8.8C1.3 8.4 2.7 5.5 5.9 5.5c2 0 3.4 1.2 4.1 2.4l2-.1c.7-1.2 2.1-2.3 4-2.3 3.2 0 4.6 2.9 3.2 6.2C17 16.1 12 20.5 12 20.5Z" />
+    </svg>
+  );
+}
+
+export function IconFlame({ size = 20, className }: IconProps) {
+  return (
+    <svg {...svgProps(size, className)}>
+      <path d="M12 3c1.5 3 4.5 4.2 4.5 8a4.5 4.5 0 0 1-9 0c0-1.2.5-2.2 1.2-3 .2 1 .9 1.7 1.6 1.7.9 0 1.2-.9.9-2.1C10.6 5.6 11 4.1 12 3Z" />
+    </svg>
+  );
+}
