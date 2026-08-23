@@ -12,7 +12,7 @@ import styles from './CookbookScreen.module.css';
 
 export function CookbookScreen() {
   const { authHeaders } = useAuth();
-  const { jobs, isLoading, error, refetch } = useSavedJobs();
+  const { jobs, isLoading, error, refetch, patchJob } = useSavedJobs();
   const navigate = useNavigate();
   useSwipeNavigation(TAB_ROUTES);
   const swipeEntry = useSwipeEntryClass();
@@ -26,8 +26,15 @@ export function CookbookScreen() {
       : `${jobs.length} ${jobs.length === 1 ? 'dish' : 'dishes'} · ${reverseEngineered} reverse-engineered`;
 
   async function handleToggleSaved(jobId: string, saved: boolean) {
-    await setJobSaved(jobId, saved, authHeaders);
-    refetch();
+    // Update the shared cache first so the card drops/stays instantly, then
+    // reconcile with the server; revert if the write fails.
+    patchJob(jobId, { is_saved: saved });
+    try {
+      await setJobSaved(jobId, saved, authHeaders);
+      refetch();
+    } catch {
+      patchJob(jobId, { is_saved: !saved });
+    }
   }
 
   return (
