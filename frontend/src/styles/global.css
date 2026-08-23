@@ -30,6 +30,18 @@ body {
   min-height: 100vh;
   position: relative;
   background: var(--color-bg);
+  /* Reserve horizontal single-finger gestures for in-app tab swiping (see
+     useSwipeNavigation); vertical scroll and pinch-zoom stay native. Without this a
+     touch browser claims a horizontal drag as a scroll and fires pointercancel
+     instead of pointerup, so the swipe never completes (it works with a mouse on
+     desktop only because there is no such gesture arbitration). */
+  touch-action: pan-y pinch-zoom;
+}
+
+/* Horizontally-scrollable strips opt out of tab-swiping via data-noswipe; give
+   them their own horizontal panning back so their scroll gesture still works. */
+[data-noswipe] {
+  touch-action: pan-x;
 }
 
 button {
