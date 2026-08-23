@@ -119,6 +119,34 @@ export function IconCheck({ size = 12, className }: IconProps) {
   );
 }
 
+export function IconEdit({ size = 18, className }: IconProps) {
+  return (
+    <svg {...svgProps(size, className)}>
+      <path d="M4 20h4l10-10a2 2 0 0 0-2.8-2.8L5.2 17.2 4 20Z" />
+      <path d="M14 6.2 17.8 10" />
+    </svg>
+  );
+}
+
+export function IconBell({ size = 18, className }: IconProps) {
+  return (
+    <svg {...svgProps(size, className)}>
+      <path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z" />
+      <path d="M10 19a2 2 0 0 0 4 0" />
+    </svg>
+  );
+}
+
+export function IconHelp({ size = 18, className }: IconProps) {
+  return (
+    <svg {...svgProps(size, className)}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.5 9.5a2.5 2.5 0 0 1 4.5 1.5c0 1.8-2.5 2-2.5 3.5" />
+      <path d="M12 17.5h.01" />
+    </svg>
+  );
+}
+
 export function IconChevron({ size = 16, className }: IconProps) {
   return (
     <svg {...svgProps(size, className, 2)}>
