@@ -1,34 +1,21 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Avatar } from '../components/Avatar';
 import { BottomTabBar } from '../components/BottomTabBar';
-import { FilterChip } from '../components/FilterChip';
-import { IconCamera, IconFlame, IconHeart } from '../components/icons';
+import {
+  IconBell,
+  IconCamera,
+  IconChevron,
+  IconEdit,
+  IconFlame,
+  IconHeart,
+  IconHelp,
+} from '../components/icons';
 import { useAuth } from '../lib/auth/useAuth';
 import { computeDayStreak } from '../lib/format';
 import { useJobsStore } from '../lib/jobs/JobsProvider';
 import { TAB_ROUTES, useSwipeEntryClass, useSwipeNavigation } from '../lib/nav/swipeNav';
 import styles from './ProfileScreen.module.css';
-
-type Units = 'metric' | 'imperial';
-
-// Preferences live client-side (per user oid) for now; there is no server-side
-// profile store in the single-table design yet, so this is the seam for one when
-// it lands.
-function prefsKey(oid: string | undefined): string {
-  return `replate.prefs.${oid ?? 'anon'}`;
-}
-
-function loadUnits(oid: string | undefined): Units {
-  try {
-    const raw = localStorage.getItem(prefsKey(oid));
-    if (!raw) return 'metric';
-    const parsed = JSON.parse(raw) as { units?: unknown };
-    return parsed.units === 'imperial' ? 'imperial' : 'metric';
-  } catch {
-    return 'metric';
-  }
-}
 
 export function ProfileScreen() {
   const { user, signOut } = useAuth();
@@ -41,14 +28,6 @@ export function ProfileScreen() {
     refetch();
   }, [refetch]);
 
-  // Reload when the signed-in user changes. Persistence is write-through (see
-  // chooseUnits), so there is no save effect that could write one user's prefs into
-  // another's storage key during an oid change.
-  const [units, setUnits] = useState<Units>(() => loadUnits(user?.oid));
-  useEffect(() => {
-    setUnits(loadUnits(user?.oid));
-  }, [user?.oid]);
-
   const savedCount = useMemo(() => jobs.filter((job) => job.is_saved).length, [jobs]);
   const streak = useMemo(() => computeDayStreak(jobs.map((job) => job.created_at)), [jobs]);
 
@@ -58,14 +37,14 @@ export function ProfileScreen() {
     { icon: <IconFlame size={20} />, value: streak, label: 'Day streak' },
   ];
 
-  function chooseUnits(next: Units) {
-    setUnits(next);
-    try {
-      localStorage.setItem(prefsKey(user?.oid), JSON.stringify({ units: next }));
-    } catch {
-      /* storage unavailable (private mode): the choice just does not persist */
-    }
-  }
+  // Account rows are the design's list minus the removed units row. They're
+  // presentational for now: the destination screens (edit profile, notification
+  // settings, help) don't exist yet, so the rows carry no handler until they land.
+  const accountRows: { icon: ReactNode; title: string; sub?: string; value?: string }[] = [
+    { icon: <IconEdit size={18} />, title: 'Edit profile', sub: 'Name, photo, email' },
+    { icon: <IconBell size={18} />, title: 'Notifications', value: 'On' },
+    { icon: <IconHelp size={18} />, title: 'Help & feedback' },
+  ];
 
   function handleSignOut() {
     signOut();
@@ -95,18 +74,21 @@ export function ProfileScreen() {
         </div>
 
         <div className={styles.section}>
-          <div className={styles.sectionLabel}>Measurement units</div>
-          <div className={styles.chips}>
-            <FilterChip
-              label="Metric"
-              active={units === 'metric'}
-              onClick={() => chooseUnits('metric')}
-            />
-            <FilterChip
-              label="Imperial"
-              active={units === 'imperial'}
-              onClick={() => chooseUnits('imperial')}
-            />
+          <div className={styles.sectionLabel}>Account</div>
+          <div className={styles.list}>
+            {accountRows.map((row) => (
+              <div key={row.title} className={styles.row}>
+                <div className={styles.rowIcon}>{row.icon}</div>
+                <div className={styles.rowText}>
+                  <div className={styles.rowTitle}>{row.title}</div>
+                  {row.sub && <div className={styles.rowSub}>{row.sub}</div>}
+                </div>
+                {row.value && <div className={styles.rowValue}>{row.value}</div>}
+                <div className={styles.rowChevron}>
+                  <IconChevron size={16} />
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
