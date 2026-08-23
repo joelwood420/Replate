@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { formatQuantity, timeAgo } from './format';
+import { computeDayStreak, formatQuantity, timeAgo } from './format';
 
 describe('timeAgo', () => {
   beforeEach(() => {
@@ -46,6 +46,50 @@ describe('timeAgo', () => {
     const result = timeAgo('2026-01-01T12:00:00.000Z');
     expect(result).not.toBe('');
     expect(result).not.toMatch(/ago|Yesterday|just now/);
+  });
+});
+
+describe('computeDayStreak', () => {
+  // Local noon on 2026-08-22, and scan timestamps without a 'Z' so they parse as
+  // local time too, keeping the calendar-day bucketing deterministic across zones.
+  const now = new Date(2026, 7, 22, 12, 0, 0);
+
+  it('returns 0 for no scans', () => {
+    expect(computeDayStreak([], now)).toBe(0);
+  });
+
+  it('ignores null and unparseable dates', () => {
+    expect(computeDayStreak([null, 'not-a-date'], now)).toBe(0);
+  });
+
+  it('counts a single scan today as a streak of 1', () => {
+    expect(computeDayStreak(['2026-08-22T09:00:00'], now)).toBe(1);
+  });
+
+  it('counts consecutive days ending today', () => {
+    expect(
+      computeDayStreak(['2026-08-22T09:00:00', '2026-08-21T20:00:00', '2026-08-20T08:00:00'], now),
+    ).toBe(3);
+  });
+
+  it('collapses multiple scans on the same day', () => {
+    expect(
+      computeDayStreak(['2026-08-22T09:00:00', '2026-08-22T21:00:00', '2026-08-21T10:00:00'], now),
+    ).toBe(2);
+  });
+
+  it('stays live when the last scan was yesterday', () => {
+    expect(computeDayStreak(['2026-08-21T09:00:00', '2026-08-20T09:00:00'], now)).toBe(2);
+  });
+
+  it('is 0 when the last scan was before yesterday', () => {
+    expect(computeDayStreak(['2026-08-20T09:00:00'], now)).toBe(0);
+  });
+
+  it('stops at the first gap', () => {
+    expect(
+      computeDayStreak(['2026-08-22T09:00:00', '2026-08-20T09:00:00', '2026-08-19T09:00:00'], now),
+    ).toBe(1);
   });
 });
 
