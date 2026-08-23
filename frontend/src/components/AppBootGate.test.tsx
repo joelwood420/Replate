@@ -37,7 +37,7 @@ describe('AppBootGate', () => {
     vi.clearAllMocks();
   });
 
-  it('shows the splash until the minimum time elapses, even when everything is ready', () => {
+  it('shows the splash until the minimum time elapses, even when everything is ready', async () => {
     setAuth(true, false);
     setJobs(true);
     renderGate();
@@ -45,7 +45,20 @@ describe('AppBootGate', () => {
     expect(screen.getByText('SPLASH')).toBeInTheDocument();
     expect(screen.queryByText('APP')).not.toBeInTheDocument();
 
-    act(() => vi.advanceTimersByTime(2400));
+    // Boot completes: the app mounts behind the splash, which lingers as an exiting
+    // overlay playing its dissolve. Async advance so the reveal timer, scheduled in a
+    // passive effect, is registered before we advance through it.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2400);
+    });
+
+    expect(screen.getByText('APP')).toBeInTheDocument();
+    expect(screen.getByText('SPLASH')).toBeInTheDocument();
+
+    // The dissolve finishes and the splash unmounts, leaving the app.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(720);
+    });
 
     expect(screen.getByText('APP')).toBeInTheDocument();
     expect(screen.queryByText('SPLASH')).not.toBeInTheDocument();
@@ -62,7 +75,7 @@ describe('AppBootGate', () => {
     expect(screen.queryByText('APP')).not.toBeInTheDocument();
   });
 
-  it('holds the splash for a signed-in user until the first job fetch settles', () => {
+  it('holds the splash for a signed-in user until the first job fetch settles', async () => {
     setAuth(true, true);
     setJobs(false); // prefetch in flight
     const { rerender } = renderGate();
@@ -70,7 +83,7 @@ describe('AppBootGate', () => {
     act(() => vi.advanceTimersByTime(2400));
     expect(screen.getByText('SPLASH')).toBeInTheDocument();
 
-    // Prefetch settles.
+    // Prefetch settles: the app mounts and the splash begins its dissolve.
     setJobs(true);
     rerender(
       <AppBootGate>
@@ -79,15 +92,28 @@ describe('AppBootGate', () => {
     );
 
     expect(screen.getByText('APP')).toBeInTheDocument();
+
+    // The dissolve finishes and the splash unmounts.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(720);
+    });
+    expect(screen.queryByText('SPLASH')).not.toBeInTheDocument();
   });
 
-  it('does not wait on the job list for a signed-out user', () => {
+  it('does not wait on the job list for a signed-out user', async () => {
     setAuth(true, false);
     setJobs(false); // never fetched, and never will while signed out
     renderGate();
 
-    act(() => vi.advanceTimersByTime(2400));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2400);
+    });
 
     expect(screen.getByText('APP')).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(720);
+    });
+    expect(screen.queryByText('SPLASH')).not.toBeInTheDocument();
   });
 });
