@@ -10,6 +10,25 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-23: Splash is a boot gate, not a routed timer screen
+
+**Decision:** Replace the `/`-only splash screen (a fixed 2.4s timer that then navigated to
+Home/Signin) with an `AppBootGate` mounted above the router. It shows the splash on every fresh
+page load regardless of the entry URL, runs the boot work in the background (Cognito session
+restore, then the first job-list fetch for a signed-in user), and reveals the app only once boot
+is genuinely done AND a 2.4s minimum has elapsed. The Cognito auth provider no longer blank-holds
+during restore (it exposes `isReady` instead); `JobsProvider` exposes `hasLoadedOnce`; `/` becomes
+a redirect to Home/Signin. It fires once per page load, never on in-app tab navigation.
+
+**Why:** the old splash only appeared at `/`, so opening or refreshing any other URL
+(`/cookbook`, `/profile`) skipped it, and its 2.4s timer was decoupled from actual loading, so you
+often landed on a screen that then showed a "Loading..." spinner. Gating reveal on real readiness
+means the first screen is ready with no spinner, which reads as much lower latency (even the
+half-second refresh flush on Cookbook is now absorbed by the splash). The 2.4s floor is kept
+deliberately so the branding always has time to register rather than flashing by on a warm load.
+
+---
+
 ## 2026-08-23: Profile edit persists server-side via new `/profile` endpoints
 
 **Decision:** Wire the profile "Edit profile" row to real backend persistence rather than a

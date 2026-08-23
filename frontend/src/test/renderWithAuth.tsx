@@ -10,6 +10,7 @@ import { AuthContext, type AuthContextValue } from '../lib/auth/AuthProvider';
 export function makeAuthValue(overrides: Partial<AuthContextValue> = {}): AuthContextValue {
   return {
     isAuthenticated: true,
+    isReady: true,
     user: { name: 'Test Cook', initials: 'TC', oid: 'oid-test' },
     signIn: async () => {},
     signUp: async () => ({ needsConfirmation: false }),

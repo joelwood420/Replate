@@ -32,6 +32,9 @@ export interface JobListState {
 }
 
 interface JobsStore extends JobListState {
+  /** True once the first fetch has settled (success or error). The boot gate waits
+   *  on this so a signed-in user lands on a ready screen with no spinner. */
+  hasLoadedOnce: boolean;
   /** Optimistically update one cached job in place (e.g. a save toggle). */
   patchJob: (jobId: string, changes: Partial<JobSummary>) => void;
 }
@@ -53,6 +56,9 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   // first render shows the spinner rather than a one-frame empty flash.
   const [isLoading, setIsLoading] = useState(isAuthenticated);
   const [error, setError] = useState<string | null>(null);
+  // Flips true after the first fetch settles. Starts false; the boot gate only
+  // waits on it for a signed-in user, so a signed-out user never blocks on it.
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const hasData = useRef(false);
   const inFlight = useRef(false);
 
@@ -82,6 +88,7 @@ export function JobsProvider({ children }: { children: ReactNode }) {
       .finally(() => {
         inFlight.current = false;
         setIsLoading(false);
+        setHasLoadedOnce(true);
       });
   }, [authHeaders, isAuthenticated]);
 
@@ -109,8 +116,8 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<JobsStore>(
-    () => ({ jobs, isLoading, error, refetch, patchJob }),
-    [jobs, isLoading, error, refetch, patchJob],
+    () => ({ jobs, isLoading, error, refetch, patchJob, hasLoadedOnce }),
+    [jobs, isLoading, error, refetch, patchJob, hasLoadedOnce],
   );
   return <JobsContext.Provider value={value}>{children}</JobsContext.Provider>;
 }

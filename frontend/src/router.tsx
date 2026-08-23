@@ -9,7 +9,6 @@ import { JobScreen } from './screens/JobScreen';
 import { OnboardingScreen } from './screens/OnboardingScreen';
 import { ProfileScreen } from './screens/ProfileScreen';
 import { SignInScreen } from './screens/SignInScreen';
-import { SplashScreen } from './screens/SplashScreen';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -19,10 +18,18 @@ function RequireAuth({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+// The splash is now the boot gate (AppBootGate), not a route, so `/` just sends the
+// user on: signed-in users to Home, everyone else to sign-in. By the time this
+// renders, the gate has already restored the session and prefetched their dishes.
+function RootRedirect() {
+  const { isAuthenticated } = useAuth();
+  return <Navigate to={isAuthenticated ? '/home' : '/signin'} replace />;
+}
+
 export function AppRoutes() {
   return (
     <Routes>
-      <Route path="/" element={<SplashScreen />} />
+      <Route path="/" element={<RootRedirect />} />
       <Route path="/signin" element={<SignInScreen />} />
       <Route path="/onboarding" element={<OnboardingScreen />} />
       <Route

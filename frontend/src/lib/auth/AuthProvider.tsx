@@ -17,6 +17,13 @@ export interface SignUpDetails {
 
 export interface AuthContextValue {
   isAuthenticated: boolean;
+  /**
+   * Whether the session has finished restoring. Always true for the mock provider
+   * (synchronous); false for Cognito until `currentUser()` resolves. The boot gate
+   * shows the splash while this is false, which is why the Cognito provider no
+   * longer blank-holds the whole app during restore.
+   */
+  isReady: boolean;
   user: AuthUser | null;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (details: SignUpDetails) => Promise<{ needsConfirmation: boolean }>;
@@ -122,6 +129,7 @@ function MockAuthProvider({ children }: { children: ReactNode }) {
 
   const value: AuthContextValue = {
     isAuthenticated: user !== null,
+    isReady: true, // mock auth resolves synchronously from sessionStorage
     user,
     signIn,
     signUp,
@@ -189,6 +197,7 @@ function CustomCognitoProvider({ children }: { children: ReactNode }) {
 
   const value: AuthContextValue = {
     isAuthenticated: session !== null,
+    isReady: ready,
     user: session?.user ?? null,
     signIn,
     signUp,
@@ -199,10 +208,10 @@ function CustomCognitoProvider({ children }: { children: ReactNode }) {
     authHeaders,
   };
 
-  // Hold the app until the persisted session is restored, so a hard refresh on a
-  // protected route doesn't bounce to /signin before the session is known.
-  if (!ready) return null;
-
+  // No longer blank-holds during restore: the boot gate shows the splash while
+  // `isReady` is false, so a hard refresh on a protected route still can't bounce
+  // to /signin before the session is known (RequireAuth never runs until the gate
+  // reveals the app), and the splash now covers the restore instead of a blank frame.
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
