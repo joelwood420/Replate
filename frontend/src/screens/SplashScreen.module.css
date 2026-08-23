@@ -1,19 +1,196 @@
 .screen {
+  position: relative;
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
   background: var(--color-bg);
+  overflow: hidden;
 }
 
-/* Fade in and hold. The boot gate controls how long the splash stays up (a
-   minimum for the branding, longer if the initial load is still running), then
-   swaps to the app, so there is deliberately no fade-out here. */
-.logo {
-  animation: splash-fade-in 700ms ease-out both;
+/* Deepen the corners so the candle glow reads as the only light in the room. */
+.vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(125% 90% at 50% 44%, transparent 46%, oklch(9% 0.006 55 / 0.6) 100%);
+  pointer-events: none;
 }
 
-@keyframes splash-fade-in {
+.stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  padding: 0 22px;
+}
+
+/* The candlelight: a warm gold bloom centered on the medallion. It ignites from a
+   spark, then breathes with an uneven flicker that loops until the gate reveals the
+   app. Only opacity/transform animate, so it stays on the GPU. */
+.bloom {
+  position: absolute;
+  top: 36px;
+  left: 50%;
+  width: 460px;
+  height: 460px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    transparent 0%,
+    transparent 15%,
+    oklch(82% 0.11 82 / 0.36) 23%,
+    oklch(76% 0.1 82 / 0.13) 42%,
+    oklch(76% 0.1 82 / 0.035) 60%,
+    transparent 74%
+  );
+  filter: blur(2px);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.04);
+  transform-origin: center;
+  will-change: opacity, transform;
+  pointer-events: none;
+  animation:
+    splash-ignite 1000ms cubic-bezier(0.2, 0.7, 0.2, 1) both,
+    splash-flicker 4500ms ease-in-out 1100ms infinite;
+}
+
+@keyframes splash-ignite {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.04);
+  }
+  18% {
+    /* the spark catches: a small, bright point */
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(0.1);
+  }
+  100% {
+    opacity: 0.92;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+/* Uneven steps read as a real candle, not a uniform pulse. */
+@keyframes splash-flicker {
+  0% {
+    opacity: 0.92;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  12% {
+    opacity: 0.82;
+    transform: translate(-50%, -50%) scale(0.995);
+  }
+  22% {
+    opacity: 0.99;
+    transform: translate(-50%, -50%) scale(1.015);
+  }
+  38% {
+    opacity: 0.85;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  55% {
+    opacity: 0.95;
+    transform: translate(-50%, -50%) scale(1.01);
+  }
+  70% {
+    opacity: 0.8;
+    transform: translate(-50%, -50%) scale(0.99);
+  }
+  84% {
+    opacity: 0.96;
+    transform: translate(-50%, -50%) scale(1.008);
+  }
+  100% {
+    opacity: 0.92;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+/* The medallion: the candle holder. Its border and glyph warm up as the flame catches. */
+.mark {
+  position: relative;
+  z-index: 1;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: 1px solid var(--color-gold-border);
+  /* Unlit interior: a dark disc that occludes the corona, so the light reads as
+     radiating from outside the ring rather than filling it. */
+  background: var(--color-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-serif);
+  font-size: 30px;
+  font-weight: 500;
+  color: var(--color-gold);
+  animation: splash-mark 1100ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes splash-mark {
+  0% {
+    opacity: 0;
+    transform: scale(0.9);
+    border-color: oklch(76% 0.1 82 / 0.12);
+    text-shadow: none;
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    border-color: var(--color-gold-border);
+  }
+}
+
+.textBlock {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+}
+
+/* Lit from within: the wordmark rises, warms from smoke to cream, and the letters
+   spread as the light grows. */
+.wordmark {
+  font-family: var(--font-serif);
+  font-size: 30px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;
+  color: var(--color-cream);
+  white-space: nowrap;
+  animation: splash-word 900ms cubic-bezier(0.2, 0.7, 0.2, 1) 650ms both;
+}
+
+@keyframes splash-word {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+    letter-spacing: 0.12em;
+    color: oklch(45% 0.01 60);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    letter-spacing: 0.22em;
+    color: var(--color-cream);
+  }
+}
+
+.tagline {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  white-space: nowrap;
+  margin-top: 8px;
+  animation: splash-tagline 800ms ease-out 1050ms both;
+}
+
+@keyframes splash-tagline {
   0% {
     opacity: 0;
     transform: translateY(6px);
@@ -25,7 +202,28 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .logo {
+  /* Show the fully-lit scene with no ignition or flicker. */
+  .bloom {
     animation: none;
+    opacity: 0.9;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  .mark {
+    animation: none;
+    opacity: 1;
+    transform: scale(1);
+    border-color: var(--color-gold-border);
+  }
+  .wordmark {
+    animation: none;
+    opacity: 1;
+    transform: none;
+    letter-spacing: 0.22em;
+    color: var(--color-cream);
+  }
+  .tagline {
+    animation: none;
+    opacity: 1;
+    transform: none;
   }
 }
