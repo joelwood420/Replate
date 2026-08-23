@@ -10,34 +10,23 @@ import { useJobsStore } from '../lib/jobs/JobsProvider';
 import { TAB_ROUTES, useSwipeEntryClass, useSwipeNavigation } from '../lib/nav/swipeNav';
 import styles from './ProfileScreen.module.css';
 
-const DIET_OPTIONS = ['Vegetarian', 'Vegan', 'Gluten-free', 'Dairy-free', 'Nut-free'] as const;
-type DietOption = (typeof DIET_OPTIONS)[number];
 type Units = 'metric' | 'imperial';
 
-interface Prefs {
-  diets: DietOption[];
-  units: Units;
-}
-
-const DEFAULT_PREFS: Prefs = { diets: [], units: 'metric' };
-
-// Preferences live client-side (per user oid) for now — there's no server-side profile
-// store in the single-table design yet, so this is the seam for one when it lands.
+// Preferences live client-side (per user oid) for now; there is no server-side
+// profile store in the single-table design yet, so this is the seam for one when
+// it lands.
 function prefsKey(oid: string | undefined): string {
   return `replate.prefs.${oid ?? 'anon'}`;
 }
 
-function loadPrefs(oid: string | undefined): Prefs {
+function loadUnits(oid: string | undefined): Units {
   try {
     const raw = localStorage.getItem(prefsKey(oid));
-    if (!raw) return DEFAULT_PREFS;
-    const parsed = JSON.parse(raw) as Partial<Prefs>;
-    const diets = Array.isArray(parsed.diets)
-      ? parsed.diets.filter((d): d is DietOption => (DIET_OPTIONS as readonly string[]).includes(d))
-      : [];
-    return { diets, units: parsed.units === 'imperial' ? 'imperial' : 'metric' };
+    if (!raw) return 'metric';
+    const parsed = JSON.parse(raw) as { units?: unknown };
+    return parsed.units === 'imperial' ? 'imperial' : 'metric';
   } catch {
-    return DEFAULT_PREFS;
+    return 'metric';
   }
 }
 
@@ -52,17 +41,13 @@ export function ProfileScreen() {
     refetch();
   }, [refetch]);
 
-  const [prefs, setPrefs] = useState<Prefs>(() => loadPrefs(user?.oid));
+  // Reload when the signed-in user changes. Persistence is write-through (see
+  // chooseUnits), so there is no save effect that could write one user's prefs into
+  // another's storage key during an oid change.
+  const [units, setUnits] = useState<Units>(() => loadUnits(user?.oid));
   useEffect(() => {
-    setPrefs(loadPrefs(user?.oid));
+    setUnits(loadUnits(user?.oid));
   }, [user?.oid]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(prefsKey(user?.oid), JSON.stringify(prefs));
-    } catch {
-      /* storage unavailable (private mode) — preferences just don't persist */
-    }
-  }, [prefs, user?.oid]);
 
   const savedCount = useMemo(() => jobs.filter((job) => job.is_saved).length, [jobs]);
   const streak = useMemo(() => computeDayStreak(jobs.map((job) => job.created_at)), [jobs]);
@@ -73,13 +58,13 @@ export function ProfileScreen() {
     { icon: <IconFlame size={20} />, value: streak, label: 'Day streak' },
   ];
 
-  function toggleDiet(label: DietOption) {
-    setPrefs((prev) => ({
-      ...prev,
-      diets: prev.diets.includes(label)
-        ? prev.diets.filter((d) => d !== label)
-        : [...prev.diets, label],
-    }));
+  function chooseUnits(next: Units) {
+    setUnits(next);
+    try {
+      localStorage.setItem(prefsKey(user?.oid), JSON.stringify({ units: next }));
+    } catch {
+      /* storage unavailable (private mode): the choice just does not persist */
+    }
   }
 
   function handleSignOut() {
@@ -110,31 +95,17 @@ export function ProfileScreen() {
         </div>
 
         <div className={styles.section}>
-          <div className={styles.sectionLabel}>Dietary preferences</div>
-          <div className={styles.chips}>
-            {DIET_OPTIONS.map((option) => (
-              <FilterChip
-                key={option}
-                label={option}
-                active={prefs.diets.includes(option)}
-                onClick={() => toggleDiet(option)}
-              />
-            ))}
-          </div>
-        </div>
-
-        <div className={styles.section}>
           <div className={styles.sectionLabel}>Measurement units</div>
           <div className={styles.chips}>
             <FilterChip
               label="Metric"
-              active={prefs.units === 'metric'}
-              onClick={() => setPrefs((prev) => ({ ...prev, units: 'metric' }))}
+              active={units === 'metric'}
+              onClick={() => chooseUnits('metric')}
             />
             <FilterChip
               label="Imperial"
-              active={prefs.units === 'imperial'}
-              onClick={() => setPrefs((prev) => ({ ...prev, units: 'imperial' }))}
+              active={units === 'imperial'}
+              onClick={() => chooseUnits('imperial')}
             />
           </div>
         </div>

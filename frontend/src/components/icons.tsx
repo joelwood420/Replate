@@ -1,7 +1,7 @@
 /**
  * The app's authored line-icon set. One consistent stroke (1.5) and weight, drawn on a
  * 24-grid, coloured via `currentColor` so a parent sets gold/cream/muted. This replaces the
- * OS emoji that used to stand in for icons — emoji render differently per platform and don't
+ * OS emoji that used to stand in for icons: emoji render differently per platform and don't
  * belong to the candlelit system.
  */
 interface IconProps {
@@ -93,7 +93,7 @@ export function IconProfile({ size = 22, className }: IconProps) {
   );
 }
 
-// Small action marks — a touch heavier (stroke 2) so they stay crisp at 11–16px.
+// Small action marks, a touch heavier (stroke 2) so they stay crisp at 11-16px.
 export function IconBack({ size = 16, className }: IconProps) {
   return (
     <svg {...svgProps(size, className, 2)}>

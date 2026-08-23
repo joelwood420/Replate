@@ -59,7 +59,9 @@ graphify-out/
 # impeccable working state (config, cache, critiques) - regenerate via /impeccable
 .impeccable/
 
-# Claude Design canvas scratch (mockups/published artifacts, not app source)
+# Claude Design canvas scratch (mockups/published artifacts, not app source).
+# Anchored to the repo root so a legitimately-named source file elsewhere is not
+# silently ignored; *.dc.html stays a glob since that extension is canvas-only.
 *.dc.html
-canvas.json
-replate-profile-page.html
+/canvas.json
+/replate-profile-page.html

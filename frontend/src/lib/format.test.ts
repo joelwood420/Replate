@@ -51,7 +51,7 @@ describe('timeAgo', () => {
 
 describe('computeDayStreak', () => {
   // Local noon on 2026-08-22, and scan timestamps without a 'Z' so they parse as
-  // local time too — keeps the calendar-day bucketing deterministic across zones.
+  // local time too, keeping the calendar-day bucketing deterministic across zones.
   const now = new Date(2026, 7, 22, 12, 0, 0);
 
   it('returns 0 for no scans', () => {
