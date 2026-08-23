@@ -27,7 +27,11 @@ body {
      even when opened in a desktop browser, rather than a responsive marketing layout. */
   max-width: 480px;
   margin: 0 auto;
+  /* dvh tracks the *visible* viewport on mobile; plain 100vh is the larger,
+     toolbar-excluded height, which would push the pinned bottom nav below the fold
+     and add phantom scroll. 100vh stays as the fallback for browsers without dvh. */
   min-height: 100vh;
+  min-height: 100dvh;
   position: relative;
   background: var(--color-bg);
   /* Reserve horizontal single-finger gestures for in-app tab swiping (see
