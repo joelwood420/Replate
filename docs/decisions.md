@@ -10,6 +10,37 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-23: Frontend job list is one shared, stale-while-revalidate cache
+
+**Decision:** Home and Cookbook no longer fetch `GET /api/jobs` independently on every mount.
+A single `JobsProvider` (mounted above the router) fetches the user's full job list once with a
+cap high enough to hold the whole list (`limit=1000`) and holds it; `useRecentJobs` and
+`useSavedJobs` became pure client-side derivations (slice newest N / filter `is_saved`) over that
+one cache. The cache is
+stale-while-revalidate: it renders instantly on every tab visit and refreshes in the background,
+so the loading spinner shows only on the first load, and a failed background refresh keeps the
+stale data instead of erroring. It prefetches as soon as the user authenticates, and the save
+toggle updates the cache optimistically.
+
+**Why:** navigating to a tab re-showed a full-screen "Loading..." spinner every time because the
+fetch hook restarted from `isLoading: true` with no cache, which made tab swiping feel slow. The
+backend (`repository.list_jobs`) already reads the whole job partition on every call and applies
+`saved`/`limit` in memory, so one capped read costs the same DynamoDB RCU as a single old fetch
+while feeding every tab view. Collapsing to one shared read plus SWR removes the per-visit
+spinner and makes tab switching feel instant, at no extra backend cost.
+
+**Context worth recording:**
+- Routes are statically imported, so the component code was never the bottleneck; the fetch was.
+  Caching, not code-preloading, was the right lever.
+- The cap must cover the user's ENTIRE list, not just a page. Because the Cookbook's `is_saved`
+  filter now runs client-side over this one read, a smaller cap (e.g. 100) would silently drop a
+  saved dish that sits outside the newest-N total jobs, even when the user has few saved items -
+  the old server-side `saved=true` query filtered before applying the limit, so it never had this
+  problem. `limit=1000` is therefore "effectively all jobs"; if a user ever exceeds it the fix is
+  real server-side paging, not a bigger number.
+
+---
+
 ## 2026-08-22: Phase 5 testing in CI (pytest + Vitest on every PR, Playwright e2e post-deploy)
 
 **Update 2026-08-23 (supersedes the e2e cadence below):** e2e now runs **manually only**
