@@ -37,11 +37,21 @@ export function ProfileScreen() {
     { icon: <IconFlame size={20} />, value: streak, label: 'Day streak' },
   ];
 
-  // Account rows are the design's list minus the removed units row. They're
-  // presentational for now: the destination screens (edit profile, notification
-  // settings, help) don't exist yet, so the rows carry no handler until they land.
-  const accountRows: { icon: ReactNode; title: string; sub?: string; value?: string }[] = [
-    { icon: <IconEdit size={18} />, title: 'Edit profile', sub: 'Name, photo, email' },
+  // A row with an onClick is interactive (rendered as a button); the rest are
+  // presentational placeholders until their destination screens land.
+  const accountRows: {
+    icon: ReactNode;
+    title: string;
+    sub?: string;
+    value?: string;
+    onClick?: () => void;
+  }[] = [
+    {
+      icon: <IconEdit size={18} />,
+      title: 'Edit profile',
+      sub: 'Name, photo, email',
+      onClick: () => navigate('/profile/edit'),
+    },
     { icon: <IconBell size={18} />, title: 'Notifications', value: 'On' },
     { icon: <IconHelp size={18} />, title: 'Help & feedback' },
   ];
@@ -76,19 +86,30 @@ export function ProfileScreen() {
         <div className={styles.section}>
           <div className={styles.sectionLabel}>Account</div>
           <div className={styles.list}>
-            {accountRows.map((row) => (
-              <div key={row.title} className={styles.row}>
-                <div className={styles.rowIcon}>{row.icon}</div>
-                <div className={styles.rowText}>
-                  <div className={styles.rowTitle}>{row.title}</div>
-                  {row.sub && <div className={styles.rowSub}>{row.sub}</div>}
+            {accountRows.map((row) => {
+              const inner = (
+                <>
+                  <div className={styles.rowIcon}>{row.icon}</div>
+                  <div className={styles.rowText}>
+                    <div className={styles.rowTitle}>{row.title}</div>
+                    {row.sub && <div className={styles.rowSub}>{row.sub}</div>}
+                  </div>
+                  {row.value && <div className={styles.rowValue}>{row.value}</div>}
+                  <div className={styles.rowChevron}>
+                    <IconChevron size={16} />
+                  </div>
+                </>
+              );
+              return row.onClick ? (
+                <button key={row.title} type="button" className={styles.row} onClick={row.onClick}>
+                  {inner}
+                </button>
+              ) : (
+                <div key={row.title} className={styles.row}>
+                  {inner}
                 </div>
-                {row.value && <div className={styles.rowValue}>{row.value}</div>}
-                <div className={styles.rowChevron}>
-                  <IconChevron size={16} />
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>

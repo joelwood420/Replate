@@ -10,6 +10,28 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-23: Profile edit persists server-side via new `/profile` endpoints
+
+**Decision:** Wire the profile "Edit profile" row to real backend persistence rather than a
+client-only edit. Add `GET /profile` and `PUT /profile` (Lambdas `triggers/profile_http.py`,
+one route each in the SAM template), backed by the `USER#<oid> / PROFILE` item the single-table
+design already reserved. Scope is the **display name** only: `email` is the Cognito sign-in
+identity (changing it is a separate identity operation) and is shown read-only; profile photo is
+deferred (needs S3-upload plumbing). DynamoDB `display_name` is the source of truth, and the
+frontend also updates the in-memory auth session on save so the greeting/avatar reflect the new
+name immediately.
+
+**Why:** the user chose full backend integration so a renamed profile survives a reload and
+across devices, not just in one browser session, and it demonstrates an end-to-end persisted
+CRUD path for the portfolio. The PROFILE item and `repository.ensure_user` already existed, so
+this only added a read/update helper pair and two thin routes rather than new data modelling.
+
+**Cost (Global Rule 1):** two more Lambdas + two HTTP API routes. Lambda's 1M requests/month is
+always-free; the HTTP API free tier is 12-month (then ~$1/million requests); DynamoDB access is
+via the execution role on the existing provisioned table. No new standing or hourly cost.
+
+---
+
 ## 2026-08-23: Frontend job list is one shared, stale-while-revalidate cache
 
 **Decision:** Home and Cookbook no longer fetch `GET /api/jobs` independently on every mount.

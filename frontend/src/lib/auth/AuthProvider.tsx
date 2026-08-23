@@ -23,6 +23,8 @@ export interface AuthContextValue {
   confirmSignUp: (email: string, code: string) => Promise<void>;
   resendConfirmationCode: (email: string) => Promise<void>;
   signOut: () => void;
+  /** Reflect a saved profile-name change in the session so the greeting/avatar update at once. */
+  updateDisplayName: (name: string) => void;
   authHeaders: AuthHeaders;
 }
 
@@ -77,7 +79,7 @@ function MockAuthProvider({ children }: { children: ReactNode }) {
         if (account.password !== password) throw new Error('Incorrect email or password.');
         startSession(account.name);
       } else {
-        // No account created this session — accept it so the plain "Log in" demo works.
+        // No account created this session, so accept it and the plain "Log in" demo works.
         startSession(nameFromEmail(email));
       }
     },
@@ -92,7 +94,7 @@ function MockAuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const confirmSignUp = useCallback(async (_email: string, code: string) => {
-    if (!/^\d{6}$/.test(code)) throw new Error("That code isn't right — enter the 6-digit code.");
+    if (!/^\d{6}$/.test(code)) throw new Error("That code isn't right. Enter the 6-digit code.");
   }, []);
 
   const resendConfirmationCode = useCallback(async (_email: string) => {
@@ -102,6 +104,15 @@ function MockAuthProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(() => {
     sessionStorage.removeItem(MOCK_SESSION_KEY);
     setUser(null);
+  }, []);
+
+  const updateDisplayName = useCallback((name: string) => {
+    setUser((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, name, initials: initialsFromName(name) };
+      sessionStorage.setItem(MOCK_SESSION_KEY, JSON.stringify(next));
+      return next;
+    });
   }, []);
 
   const authHeaders = useMemo<AuthHeaders>(
@@ -117,6 +128,7 @@ function MockAuthProvider({ children }: { children: ReactNode }) {
     confirmSignUp,
     resendConfirmationCode,
     signOut,
+    updateDisplayName,
     authHeaders,
   };
 
@@ -157,6 +169,16 @@ function CustomCognitoProvider({ children }: { children: ReactNode }) {
     setSession(null);
   }, []);
 
+  const updateDisplayName = useCallback((name: string) => {
+    // Reflects the change in the app-level profile only; the Cognito identity
+    // attributes are unchanged. The display name lives in DynamoDB, not the token.
+    setSession((prev) =>
+      prev
+        ? { ...prev, user: { ...prev.user, name, initials: initialsFromName(name) } }
+        : prev,
+    );
+  }, []);
+
   const authHeaders = useMemo<AuthHeaders>(() => {
     // Built up rather than a ternary: a bare `{}` branch makes TypeScript infer
     // `Authorization?: undefined`, which AuthHeaders' string-only index rejects.
@@ -173,6 +195,7 @@ function CustomCognitoProvider({ children }: { children: ReactNode }) {
     confirmSignUp,
     resendConfirmationCode,
     signOut,
+    updateDisplayName,
     authHeaders,
   };
 

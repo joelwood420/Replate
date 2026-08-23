@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from './lib/auth/useAuth';
 import { CaptureScreen } from './screens/CaptureScreen';
 import { CookbookScreen } from './screens/CookbookScreen';
+import { EditProfileScreen } from './screens/EditProfileScreen';
 import { HomeScreen } from './screens/HomeScreen';
 import { JobScreen } from './screens/JobScreen';
 import { OnboardingScreen } from './screens/OnboardingScreen';
@@ -61,6 +62,14 @@ export function AppRoutes() {
         element={
           <RequireAuth>
             <ProfileScreen />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/profile/edit"
+        element={
+          <RequireAuth>
+            <EditProfileScreen />
           </RequireAuth>
         }
       />
