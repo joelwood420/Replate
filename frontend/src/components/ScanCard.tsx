@@ -1,7 +1,13 @@
 import { PillButton } from './PillButton';
 import styles from './ScanCard.module.css';
 
-export function ScanCard({ onOpenCamera }: { onOpenCamera: () => void }) {
+export function ScanCard({
+  onOpenCamera,
+  onUploadPhoto,
+}: {
+  onOpenCamera: () => void;
+  onUploadPhoto: () => void;
+}) {
   return (
     <div className={styles.card}>
       <div className={styles.iconCircle}>
@@ -17,6 +23,9 @@ export function ScanCard({ onOpenCamera }: { onOpenCamera: () => void }) {
       <PillButton variant="cta" className={styles.button} onClick={onOpenCamera}>
         Open Camera
       </PillButton>
+      <button type="button" className={styles.uploadLink} onClick={onUploadPhoto}>
+        Upload a photo instead
+      </button>
     </div>
   );
 }

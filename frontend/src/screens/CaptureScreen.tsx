@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { CaptureViewfinder } from '../components/CaptureViewfinder';
 import { ErrorState } from '../components/ErrorState';
 import { IconCamera, IconClose, IconFlipCamera, IconLibrary } from '../components/icons';
@@ -33,13 +33,20 @@ function isSubmitEnabled(
 
 export function CaptureScreen() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { authHeaders } = useAuth();
-  const { videoRef, isReady, error: cameraError, flipCamera, capturePhoto } = useCamera();
+  // A photo handed over from Home's "Upload a photo instead" action. Read once at
+  // mount so the screen opens straight into uploaded mode with the camera dark.
+  const initialUpload = (location.state as { uploadedFile?: File } | null)?.uploadedFile ?? null;
+
+  const [mode, setMode] = useState<CaptureMode>(initialUpload ? 'uploaded' : 'live');
+  const [uploadedPhoto, setUploadedPhoto] = useState<File | null>(initialUpload);
+
+  // The live viewfinder only runs in live mode; an upload session never prompts for camera access.
+  const { videoRef, isReady, error: cameraError, flipCamera, capturePhoto } = useCamera(mode === 'live');
   const geolocation = useGeolocation();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [mode, setMode] = useState<CaptureMode>('live');
-  const [uploadedPhoto, setUploadedPhoto] = useState<File | null>(null);
   const [uploadedPhotoUrl, setUploadedPhotoUrl] = useState<string | null>(null);
   const [selectedRestaurant, setSelectedRestaurant] = useState<SelectedRestaurant | null>(null);
   const exifLocation = useExifLocation(uploadedPhoto);
@@ -244,11 +251,6 @@ export function CaptureScreen() {
               )}
             </div>
           </>
-        )}
-        {mode === 'live' && (
-          <button type="button" className={styles.libraryButton} onClick={handleLibraryClick}>
-            Upload a photo instead
-          </button>
         )}
       </div>
 

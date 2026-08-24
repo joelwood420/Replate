@@ -11,8 +11,12 @@ export interface CameraState {
   capturePhoto: () => Promise<Blob | null>;
 }
 
-/** Live in-app viewfinder via getUserMedia, per the Capture design (not an OS-camera handoff). */
-export function useCamera(): CameraState {
+/**
+ * Live in-app viewfinder via getUserMedia, per the Capture design (not an OS-camera
+ * handoff). `enabled` gates the camera so an upload-only session never prompts for
+ * camera access; it starts the moment the caller flips to live mode.
+ */
+export function useCamera(enabled = true): CameraState {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [facingMode, setFacingMode] = useState<FacingMode>('environment');
@@ -20,6 +24,14 @@ export function useCamera(): CameraState {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!enabled) {
+      // Release any stream from a previous live session and stay dark.
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      setIsReady(false);
+      return undefined;
+    }
+
     let cancelled = false;
     setIsReady(false);
 
@@ -50,7 +62,7 @@ export function useCamera(): CameraState {
       cancelled = true;
       streamRef.current?.getTracks().forEach((track) => track.stop());
     };
-  }, [facingMode]);
+  }, [facingMode, enabled]);
 
   const flipCamera = useCallback(() => {
     setFacingMode((mode) => (mode === 'environment' ? 'user' : 'environment'));
