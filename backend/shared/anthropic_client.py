@@ -23,10 +23,6 @@ from shared import secrets
 _lock = threading.Lock()
 _client = None
 
-# Bound how many times the model may invoke the server-side web_search tool in a
-# single menu fetch - a cost and latency ceiling on one call.
-WEB_SEARCH_MAX_USES = 5
-
 # The model can pause a long server-tool turn (stop_reason == "pause_turn") and
 # expects to be re-sent to resume. Cap the resumes so a misbehaving turn cannot
 # loop forever.
@@ -88,6 +84,28 @@ def _collect_text(content) -> str:
     ).strip()
 
 
+def _log_usage(label: str, response) -> None:
+    """Log token and web_search usage for one model turn.
+
+    These calls are the pipeline's dominant cost, so making usage visible per call
+    turns a surprise bill into a metric. Web search count lives under
+    usage.server_tool_use.web_search_requests when the tool ran; it is absent on
+    plain calls. Best-effort: never let logging break a response.
+    """
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return
+    server_tool_use = getattr(usage, "server_tool_use", None)
+    web_searches = getattr(server_tool_use, "web_search_requests", None)
+    logging.info(
+        "anthropic usage [%s]: input=%s output=%s web_searches=%s",
+        label,
+        getattr(usage, "input_tokens", None),
+        getattr(usage, "output_tokens", None),
+        web_searches,
+    )
+
+
 def web_search_completion(
     model: str,
     messages: list[dict],
@@ -115,7 +133,7 @@ def web_search_completion(
             {
                 "type": "web_search_20260209",
                 "name": "web_search",
-                "max_uses": WEB_SEARCH_MAX_USES,
+                "max_uses": app_config.web_search_max_uses(),
             }
         ],
     }
@@ -125,6 +143,7 @@ def web_search_completion(
     client = get_client()
     try:
         response = client.messages.create(**request)
+        _log_usage("web_search", response)
         # Resume the server-tool loop if the turn paused mid-search.
         resumes = 0
         while response.stop_reason == "pause_turn" and resumes < _MAX_PAUSE_RESUMES:
@@ -132,6 +151,7 @@ def web_search_completion(
                 {"role": "assistant", "content": response.content}
             ]
             response = client.messages.create(**request)
+            _log_usage("web_search:resume", response)
             resumes += 1
     except (anthropic.APIError, anthropic.APIConnectionError) as exc:
         # AuthenticationError / PermissionDeniedError here almost always mean a
@@ -181,6 +201,7 @@ def generate_structured(
     client = get_client()
     try:
         response = client.messages.create(**request)
+        _log_usage("structured", response)
     except (anthropic.APIError, anthropic.APIConnectionError) as exc:
         raise AnthropicError(f"{type(exc).__name__}: {exc}") from exc
 

@@ -33,6 +33,39 @@ Rules:
   addresses, allergen keys and marketing copy.
 - If you cannot find a menu for this restaurant, respond with {{"items": []}}."""
 
+# The reformat pass never searches - it only reshapes text the web_search call
+# already gathered - so it can use structured outputs (a server tool cannot),
+# which guarantees schema-valid JSON in one cheap turn.
+_REFORMAT_SYSTEM = (
+    "You reshape restaurant menu text that has already been gathered into structured "
+    "data. Do not search the web. Include only real food and drink items; ignore "
+    "navigation, hours, addresses and marketing copy."
+)
+
+_MENU_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["items"],
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["item_name", "item_description", "price"],
+                "properties": {
+                    "item_name": {"type": "string"},
+                    # Empty string, not null, for a missing description or price -
+                    # structured outputs are simplest with a single concrete type;
+                    # _validate maps an empty price back to None.
+                    "item_description": {"type": "string"},
+                    "price": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+
 
 class MenuExtractionError(Exception):
     pass
@@ -51,7 +84,9 @@ def _validate(payload: dict) -> list[dict]:
             {
                 "item_name": item["item_name"],
                 "item_description": item.get("item_description") or "",
-                "price": item.get("price"),
+                # An empty price string (how the reformat schema signals "unknown")
+                # normalizes to None, matching the web_search path's null price.
+                "price": item.get("price") or None,
             }
         )
     return validated
@@ -85,37 +120,59 @@ def fetch_menu_items(name: str, address: str | None, menu_source_url: str | None
         prompt += f"\n\nA known menu page for this restaurant is: {menu_source_url}"
 
     messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
-    last_error: Exception | None = None
 
     logging.info("Fetching menu for %s via web_search", name)
 
-    for _ in range(config.menu_fetch_max_retries() + 1):
-        try:
-            raw = anthropic_client.web_search_completion(
-                model, messages, system=_SYSTEM_PROMPT
-            )
-        except anthropic_client.AnthropicError as exc:
-            # A model error is not retryable here - a missing key or a denied
-            # model will fail identically every time.
-            raise MenuExtractionError(
-                f"Anthropic error fetching menu for {name}: {exc}"
-            ) from exc
+    # The one paid web_search sweep: find, read and extract in a single call.
+    try:
+        raw = anthropic_client.web_search_completion(model, messages, system=_SYSTEM_PROMPT)
+    except anthropic_client.AnthropicError as exc:
+        # A model error is not retryable here - a missing key or a denied model
+        # will fail identically every time.
+        raise MenuExtractionError(f"Anthropic error fetching menu for {name}: {exc}") from exc
 
-        try:
-            return _validate(anthropic_client.parse_json_response(raw))
-        except (ValueError, json.JSONDecodeError) as exc:
-            last_error = exc
-            # Show the model its own bad output rather than just asking again -
-            # a blind retry tends to reproduce the same mistake.
-            messages = messages + [
-                {"role": "assistant", "content": [{"type": "text", "text": raw}]},
+    try:
+        return _validate(anthropic_client.parse_json_response(raw))
+    except (ValueError, json.JSONDecodeError):
+        # The web_search output was not clean JSON (citations, prose, a stray
+        # fence). The model already found and read the menu, so re-running
+        # web_search would just re-bill the whole sweep - that path once cost 15
+        # searches for a single dish. Instead reshape its own output with a cheap,
+        # tool-free structured call that cannot search and cannot return invalid JSON.
+        logging.info("Menu JSON for %s needed a reformat pass (no re-search)", name)
+
+    return _reformat_menu_text(model, name, raw)
+
+
+def _reformat_menu_text(model: str, name: str, raw: str) -> list[dict]:
+    """Coerce already-gathered menu text into the schema, without searching again."""
+    try:
+        data = anthropic_client.generate_structured(
+            model=model,
+            system=_REFORMAT_SYSTEM,
+            messages=[
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "That wasn't valid JSON matching the schema. Respond with ONLY the JSON object."}
+                        {
+                            "type": "text",
+                            "text": (
+                                "Extract the menu items from the text below into the "
+                                "required JSON schema. Use an empty string for a missing "
+                                f"description or price.\n\n{raw}"
+                            ),
+                        }
                     ],
-                },
-            ]
-            continue
+                }
+            ],
+            schema=_MENU_SCHEMA,
+            max_tokens=2048,
+            effort="low",
+        )
+    except anthropic_client.AnthropicError as exc:
+        raise MenuExtractionError(f"Could not reformat menu for {name}: {exc}") from exc
 
-    raise MenuExtractionError(f"Failed to parse menu for {name} after retries: {last_error}") from last_error
+    try:
+        return _validate(data)
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise MenuExtractionError(f"Failed to parse menu for {name}: {exc}") from exc

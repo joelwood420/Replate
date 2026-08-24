@@ -145,11 +145,12 @@
                 "menu_source_url.$": "$.top_candidate.menu_source_url"
               },
               "ResultPath": "$.menu",
+              "Comment": "The activity already degrades a menu-fetch failure to an empty menu internally, so a task-level failure here is an infra hiccup, not a menu miss. Retry once only - each real attempt can run a paid web_search sweep, so a higher count risks re-billing it.",
               "Retry": [
                 {
                   "ErrorEquals": ["States.TaskFailed"],
                   "IntervalSeconds": 3,
-                  "MaxAttempts": 2,
+                  "MaxAttempts": 1,
                   "BackoffRate": 2
                 }
               ],
