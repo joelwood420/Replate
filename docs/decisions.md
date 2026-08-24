@@ -10,6 +10,29 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-24: Menu-fetch parse failures reformat, never re-search
+
+**Decision:** When the `web_search` menu-fetch call returns text that does not parse as clean
+JSON, coerce that already-gathered text into the schema with a second, **tool-free** structured
+call (`generate_structured`, which guarantees schema-valid JSON) instead of re-running the whole
+`web_search` sweep. The web_search sweep now runs at most once per menu fetch. Also: cap web
+searches per fetch with `WEB_SEARCH_MAX_USES` (default lowered 5 → 3, now env-tunable), drop the
+Step Functions `FetchRestaurantMenu` retry from 2 attempts to 1 (the activity already degrades a
+fetch failure to an empty menu internally, so a task-level failure is an infra hiccup, not a menu
+miss), remove the now-unused `MENU_FETCH_MAX_RETRIES` knob, and log `usage` (input/output tokens +
+web_search count) on every model call.
+
+**Why:** the old parse-retry loop re-invoked `web_search_completion` from scratch on each failure,
+each attempt spending a fresh 5-search budget — one dish scan was observed burning **15 searches
+(5 × 3 attempts)** and multi-million input tokens (every read page re-billed across pause-turn
+resumes), costing roughly $1–2 for a single scan and taking minutes. web_search responses routinely
+carry citations/prose and cannot use structured outputs, so parse failures were common, not rare.
+Reshaping the model's own text tool-free removes the re-search entirely: target cost drops to about
+$0.15 for a first-ever scan of a restaurant and ~$0.02 for a cached repeat, an ~10× reduction, with
+per-call usage now visible in logs instead of arriving as a surprise bill.
+
+---
+
 ## 2026-08-23: Splash is a boot gate, not a routed timer screen
 
 **Decision:** Replace the `/`-only splash screen (a fixed 2.4s timer that then navigated to

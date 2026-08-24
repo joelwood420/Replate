@@ -35,6 +35,22 @@ def _patch_model(monkeypatch, *responses):
     return calls
 
 
+def _patch_reformat(monkeypatch, outcome):
+    """Stub the tool-free structured reformat pass that runs only when the web_search
+    output was not clean JSON. Returns the recorded calls so a test can assert the
+    reformat ran (and, crucially, that web_search did not run again)."""
+    calls = []
+
+    def fake_structured(model, messages, schema, system=None, **kwargs):
+        calls.append({"model": model, "messages": messages, "system": system})
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(anthropic_client, "generate_structured", fake_structured)
+    return calls
+
+
 # --- happy path -------------------------------------------------------------
 
 
@@ -87,45 +103,60 @@ def test_the_configured_model_id_is_used(monkeypatch):
     assert calls[0]["model"] == "claude-test"
 
 
-# --- retries ----------------------------------------------------------------
+# --- reformat (no re-search) ------------------------------------------------
 
 
-def test_unparseable_output_is_retried_with_the_bad_output_shown(monkeypatch):
-    """A blind retry tends to reproduce the same mistake, so the model is shown
-    what it got wrong."""
-    calls = _patch_model(monkeypatch, "not json at all", VALID_JSON)
+def test_unparseable_output_is_reformatted_without_searching_again(monkeypatch):
+    """The costly bug was that a parse failure re-ran the whole web_search sweep.
+    Now the model's own text is reshaped by a tool-free structured call, so
+    web_search runs exactly once."""
+    search_calls = _patch_model(monkeypatch, "here is the menu: not clean json")
+    reformat_calls = _patch_reformat(
+        monkeypatch,
+        {"items": [{"item_name": "Pad Thai", "item_description": "desc", "price": "13.00"}]},
+    )
 
     items = menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)
 
     assert items[0]["item_name"] == "Pad Thai"
-    assert len(calls) == 2
-    assert calls[1]["messages"][1]["content"][0]["text"] == "not json at all"
+    # web_search ran once; the retry was the cheap tool-free reformat, not a re-search.
+    assert len(search_calls) == 1
+    assert len(reformat_calls) == 1
+    # The reformat is handed the raw web_search text to reshape.
+    assert "not clean json" in reformat_calls[0]["messages"][0]["content"][0]["text"]
 
 
-def test_gives_up_after_the_retry_budget(monkeypatch):
-    monkeypatch.setenv("MENU_FETCH_MAX_RETRIES", "1")
-    calls = _patch_model(monkeypatch, "nope", "still nope")
+def test_reformat_normalizes_an_empty_price_to_none(monkeypatch):
+    _patch_model(monkeypatch, "prose, not json")
+    _patch_reformat(
+        monkeypatch,
+        {"items": [{"item_name": "Soup", "item_description": "", "price": ""}]},
+    )
 
-    with pytest.raises(menu_extraction.MenuExtractionError, match="after retries"):
+    item = menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)[0]
+
+    assert item["price"] is None
+
+
+def test_a_failing_reformat_surfaces_as_a_menu_error(monkeypatch):
+    """If even the tool-free reformat errors, degrade to a MenuExtractionError (the
+    caller turns that into the vision-only outcome) - never a second web_search."""
+    search_calls = _patch_model(monkeypatch, "prose, not json")
+    _patch_reformat(monkeypatch, anthropic_client.AnthropicError("boom"))
+
+    with pytest.raises(menu_extraction.MenuExtractionError, match="reformat"):
         menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)
 
-    assert len(calls) == 2
+    assert len(search_calls) == 1
 
 
-def test_an_item_without_a_name_is_rejected(monkeypatch):
-    monkeypatch.setenv("MENU_FETCH_MAX_RETRIES", "0")
-    _patch_model(monkeypatch, '{"items": [{"item_description": "no name"}]}')
+def test_clean_json_never_triggers_a_reformat(monkeypatch):
+    _patch_model(monkeypatch, VALID_JSON)
+    reformat_calls = _patch_reformat(monkeypatch, {"items": []})
 
-    with pytest.raises(menu_extraction.MenuExtractionError):
-        menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)
+    menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)
 
-
-def test_json_without_an_items_list_is_rejected(monkeypatch):
-    monkeypatch.setenv("MENU_FETCH_MAX_RETRIES", "0")
-    _patch_model(monkeypatch, '{"menu": []}')
-
-    with pytest.raises(menu_extraction.MenuExtractionError):
-        menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None)
+    assert reformat_calls == []
 
 
 # --- failure surfaces -------------------------------------------------------

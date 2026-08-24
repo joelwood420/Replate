@@ -120,8 +120,13 @@ def anthropic_timeout_seconds() -> float:
     return float(os.environ.get("ANTHROPIC_TIMEOUT_SECONDS", "120"))
 
 
-def menu_fetch_max_retries() -> int:
-    return int(os.environ.get("MENU_FETCH_MAX_RETRIES", "2"))
+def web_search_max_uses() -> int:
+    # How many times the model may call the server-side web_search tool in a single
+    # menu fetch. Each search costs money and pulls the read page into context (billed
+    # as input on every following turn), so this is a direct cost lever. Finding one
+    # restaurant's menu rarely needs more than 2-3 searches; the old ceiling of 5,
+    # multiplied by a re-searching retry loop, was how one dish once cost 15 searches.
+    return int(os.environ.get("WEB_SEARCH_MAX_USES", "3"))
 
 
 def rate_limit_enabled() -> bool:
