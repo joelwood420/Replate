@@ -163,16 +163,6 @@
   border: 0;
 }
 
-.libraryButton {
-  background: transparent;
-  border: none;
-  color: var(--color-muted-light);
-  font-size: 12px;
-  font-family: var(--font-sans);
-  text-decoration: underline;
-  padding: 0;
-}
-
 /* Explicit feedback for the multi-call photo submit — the highest-commitment tap in the
    flow. Covers the camera to block double-taps and names what's happening. A plain gold
    ring spinner (no glow — the orb keeps its monopoly on light). */

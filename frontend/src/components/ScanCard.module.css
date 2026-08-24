@@ -56,3 +56,27 @@
 .button {
   margin-top: 6px;
 }
+
+/* Secondary action: a quiet text link, never a second gold fill competing with the
+   Open Camera CTA (the single-gold-moment rule). */
+.uploadLink {
+  margin-top: 2px;
+  background: none;
+  border: none;
+  padding: 4px 8px;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  color: var(--color-muted-light);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.uploadLink:hover {
+  color: var(--color-cream);
+}
+
+.uploadLink:focus-visible {
+  outline: 1px solid var(--color-gold-border);
+  outline-offset: 3px;
+  border-radius: var(--radius-pill);
+}

@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Avatar } from '../components/Avatar';
 import { BottomTabBar } from '../components/BottomTabBar';
@@ -23,9 +24,26 @@ export function HomeScreen() {
   const { jobs, isLoading, error, refetch } = useRecentJobs();
   useSwipeNavigation(TAB_ROUTES);
   const swipeEntry = useSwipeEntryClass();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    // Hand the chosen photo to the capture screen, which runs the uploaded-photo
+    // flow (EXIF location or manual restaurant search) without ever opening the camera.
+    navigate('/capture', { state: { uploadedFile: file } });
+  }
 
   return (
     <div className={`${styles.screen} ${swipeEntry}`}>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleFileSelected}
+        className={styles.hiddenFileInput}
+      />
       <div className={styles.header}>
         <div>
           <div className={styles.greeting}>{timeGreeting()}</div>
@@ -35,7 +53,10 @@ export function HomeScreen() {
       </div>
 
       <div className={styles.scanWrap}>
-        <ScanCard onOpenCamera={() => navigate('/capture')} />
+        <ScanCard
+          onOpenCamera={() => navigate('/capture')}
+          onUploadPhoto={() => fileInputRef.current?.click()}
+        />
       </div>
 
       <div className={styles.recentSection}>
