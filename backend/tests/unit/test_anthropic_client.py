@@ -107,3 +107,99 @@ def test_a_failed_read_is_not_cached(monkeypatch):
     # The transient failure was not cached, so a second call retries and succeeds.
     assert secrets.get_secure_parameter("/replate/anthropic-api-key") == "eventual-value"
     assert len(attempts) == 2
+
+
+# --- web_search wall-clock budget -------------------------------------------
+# A slow or looping menu web_search must fail here (as an AnthropicError the caller
+# degrades to vision-only) rather than run until the Lambda is killed and the whole
+# scan is marked Failed - the 2026-08-24 Sandbox.Timedout incident.
+
+
+class _FakeBlock:
+    def __init__(self, text):
+        self.type = "text"
+        self.text = text
+
+
+class _FakeUsage:
+    input_tokens = 10
+    output_tokens = 5
+    server_tool_use = None
+
+
+class _FakeResponse:
+    def __init__(self, text="", stop_reason="end_turn"):
+        self.content = [_FakeBlock(text)] if text else []
+        self.stop_reason = stop_reason
+        self.usage = _FakeUsage()
+
+
+class _FakeClient:
+    """Stands in for the Anthropic SDK client: with_options().messages.create()."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.create_calls = 0
+
+    def with_options(self, **_kwargs):
+        return self
+
+    @property
+    def messages(self):
+        return self
+
+    def create(self, **_kwargs):
+        response = self._responses[min(self.create_calls, len(self._responses) - 1)]
+        self.create_calls += 1
+        return response
+
+
+def _msgs():
+    return [{"role": "user", "content": [{"type": "text", "text": "find the menu"}]}]
+
+
+def test_web_search_returns_text_on_a_normal_response(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    fake = _FakeClient([_FakeResponse("menu json", "end_turn")])
+    monkeypatch.setattr(anthropic_client, "get_client", lambda: fake)
+
+    out = anthropic_client.web_search_completion("claude-test", _msgs())
+
+    assert out == "menu json"
+    assert fake.create_calls == 1
+
+
+def test_web_search_gives_up_when_the_budget_is_exhausted(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setattr(anthropic_client.app_config, "web_search_timeout_seconds", lambda: 10.0)
+    # First reading sets the deadline (t0=1000 -> deadline 1010); the next leaves only 5s,
+    # below _MIN_RESUME_SECONDS, so the paused turn is not resumed.
+    times = iter([1000.0, 1005.0])
+    monkeypatch.setattr(anthropic_client.time, "monotonic", lambda: next(times))
+    fake = _FakeClient([_FakeResponse("", "pause_turn")])
+    monkeypatch.setattr(anthropic_client, "get_client", lambda: fake)
+
+    with pytest.raises(anthropic_client.AnthropicError, match="budget"):
+        anthropic_client.web_search_completion("claude-test", _msgs())
+
+    assert fake.create_calls == 1  # initial call only; no resume attempted
+
+
+def test_web_search_stops_after_the_resume_cap(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setattr(anthropic_client.app_config, "web_search_timeout_seconds", lambda: 1000.0)
+    monkeypatch.setattr(anthropic_client.time, "monotonic", lambda: 0.0)  # budget never runs down
+    fake = _FakeClient(
+        [
+            _FakeResponse("", "pause_turn"),
+            _FakeResponse("", "pause_turn"),
+            _FakeResponse("final menu", "pause_turn"),
+        ]
+    )
+    monkeypatch.setattr(anthropic_client, "get_client", lambda: fake)
+
+    out = anthropic_client.web_search_completion("claude-test", _msgs())
+
+    assert out == "final menu"
+    # initial + _MAX_PAUSE_RESUMES resumes, then it stops even though still paused.
+    assert fake.create_calls == 1 + anthropic_client._MAX_PAUSE_RESUMES

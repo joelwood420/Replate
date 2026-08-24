@@ -14,6 +14,7 @@ id had before.
 import json
 import logging
 import threading
+import time
 
 import anthropic
 
@@ -25,8 +26,13 @@ _client = None
 
 # The model can pause a long server-tool turn (stop_reason == "pause_turn") and
 # expects to be re-sent to resume. Cap the resumes so a misbehaving turn cannot
-# loop forever.
-_MAX_PAUSE_RESUMES = 5
+# loop forever. Kept low deliberately: each resume re-sends the whole accumulated
+# context (every page read so far), so a high cap is how one search runs for minutes.
+_MAX_PAUSE_RESUMES = 2
+
+# Don't start another pause-turn resume unless at least this many seconds of the
+# web_search budget remain - a resume with almost no budget just fails mid-flight.
+_MIN_RESUME_SECONDS = 8.0
 
 
 class AnthropicError(Exception):
@@ -140,17 +146,34 @@ def web_search_completion(
     if system:
         request["system"] = system
 
+    # Bound the whole search - pause-turn resumes included - by a wall-clock budget that
+    # sits below the fetch-menu Lambda timeout. A slow or looping search then fails here
+    # as an AnthropicError (which the menu-fetch caller degrades to the vision-only
+    # outcome) instead of the Lambda being killed and the whole scan marked Failed. Equal
+    # client/Lambda timeouts were exactly why slow menus failed whole scans.
+    budget = app_config.web_search_timeout_seconds()
+    deadline = time.monotonic() + budget
     client = get_client()
     try:
-        response = client.messages.create(**request)
+        response = client.with_options(timeout=budget).messages.create(**request)
         _log_usage("web_search", response)
         # Resume the server-tool loop if the turn paused mid-search.
         resumes = 0
         while response.stop_reason == "pause_turn" and resumes < _MAX_PAUSE_RESUMES:
+            remaining = deadline - time.monotonic()
+            if remaining <= _MIN_RESUME_SECONDS:
+                logging.warning(
+                    "web_search budget of %.0fs exhausted after %d resume(s); giving up",
+                    budget,
+                    resumes,
+                )
+                raise AnthropicError(
+                    f"web_search exceeded its {budget:.0f}s budget after {resumes} resume(s)"
+                )
             request["messages"] = request["messages"] + [
                 {"role": "assistant", "content": response.content}
             ]
-            response = client.messages.create(**request)
+            response = client.with_options(timeout=remaining).messages.create(**request)
             _log_usage("web_search:resume", response)
             resumes += 1
     except (anthropic.APIError, anthropic.APIConnectionError) as exc:
