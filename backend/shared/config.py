@@ -1,3 +1,4 @@
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -8,6 +9,12 @@ from dotenv import load_dotenv
 # at LocalStack) in production. Gating on the Lambda marker makes that impossible.
 if not os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
     load_dotenv()
+
+# AWS Lambda's Python runtime leaves the root logger at WARNING, which silences every
+# logging.info in this codebase - including the model usage/timing diagnostics that make
+# a scan's cost and latency visible. config is imported by every handler, so raise the
+# level here once, at cold start. Override with LOG_LEVEL (e.g. WARNING to quieten it).
+logging.getLogger().setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
 
 
 def aws_region() -> str:
@@ -118,6 +125,16 @@ def anthropic_generator_model() -> str:
 
 def anthropic_timeout_seconds() -> float:
     return float(os.environ.get("ANTHROPIC_TIMEOUT_SECONDS", "120"))
+
+
+def web_search_timeout_seconds() -> float:
+    # Wall-clock budget for a whole menu web_search (its pause-turn resumes included).
+    # MUST stay below the fetch-menu Lambda timeout (120s) so a slow or looping search
+    # fails as an AnthropicError - which the caller degrades to the vision-only outcome,
+    # keeping the scan alive - instead of the Lambda being killed and the job marked
+    # Failed. Equal timeouts were why slow menus failed whole scans (see the 2026-08-24
+    # incident: fetch-menu hit Sandbox.Timedout at 120.00s, twice).
+    return float(os.environ.get("WEB_SEARCH_TIMEOUT_SECONDS", "75"))
 
 
 def web_search_max_uses() -> int:

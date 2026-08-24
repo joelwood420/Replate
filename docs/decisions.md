@@ -10,6 +10,29 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-24: A slow menu fetch degrades to vision-only, never fails the scan
+
+**Decision:** The menu web_search now runs under a wall-clock budget
+(`WEB_SEARCH_TIMEOUT_SECONDS`, default 75s) that sits **below** the fetch-menu Lambda's
+120s timeout, enforced across pause-turn resumes inside `web_search_completion`. When the
+budget is exceeded it raises `AnthropicError`, which the caller already degrades to the
+vision-only outcome. Also: lower the pause-turn resume cap 5 → 2, and raise the Lambda root
+logger to INFO at cold start (`config.py`, override `LOG_LEVEL`) so the model usage/timing
+logs actually appear.
+
+**Why:** a real scan failed on 2026-08-24 with `replate-fetch-menu` hitting
+`Sandbox.Timedout` at exactly 120.00s **twice** (initial + retry). The restaurant, vision and
+geocode all succeeded in seconds; only the menu web_search hung. Root cause: the Anthropic
+client timeout defaulted to 120s — **equal to** the Lambda timeout — so the Lambda was killed
+at the same instant the client would have raised, meaning the graceful vision-only degrade
+could never fire and a slow menu became a hard `Failed` scan. Making the client budget strictly
+smaller than the Lambda timeout restores the safety net: a slow restaurant menu yields a
+vision-only result (scan succeeds) instead of failing. The INFO-logging fix was needed because
+the function emitted zero application logs — every `logging.info`, including the usage
+diagnostics added the same day, was silenced by Lambda's default WARNING level.
+
+---
+
 ## 2026-08-24: Menu-fetch parse failures reformat, never re-search
 
 **Decision:** When the `web_search` menu-fetch call returns text that does not parse as clean

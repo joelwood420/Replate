@@ -11,5 +11,9 @@ export function useRecentJobs(limit = 10) {
   useEffect(() => {
     refetch();
   }, [refetch]);
-  return { jobs: jobs.slice(0, limit), isLoading, error, refetch };
+  // "Recently Identified" only lists dishes that were actually identified. A Failed
+  // stage-1 scan (bad photo, moderation reject, or a pipeline error like a menu-fetch
+  // timeout) never produced an identification, so it does not belong here.
+  const identified = jobs.filter((job) => job.status !== 'Failed');
+  return { jobs: identified.slice(0, limit), isLoading, error, refetch };
 }
