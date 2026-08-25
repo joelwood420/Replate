@@ -237,13 +237,20 @@ failure paths).
 
 ## Not done by the template (manual, mostly 3b)
 
-- Create the **`SecureString`** params for 3b — CloudFormation can't create SecureStrings:
+- Create the **`SecureString`** params — CloudFormation can't create SecureStrings:
   ```bash
-  aws ssm put-parameter --name /replate/anthropic-api-key     --type SecureString --value '<key>'
-  aws ssm put-parameter --name /replate/google-places-api-key --type SecureString --value '<key>'
+  aws ssm put-parameter --name /replate/anthropic-api-key --type SecureString --value '<key>'
+  aws ssm put-parameter --name /replate/serpapi-key       --type SecureString --value '<key>'
   ```
-  The execution roles already grant `ssm:GetParameter` on `/replate/*`; the 3b code change is
-  reading them at runtime instead of from the (empty) env vars.
+  The execution roles already grant `ssm:GetParameter` on `/replate/*`; the code reads them at
+  runtime instead of from the (empty) env vars. The default AWS-managed SSM key is used, so no
+  KMS grant is needed.
+  - **`/replate/serpapi-key`** backs deterministic menu-URL discovery (`shared/serpapi.py`,
+    docs/decisions.md 2026-08-25). SerpApi's free tier is ~100 searches/month; past that it
+    moves to a paid plan (re-verify current terms). The 24h menu cache means each restaurant is
+    searched once and reused, so raise `MENU_CACHE_TTL_HOURS` to stretch the free tier if a demo
+    approaches it. If the parameter is absent, menu discovery falls back to the OSM `website`
+    hint and otherwise degrades to the vision-only outcome.
 - **CI/CD** is done (Phase 4): see the "CI/CD (Phase 4)" section above. The one-time step is
   deploying `github-oidc.yaml` and setting the three Actions variables.
 - **Phase 5 testing** adds two manual, one-time steps: create the e2e demo Cognito user and set
