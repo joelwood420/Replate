@@ -1,0 +1,212 @@
+.screen {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+}
+
+.hiddenFileInput {
+  display: none;
+}
+
+.topBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: calc(env(safe-area-inset-top, 0px) + 14px) 16px 12px;
+}
+
+.iconButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: 50%;
+  color: var(--color-cream);
+  background: var(--color-surface);
+  cursor: pointer;
+}
+
+.topTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-cream);
+}
+
+/* Balances the icon button so the title stays centred. */
+.topSpacer {
+  width: 38px;
+  height: 38px;
+}
+
+.body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 22px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* Contain, not cover: the user is reviewing the exact photo they're about to send, so show
+   all of it rather than cropping. */
+.photoFrame {
+  width: 100%;
+  max-height: 46vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.photo {
+  width: 100%;
+  max-height: 46vh;
+  object-fit: contain;
+  display: block;
+}
+
+.statusRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-muted-light);
+}
+
+.statusFound {
+  color: var(--color-gold);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-muted-light);
+  animation: uploadPulse 1.4s ease-in-out infinite;
+}
+
+.check {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--color-gold);
+  flex-shrink: 0;
+  position: relative;
+}
+
+.check::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 3px;
+  width: 3px;
+  height: 6px;
+  border: solid var(--color-bg);
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(45deg);
+}
+
+@keyframes uploadPulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+
+.searchBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.searchLabel {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--color-muted-light);
+}
+
+.error {
+  padding: 10px 14px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--color-cream-soft);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.footer {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 22px calc(env(safe-area-inset-bottom, 0px) + 22px);
+  border-top: 1px solid var(--color-border-divider);
+  background: var(--color-bg);
+}
+
+.secondary {
+  border: none;
+  background: none;
+  color: var(--color-muted-light);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.secondary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sendingOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: oklch(10% 0.006 55 / 0.72);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.sendingSpinner {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid var(--color-gold-track);
+  border-top-color: var(--color-gold);
+  animation: uploadSpin 0.9s linear infinite;
+}
+
+.sendingText {
+  font-size: 13px;
+  color: var(--color-cream-soft);
+}
+
+@keyframes uploadSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
