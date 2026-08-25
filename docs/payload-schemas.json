@@ -5,8 +5,8 @@
   "$defs": {
     "JobStatus": {
       "type": "string",
-      "enum": ["Queued", "Processing", "Identified", "Generating", "Completed", "Failed"],
-      "description": "The pipeline runs in two stages. Queued/Processing = stage 1 (identify restaurant, fetch menu, vision guess, menu match). Identified = stage 1 done: the dish is auto-saved to the cookbook with a match and confidence outcome, but has no recipe - a terminal state until the user asks for one. Generating = stage 2 (recipe generation) running after POST /jobs/{jobId}/reverse-engineer. Completed = recipe available. Failed means stage 1 failed; a stage-2 failure reverts to Identified instead."
+      "enum": ["Queued", "Processing", "Identified", "Generating", "Completed", "Failed", "Cancelled"],
+      "description": "The pipeline runs in two stages. Queued/Processing = stage 1 (identify restaurant, fetch menu, vision guess, menu match). Identified = stage 1 done: the dish is auto-saved to the cookbook with a match and confidence outcome, but has no recipe - a terminal state until the user asks for one. Generating = stage 2 (recipe generation) running after POST /jobs/{jobId}/reverse-engineer. Completed = recipe available. Failed means stage 1 failed; a stage-2 failure reverts to Identified instead. Cancelled means the user aborted an in-flight scan via POST /jobs/{jobId}/cancel to stop model spend - a normal terminal state, kept distinct from Failed."
     },
     "RestaurantCandidate": {
       "type": "object",

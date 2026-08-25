@@ -108,8 +108,9 @@ def anthropic_api_key_param() -> str:
 
 
 def anthropic_menu_model() -> str:
-    # Default supports the web_search_20260209 server tool (Sonnet 4.6+/Opus 4.6+);
-    # Haiku 4.5 only has the basic web_search variant.
+    # The menu path no longer uses web_search - SerpApi finds the menu URL and this model
+    # only extracts the fetched page (docs/decisions.md). It must be vision-capable, since a
+    # menu is often fetched as a PDF or an image; claude-sonnet-5 is.
     return os.environ.get("ANTHROPIC_MENU_MODEL", "claude-sonnet-5")
 
 
@@ -135,6 +136,48 @@ def web_search_timeout_seconds() -> float:
     # Failed. Equal timeouts were why slow menus failed whole scans (see the 2026-08-24
     # incident: fetch-menu hit Sandbox.Timedout at 120.00s, twice).
     return float(os.environ.get("WEB_SEARCH_TIMEOUT_SECONDS", "75"))
+
+
+# --- SerpApi menu discovery + page fetch --------------------------------------------
+# The menu-fetch step is a deterministic SerpApi search -> targeted page fetch -> cheap
+# structured extract, replacing the unbounded first-party web_search sweep that timed out
+# and over-billed (docs/decisions.md). The whole step is bounded by menu_fetch_budget_seconds
+# so it degrades to the vision-only outcome instead of hanging.
+
+
+def serpapi_key_param() -> str:
+    # SSM SecureString parameter name (e.g. /replate/serpapi-key). Set by the SAM template
+    # when deployed; blank locally, where serpapi_key() (the plain env var) is used. A missing
+    # parameter degrades to the no-key path, same posture as the Anthropic key.
+    return os.environ.get("SERPAPI_KEY_PARAM", "").strip()
+
+
+def serpapi_key() -> str:
+    # Local dev / tests set the key directly; deployed, it comes from SSM via
+    # serpapi_key_param().
+    return os.environ.get("SERPAPI_KEY", "")
+
+
+def serpapi_timeout_seconds() -> float:
+    return float(os.environ.get("SERPAPI_TIMEOUT_SECONDS", "10"))
+
+
+def menu_fetch_budget_seconds() -> float:
+    # Wall-clock budget for the whole menu-fetch step (SerpApi + page fetch + extract). MUST
+    # stay below the fetch-menu Lambda timeout so a slow step degrades to the vision-only
+    # outcome here rather than the Lambda being killed and the scan marked Failed - the same
+    # lesson as the old web_search timeout incident (see the 2026-08-24 Sandbox.Timedout).
+    return float(os.environ.get("MENU_FETCH_BUDGET_SECONDS", "45"))
+
+
+def page_fetch_timeout_seconds() -> float:
+    return float(os.environ.get("PAGE_FETCH_TIMEOUT_SECONDS", "12"))
+
+
+def page_fetch_max_bytes() -> int:
+    # Cap the menu-page download so a huge PDF/image cannot blow up extract cost or latency.
+    # 10 MB comfortably covers a normal menu PDF or photo while bounding a pathological one.
+    return int(os.environ.get("PAGE_FETCH_MAX_BYTES", str(10 * 1024 * 1024)))
 
 
 def web_search_max_uses() -> int:

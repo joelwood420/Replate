@@ -8,6 +8,8 @@ export type AuthHeaders = Record<string, string>;
  * restaurant and menu item, but no recipe yet. `Generating` means the user pressed
  * "Reverse engineer" and stage 2 is running. `Failed` only ever means stage 1 failed;
  * a stage-2 failure reverts to `Identified` with an error_message so it stays retryable.
+ * `Cancelled` means the user aborted an in-flight scan to stop model spend - a normal
+ * terminal state kept distinct from `Failed` so it never reads as an error.
  */
 export type JobStatusValue =
   | 'Queued'
@@ -15,7 +17,8 @@ export type JobStatusValue =
   | 'Identified'
   | 'Generating'
   | 'Completed'
-  | 'Failed';
+  | 'Failed'
+  | 'Cancelled';
 export type MatchMethod = 'menu_matched' | 'vision_only_medium' | 'vision_only_low';
 
 export interface CreateJobResponse {
@@ -178,6 +181,18 @@ export function reverseEngineerJob(
   authHeaders: AuthHeaders,
 ): Promise<{ job_id: string; status: JobStatusValue }> {
   return request(`/jobs/${jobId}/reverse-engineer`, { method: 'POST' }, authHeaders);
+}
+
+/**
+ * Aborts an in-flight scan (a `Queued`/`Processing` job), stopping the Step Functions
+ * execution so no more model spend accrues, and moves the job to `Cancelled`. Throws
+ * ApiError 409 if there is no scan in flight to cancel.
+ */
+export function cancelJob(
+  jobId: string,
+  authHeaders: AuthHeaders,
+): Promise<{ job_id: string; status: JobStatusValue }> {
+  return request(`/jobs/${jobId}/cancel`, { method: 'POST' }, authHeaders);
 }
 
 export function listJobs(

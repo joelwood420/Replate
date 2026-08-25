@@ -58,6 +58,31 @@ def start_execution(state_machine_arn: str, name: str, payload: dict) -> bool:
     return True
 
 
+def execution_arn(state_machine_arn: str, name: str) -> str:
+    """Derive an execution ARN from its state machine ARN and execution name.
+
+    A state machine ARN is `...:stateMachine:<smName>`; its executions are
+    `...:execution:<smName>:<execName>`. Deriving the ARN avoids having to persist
+    it at StartExecution time just so cancel can find it later.
+    """
+    return f"{state_machine_arn.replace(':stateMachine:', ':execution:')}:{name}"
+
+
+def stop_execution(state_machine_arn: str, name: str) -> bool:
+    """Stop a running execution by its state machine ARN and execution name.
+
+    Returns True if a running execution was stopped, False if there was nothing to
+    stop (never started, already finished, or the name was never used). A missing
+    execution is not an error here - the caller still wants to mark the job stopped.
+    """
+    client = get_client()
+    try:
+        client.stop_execution(executionArn=execution_arn(state_machine_arn, name))
+    except client.exceptions.ExecutionDoesNotExist:
+        return False
+    return True
+
+
 def sanitize_name(raw: str) -> str:
     """Make a string safe to use as an execution name.
 

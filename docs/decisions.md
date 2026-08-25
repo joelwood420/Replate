@@ -10,6 +10,94 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-25: Scans process in the background with a Cancel, and cancelling is its own state
+
+**Decision:** A scan no longer traps the user on a full-screen loader. After capture the dish
+page shows the just-taken photo with the orb over it, honest "this usually takes under a
+minute - you can leave" copy, and two controls: leave (the scan keeps running and the dish
+shows a "still processing" pulse in the Home list, updating live) or **Cancel scan**, which
+stops the identify state-machine execution so no further model spend accrues. A cancelled scan
+becomes a new terminal status, **CANCELLED**, distinct from FAILED. A new endpoint
+`POST /jobs/{jobId}/cancel` stops the execution and sets the status; the SQS starter also skips
+a job cancelled while still QUEUED. No timed auto-redirect.
+
+**Why:** the owner's:
+
+- **Let the user stop money being spent.** The scan is where a menu fetch and the vision call
+  cost tokens; a Cancel button is the escape hatch for a scan that is dragging or was a
+  mistake, rather than watching spend accrue with no way out.
+- **Background, not a wait.** Forcing the user to stare at a loader is the thing to remove. The
+  live-updating Home list makes leaving safe, so the "background processing" feel comes from
+  the list, not from kicking the user off the page.
+- **No timed redirect.** A timer that yanks the user to Home mid-glance was considered and
+  rejected: it feels janky at any interval, and since the result lands on the dish page it
+  would only add a tap to get back to it. Leaving is offered, never forced.
+- **CANCELLED over reusing FAILED.** A deliberate cancel is not an error; giving it its own
+  status keeps it out of the red error screen and out of failure metrics, and lets the list
+  hide it from "recently identified" the same way FAILED is hidden.
+
+**Context worth recording:**
+
+- **Scope is the identify scan only for now.** Recipe generation (GENERATING) is a separate,
+  user-initiated stage and is not cancellable through this endpoint yet - a noted follow-up.
+- **Execution ARN is derived, not stored.** Cancel reconstructs the execution ARN from the
+  state-machine ARN + the job-id-derived execution name (`shared/sfn.execution_arn`), so no
+  new persisted field was needed at StartExecution time.
+
+---
+
+## 2026-08-25: Menu fetch is a deterministic SerpApi pipeline, not an Anthropic web_search sweep
+
+**Decision:** Replace the first-party `web_search` menu-fetch call with a deterministic,
+wall-clock-bounded pipeline: **SerpApi** (Google engine) finds the restaurant's menu-page URL
+from its name + address, `shared/page_fetch.py` fetches that one page (HTML, PDF or image), and
+one cheap tool-free Claude structured-extract call (`generate_structured`, no server tool)
+reshapes it into menu items. The whole step is bounded by `MENU_FETCH_BUDGET_SECONDS` (default
+45s, below the now-60s fetch-menu Lambda timeout). SerpApi is queried first with the OSM
+`website` tag as a fallback URL hint; the SerpApi key lives in SSM as a `SecureString`
+(`/replate/serpapi-key`). This supersedes the menu-fetch **mechanism** of the 2026-08-17 entry;
+the broader "model calls go through the first-party Anthropic API" decision there still stands
+(vision, extract and recipe generation all remain first-party Anthropic calls), and the
+2026-08-24 budget/reformat fixes are subsumed by this (there is no web_search sweep left to
+bound or to reformat around).
+
+**Why:** the owner's, three reasons:
+
+- **Cost.** The `web_search` sweep was the pipeline's dominant cost — it kept searching and
+  re-reading pages server-side (each read re-billed across pause-turn resumes), running to
+  dollars per scan even after the 2026-08-24 caps. SerpApi is ~$0.01–0.015 per lookup and the
+  one extract call is cents (a PDF menu ~$0.01–0.03, an image ~$0.005), so a first-ever scan
+  drops well under the prior figure and a cached repeat costs nothing.
+- **Latency / UX.** The sweep hit the 120s Lambda ceiling and timed out (the 2026-08-24
+  Baduzzi incident). SerpApi + fetch + extract completes in seconds, and the hard budget means
+  a slow restaurant degrades to vision-only in well under a minute instead of hanging.
+- **Reliability.** `web_search` was effectively location-blind — it burned budget deciding
+  *which* restaurant before looking for a menu — and gave up on menus that are PDFs, images or
+  JS/aggregator pages. Grounding on name + address and fetching the page directly (with native
+  PDF/image reading by Claude) fixes both root causes: it skips the "find the site" thrash and
+  handles the formats most real menus actually use.
+
+**Context worth recording:**
+
+- **SerpApi is a new paid dependency with a small free tier** (~100 searches/month; overage
+  moves to a paid plan — re-verify current terms, Global Rule 5). Free-tier protection comes
+  from caching, not from avoiding SerpApi: the existing 24h `MenuLastFetchedAt` gate means a
+  restaurant is searched once and reused, and a genuine "no menu online" result is cached as a
+  successful empty menu (a negative cache) so it does not re-burn a search each scan.
+  `MENU_CACHE_TTL_HOURS` is the lever to stretch the free tier further if needed.
+- **SerpApi-first, not OSM-first.** OSM's `menu_source_url` is only the map entry's `website`
+  tag — often missing or a generic homepage — so it is a fallback hint, not the primary source;
+  SerpApi finds the real menu page (including Google's hosted menu and aggregators) wherever it
+  lives.
+- **Graceful-degrade posture preserved.** A missing key, a SerpApi error with no fallback URL,
+  or the budget running out raises `MenuExtractionError` (not cached, retried next job); a clean
+  "no menu found" returns an empty list (cached). Both surface downstream as the vision-only
+  medium-confidence match, exactly as before. `web_search_completion` and the `WEB_SEARCH_*`
+  config are kept as generic infrastructure (a candidate for the Phase 6 recipe-grounding
+  alternative), not on the menu path.
+
+---
+
 ## 2026-08-24: A slow menu fetch degrades to vision-only, never fails the scan
 
 **Decision:** The menu web_search now runs under a wall-clock budget
@@ -286,6 +374,11 @@ no code change.
 ---
 
 ## 2026-08-17 — Model calls go through the first-party Anthropic API, not Amazon Bedrock
+
+> **Menu-fetch mechanism superseded by the 2026-08-25 SerpApi entry.** The "single call using
+> the server-side `web_search` tool" described below was replaced by a deterministic SerpApi +
+> page-fetch + structured-extract pipeline. The broader decision — that Claude calls go through
+> the first-party Anthropic API — still stands; only the web_search-for-menu mechanism changed.
 
 **Decision:** Route Claude calls through the **first-party Anthropic API** (`anthropic` SDK,
 `ANTHROPIC_API_KEY`), reversing the 2026-08-14 Bedrock decision. Menu extraction goes back to a

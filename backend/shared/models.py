@@ -29,6 +29,11 @@ class JobStatus:
     error message instead, so a transient generator error never discards a good
     menu match - see activities/persist_job_result.mark_recipe_failed.
 
+    CANCELLED means the user aborted an in-flight scan to stop model spend (see
+    triggers/job_cancel_http.py). It is a normal terminal outcome, kept distinct
+    from FAILED so a deliberate cancel does not read as an error or count towards
+    failure metrics.
+
     Values are stored as the job item's `status` attribute and must be mirrored in
     frontend/src/lib/apiClient.ts and docs/payload-schemas.json.
     """
@@ -39,6 +44,7 @@ class JobStatus:
     GENERATING = "Generating"
     COMPLETED = "Completed"
     FAILED = "Failed"
+    CANCELLED = "Cancelled"
 
 
 def candidate_envelope(candidates: list[dict]) -> dict:

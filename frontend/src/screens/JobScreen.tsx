@@ -7,7 +7,8 @@ import { MethodStep } from '../components/MethodStep';
 import { PillButton } from '../components/PillButton';
 import { ProcessingOrb, type OrbStage } from '../components/ProcessingOrb';
 import { RecipeHero } from '../components/RecipeHero';
-import { reverseEngineerJob, setJobSaved } from '../lib/apiClient';
+import { IconClose } from '../components/icons';
+import { cancelJob, reverseEngineerJob, setJobSaved } from '../lib/apiClient';
 import { useAuth } from '../lib/auth/useAuth';
 import { formatQuantity, timeAgo } from '../lib/format';
 import { useJobPolling } from '../lib/jobs/useJobPolling';
@@ -17,6 +18,43 @@ function ProcessingShell({ stage = 'identify' }: { stage?: OrbStage }) {
   return (
     <div className={styles.processingScreen}>
       <ProcessingOrb stage={stage} />
+    </div>
+  );
+}
+
+// The identify-stage waiting screen: the just-captured photo behind a scrim, the orb over
+// it, and copy that makes leaving feel safe. The close button and Cancel are both offered —
+// leaving keeps the scan running (it lands in the cookbook), Cancel stops it outright.
+function ScanningOverlay({
+  imageUrl,
+  isCancelling,
+  cancelError,
+  onCancel,
+  onLeave,
+}: {
+  imageUrl: string | undefined;
+  isCancelling: boolean;
+  cancelError: string | null;
+  onCancel: () => void;
+  onLeave: () => void;
+}) {
+  return (
+    <div className={styles.scanOverlay}>
+      {imageUrl && <img src={imageUrl} alt="" className={styles.scanPhoto} />}
+      <div className={styles.scanScrim} />
+      <button type="button" className={styles.scanClose} onClick={onLeave} aria-label="Leave — keep processing">
+        <IconClose size={18} />
+      </button>
+      <div className={styles.scanContent}>
+        <ProcessingOrb stage="identify" />
+        <p className={styles.scanHint}>
+          This usually takes under a minute. You can leave — we’ll keep it in your cookbook.
+        </p>
+        {cancelError && <p className={styles.scanError}>{cancelError}</p>}
+        <button type="button" className={styles.scanCancel} onClick={onCancel} disabled={isCancelling}>
+          {isCancelling ? 'Cancelling…' : 'Cancel scan'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -38,6 +76,8 @@ export function JobScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [isStartingRecipe, setIsStartingRecipe] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   // Which component's recipe to show; null shows the full dish (every component combined).
   const [selectedComponent, setSelectedComponent] = useState<number | null>(null);
 
@@ -59,6 +99,22 @@ export function JobScreen() {
       setIsSaved(next);
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function handleCancel() {
+    if (!jobId || isCancelling) return;
+    setIsCancelling(true);
+    setCancelError(null);
+    try {
+      await cancelJob(jobId, authHeaders);
+      // The job is now terminal (Cancelled); re-read so the screen leaves the
+      // processing state and polling stops.
+      refetch();
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : 'Could not cancel this scan.');
+    } finally {
+      setIsCancelling(false);
     }
   }
 
@@ -110,10 +166,36 @@ export function JobScreen() {
     );
   }
 
-  // Both stages use the full-screen orb, but stage 2 (Generating) gets the heavier,
-  // reassured "generate" treatment — it's the slow, expensive one worth waiting for.
-  if (job.status === 'Queued' || job.status === 'Processing' || job.status === 'Generating') {
-    return <ProcessingShell stage={job.status === 'Generating' ? 'generate' : 'identify'} />;
+  if (job.status === 'Cancelled') {
+    return (
+      <ErrorState
+        tone="notice"
+        title="Scan cancelled"
+        message="You stopped this scan, so nothing was charged for it. Take another whenever you're ready."
+        primaryAction={{ label: 'Take another photo', onClick: () => navigate('/capture', { replace: true }) }}
+        secondaryAction={{ label: 'Back to home', onClick: () => navigate('/home', { replace: true }) }}
+      />
+    );
+  }
+
+  // Stage 1 (identify) shows the just-captured photo with the orb over it and a Cancel
+  // control, so the user can wait, leave (the dish keeps processing in their cookbook), or
+  // stop it to halt model spend. Stage 2 (Generating) is the user-initiated recipe build —
+  // it keeps the heavier full-screen "generate" treatment and is not cancellable here.
+  if (job.status === 'Queued' || job.status === 'Processing') {
+    return (
+      <ScanningOverlay
+        imageUrl={job.image_url}
+        isCancelling={isCancelling}
+        cancelError={cancelError}
+        onCancel={handleCancel}
+        onLeave={() => navigate('/home')}
+      />
+    );
+  }
+
+  if (job.status === 'Generating') {
+    return <ProcessingShell stage="generate" />;
   }
 
   const { result } = job;

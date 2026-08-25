@@ -20,9 +20,18 @@ Parameters:
     Type: String
     Default: "claude-sonnet-5"
     Description: >
-      Anthropic model id for menu extraction. Must support the web_search_20260209
-      server tool (Sonnet 4.6+/Opus 4.6+). The ANTHROPIC_API_KEY it needs is read from
-      SSM Parameter Store; blank key = stubbed (menu fetch degrades to vision-only).
+      Anthropic model id for menu extraction. Menu fetch no longer uses web_search - SerpApi
+      finds the menu URL and this model only extracts the fetched page, so it must be
+      vision-capable (a menu is often a PDF or image). claude-sonnet-5 is. The ANTHROPIC_API_KEY
+      it needs is read from SSM; blank key = stubbed (menu fetch degrades to vision-only).
+  SerpApiKeyParam:
+    Type: String
+    Default: "/replate/serpapi-key"
+    Description: >
+      SSM Parameter Store name of the SerpApi key (a SecureString created out of band -
+      CloudFormation can't make SecureStrings). The fetch-menu function reads it at runtime to
+      find a restaurant's menu URL; the execution role grants ssm:GetParameter on replate/*.
+      If the parameter is absent, menu discovery falls back to the OSM website hint only.
   AnthropicVisionModel:
     Type: String
     Default: ""
@@ -101,6 +110,12 @@ Globals:
         # (Overpass for GPS, Nominatim for name search), so no Places key is needed.
         ANTHROPIC_API_KEY_PARAM: !Ref AnthropicApiKeyParam
         ANTHROPIC_API_KEY: ""
+        # SerpApi key for deterministic menu-URL discovery (docs/decisions.md). Read at runtime
+        # from the SSM SecureString named by SERPAPI_KEY_PARAM; the blank SERPAPI_KEY is only
+        # the local/absent fallback. A missing parameter degrades menu discovery to the OSM
+        # website hint (and otherwise the vision-only outcome), never crashing.
+        SERPAPI_KEY_PARAM: !Ref SerpApiKeyParam
+        SERPAPI_KEY: ""
 
 # ---------------------------------------------------------------------------------------
 Resources:
@@ -356,6 +371,31 @@ Resources:
             Path: /jobs/{jobId}/reverse-engineer
             Method: POST
 
+  CancelJobFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-cancel-job"
+      Handler: triggers.job_cancel_http.handler
+      Environment:
+        Variables:
+          IDENTIFY_STATE_MACHINE_ARN: !Ref IdentifyStateMachine
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        # No SAM policy template stops an execution, so grant states:StopExecution
+        # directly, scoped to this state machine's executions.
+        - Statement:
+            - Effect: Allow
+              Action: states:StopExecution
+              Resource: !Sub "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:${IdentifyStateMachine.Name}:*"
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /jobs/{jobId}/cancel
+            Method: POST
+
   RestaurantSearchFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -451,12 +491,15 @@ Resources:
     Properties:
       FunctionName: !Sub "${AWS::StackName}-fetch-menu"
       Handler: activities.fetch_restaurant_menu.handler
-      Timeout: 120
+      # The menu step is bounded by MENU_FETCH_BUDGET_SECONDS (45s); 60 leaves headroom for the
+      # SerpApi + fetch + extract sequence while staying well under the old 120. The budget sits
+      # below this so a slow step degrades to vision-only here rather than the Lambda being killed.
+      Timeout: 60
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref Table
-        # Reads ANTHROPIC_API_KEY (the menu web_search call). No IAM for the model
-        # itself - the Anthropic API authenticates by key.
+        # Reads ANTHROPIC_API_KEY (menu extract) and SERPAPI_KEY (menu-URL discovery) from SSM.
+        # No IAM for the model or SerpApi themselves - both authenticate by key.
         - SSMParameterReadPolicy:
             ParameterName: replate/*
 
@@ -723,6 +766,9 @@ Resources:
   RestaurantSearchLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-restaurant-search", RetentionInDays: !Ref LogRetentionDays }
+  CancelJobLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-cancel-job", RetentionInDays: !Ref LogRetentionDays }
   StarterLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-starter", RetentionInDays: !Ref LogRetentionDays }

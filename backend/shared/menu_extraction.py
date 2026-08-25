@@ -1,45 +1,39 @@
 """Find a restaurant's menu and turn it into structured menu items.
 
-One Claude call using the first-party API's server-side `web_search` tool does
-search, fetch and extract together (docs/decisions.md, 2026-08-17). This was the
-original design; the Bedrock era split it into search -> fetch -> extract because
-Bedrock did not expose the tool. Moving back to the first-party API restores the
-single call and removes shared/web_search.py.
+Deterministic pipeline (docs/decisions.md): SerpApi finds the menu-page URL from the
+restaurant name + address, `page_fetch` fetches that one page (HTML, PDF or image), and one
+cheap tool-free Claude structured-extract call reshapes it into menu items. This replaces the
+first-party `web_search` sweep, which was location-blind and kept searching until its budget
+was exhausted - it timed out at 120s and cost dollars per session (the 2026-08-24 incident).
 
-The extraction contract - a JSON object of menu items - is unchanged, so the
-retry-on-unparseable-output behaviour and `activities/fetch_restaurant_menu.py`'s
-graceful degrade did not have to change.
+The whole step is bounded by `config.menu_fetch_budget_seconds()`. A genuine "no menu online"
+result returns an empty list (a *success*, so the activity caches it and does not re-burn a
+SerpApi search next scan); a transient failure - a SerpApi/model error, or the budget running
+out mid-flight - raises MenuExtractionError, which the caller degrades to the vision-only
+outcome and which leaves the cache untouched so the next job retries.
+
+The extraction contract - a JSON object of menu items - is unchanged, so the signature,
+`_MENU_SCHEMA`, `_validate` and `activities/fetch_restaurant_menu.py`'s graceful degrade did
+not have to change.
 """
 
+import base64
 import json
 import logging
+import time
 
-from shared import anthropic_client, config
+from shared import anthropic_client, config, page_fetch, secrets, serpapi
 
-_SYSTEM_PROMPT = (
-    "You find and extract restaurant menu items. Use the web_search tool to find "
-    "the restaurant's menu, then respond with ONLY a JSON object, no prose before "
-    "or after."
+_EXTRACT_SYSTEM = (
+    "You reshape a single restaurant's menu - given as page text, a PDF, or an image - into "
+    "structured data. Do not invent items. Include only real food and drink items; ignore "
+    "navigation, opening hours, addresses, allergen keys and marketing copy."
 )
 
-_PROMPT_TEMPLATE = """Find the current menu for "{name}"{address_clause} and extract its items.
-
-Search the web for this restaurant's menu, read the most relevant page, then
-respond with ONLY a JSON object of this exact shape:
-{{"items": [{{"item_name": "...", "item_description": "..." or "", "price": "..." or null}}]}}
-
-Rules:
-- Only include actual food and drink items. Ignore navigation, opening hours,
-  addresses, allergen keys and marketing copy.
-- If you cannot find a menu for this restaurant, respond with {{"items": []}}."""
-
-# The reformat pass never searches - it only reshapes text the web_search call
-# already gathered - so it can use structured outputs (a server tool cannot),
-# which guarantees schema-valid JSON in one cheap turn.
-_REFORMAT_SYSTEM = (
-    "You reshape restaurant menu text that has already been gathered into structured "
-    "data. Do not search the web. Include only real food and drink items; ignore "
-    "navigation, hours, addresses and marketing copy."
+_EXTRACT_INSTRUCTION = (
+    "Extract the menu items from this restaurant menu into the required JSON schema. Use an "
+    "empty string for a missing description or price. If it contains no menu items, return "
+    '{"items": []}.'
 )
 
 _MENU_SCHEMA = {
@@ -84,95 +78,149 @@ def _validate(payload: dict) -> list[dict]:
             {
                 "item_name": item["item_name"],
                 "item_description": item.get("item_description") or "",
-                # An empty price string (how the reformat schema signals "unknown")
-                # normalizes to None, matching the web_search path's null price.
+                # An empty price string (how the schema signals "unknown") normalizes to None.
                 "price": item.get("price") or None,
             }
         )
     return validated
 
 
-def fetch_menu_items(name: str, address: str | None, menu_source_url: str | None) -> list[dict]:
-    """Find, fetch and extract a restaurant's menu in one web_search call.
+def _resolved_serpapi_key() -> str:
+    """The SerpApi key, from SSM when deployed or the env var locally.
 
-    Signature and return shape are unchanged from the Bedrock version, so
-    `activities/fetch_restaurant_menu.py` and its graceful-degrade path did not
-    have to change - a MenuExtractionError still means "no real menu data", which
-    the match step already handles as the vision-only medium-confidence outcome.
-    `menu_source_url` is accepted for signature compatibility; the model does its
-    own searching, so a hint URL is folded into the prompt rather than fetched
-    here.
+    Mirrors `anthropic_client._resolved_key`: an SSM failure degrades to the no-key path
+    (which surfaces as a MenuExtractionError -> the vision-only outcome) rather than crashing.
+    """
+    param = config.serpapi_key_param()
+    if param:
+        try:
+            return secrets.get_secure_parameter(param)
+        except Exception as exc:  # noqa: BLE001 - degrade on any SSM failure
+            logging.warning("Could not read %s from SSM: %s", param, exc)
+            return ""
+    return config.serpapi_key()
+
+
+def _discover_menu_url(name, address, menu_source_url, api_key, timeout) -> tuple[str | None, bool]:
+    """Find the best menu URL, falling back to the OSM website hint.
+
+    Returns (url, must_retry). `must_retry` is True when there is no URL and the reason is
+    transient/config - a SerpApi error or a missing key - so the caller can retry (raise)
+    rather than cache an empty result. A clean search that simply found nothing returns
+    (None, False), a genuine "no menu online" the caller may cache.
+    """
+    serp_url = None
+    serp_errored = False
+    if api_key:
+        try:
+            serp_url = serpapi.find_menu_url(name, address, api_key, timeout)
+        except serpapi.SerpApiError as exc:
+            logging.info("SerpApi failed for %s, falling back to any known URL: %s", name, exc)
+            serp_errored = True
+    else:
+        logging.info("No SerpApi key configured; using the OSM URL hint for %s if present", name)
+
+    url = serp_url or menu_source_url
+    # must_retry: only when we have no URL AND the reason is transient/config, not a clean
+    # "SerpApi searched and found nothing". A SerpApi error or a missing key with no fallback
+    # should be retried on the next job (raise, don't cache); a genuine empty search caches [].
+    # A usable fallback URL makes both moot.
+    must_retry = url is None and (serp_errored or not api_key)
+    return url, must_retry
+
+
+def fetch_menu_items(name: str, address: str | None, menu_source_url: str | None) -> list[dict]:
+    """Find, fetch and extract a restaurant's menu, bounded by the menu-fetch budget.
+
+    Signature and return shape are unchanged from the web_search version. An empty list is a
+    successful "no menu online" answer (the activity caches it); a MenuExtractionError is a
+    transient/config failure the caller degrades to the vision-only medium-confidence outcome.
     """
     if not anthropic_client.is_configured():
-        raise MenuExtractionError(
-            f"Cannot fetch menu for {name}: ANTHROPIC_API_KEY is not set"
-        )
+        raise MenuExtractionError(f"Cannot fetch menu for {name}: ANTHROPIC_API_KEY is not set")
 
     model = config.anthropic_menu_model()
     if not model:
-        raise MenuExtractionError(
-            f"Cannot fetch menu for {name}: ANTHROPIC_MENU_MODEL is not set"
-        )
+        raise MenuExtractionError(f"Cannot fetch menu for {name}: ANTHROPIC_MENU_MODEL is not set")
 
-    address_clause = f" at {address}" if address else ""
-    prompt = _PROMPT_TEMPLATE.format(name=name, address_clause=address_clause)
-    if menu_source_url:
-        prompt += f"\n\nA known menu page for this restaurant is: {menu_source_url}"
+    deadline = time.monotonic() + config.menu_fetch_budget_seconds()
 
-    messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+    def remaining() -> float:
+        return deadline - time.monotonic()
 
-    logging.info("Fetching menu for %s via web_search", name)
+    # 1. Discover the menu URL (SerpApi, with the OSM website as a fallback hint).
+    serp_timeout = min(config.serpapi_timeout_seconds(), max(remaining(), 0.0))
+    url, must_retry = _discover_menu_url(
+        name, address, menu_source_url, _resolved_serpapi_key(), serp_timeout
+    )
+    if url is None:
+        if must_retry:
+            # SerpApi errored, or no key was configured, with no fallback URL - a transient/
+            # config state. Raise so the next job retries rather than caching an empty menu.
+            raise MenuExtractionError(f"Could not discover a menu URL for {name}")
+        logging.info("No menu URL found for %s; treating as no menu online", name)
+        return []
 
-    # The one paid web_search sweep: find, read and extract in a single call.
+    # 2. Fetch that one page. A None here (unknown type, empty, oversize) is a genuine "no menu
+    #    at this URL" - return [] so the activity caches it. A transport error raises
+    #    PageFetchError instead, which we turn into a MenuExtractionError so a one-off network
+    #    blip is not cached as a permanent no-menu for the full TTL.
+    if remaining() <= 0:
+        raise MenuExtractionError(f"Menu fetch for {name} ran out of budget before fetching")
+    page_timeout = min(config.page_fetch_timeout_seconds(), remaining())
     try:
-        raw = anthropic_client.web_search_completion(model, messages, system=_SYSTEM_PROMPT)
-    except anthropic_client.AnthropicError as exc:
-        # A model error is not retryable here - a missing key or a denied model
-        # will fail identically every time.
-        raise MenuExtractionError(f"Anthropic error fetching menu for {name}: {exc}") from exc
+        content = page_fetch.fetch_menu_content(url, page_timeout)
+    except page_fetch.PageFetchError as exc:
+        raise MenuExtractionError(f"Menu page fetch failed for {name}: {exc}") from exc
+    if content is None:
+        logging.info("Menu URL %s for %s yielded no usable content", url, name)
+        return []
 
-    try:
-        return _validate(anthropic_client.parse_json_response(raw))
-    except (ValueError, json.JSONDecodeError):
-        # The web_search output was not clean JSON (citations, prose, a stray
-        # fence). The model already found and read the menu, so re-running
-        # web_search would just re-bill the whole sweep - that path once cost 15
-        # searches for a single dish. Instead reshape its own output with a cheap,
-        # tool-free structured call that cannot search and cannot return invalid JSON.
-        logging.info("Menu JSON for %s needed a reformat pass (no re-search)", name)
+    # 3. Extract into the schema with one cheap, tool-free structured call.
+    if remaining() <= 0:
+        raise MenuExtractionError(f"Menu fetch for {name} ran out of budget before extracting")
 
-    return _reformat_menu_text(model, name, raw)
-
-
-def _reformat_menu_text(model: str, name: str, raw: str) -> list[dict]:
-    """Coerce already-gathered menu text into the schema, without searching again."""
+    logging.info("Extracting menu for %s from %s (%s)", name, url, content["kind"])
     try:
         data = anthropic_client.generate_structured(
             model=model,
-            system=_REFORMAT_SYSTEM,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": (
-                                "Extract the menu items from the text below into the "
-                                "required JSON schema. Use an empty string for a missing "
-                                f"description or price.\n\n{raw}"
-                            ),
-                        }
-                    ],
-                }
-            ],
+            system=_EXTRACT_SYSTEM,
+            messages=[{"role": "user", "content": _build_content(content)}],
             schema=_MENU_SCHEMA,
             max_tokens=2048,
             effort="low",
+            # Bound the call by what is left of the menu-fetch budget so a slow extract
+            # degrades to vision-only here rather than getting the Lambda killed.
+            timeout=remaining(),
         )
     except anthropic_client.AnthropicError as exc:
-        raise MenuExtractionError(f"Could not reformat menu for {name}: {exc}") from exc
+        raise MenuExtractionError(f"Anthropic error extracting menu for {name}: {exc}") from exc
 
     try:
         return _validate(data)
     except (ValueError, json.JSONDecodeError) as exc:
         raise MenuExtractionError(f"Failed to parse menu for {name}: {exc}") from exc
+
+
+def _build_content(content: dict) -> list[dict]:
+    """Turn a `page_fetch` result into Messages API content blocks for the extract call.
+
+    HTML becomes a text block; a PDF or image becomes a document/image block (Claude reads
+    both natively) followed by the instruction text. Document/image blocks go before the text
+    block per the Messages API guidance.
+    """
+    if content["kind"] == "html":
+        return [{"type": "text", "text": f"{_EXTRACT_INSTRUCTION}\n\n{content['text']}"}]
+
+    encoded = base64.standard_b64encode(content["data"]).decode("ascii")
+    if content["kind"] == "pdf":
+        block = {
+            "type": "document",
+            "source": {"type": "base64", "media_type": "application/pdf", "data": encoded},
+        }
+    else:  # image
+        block = {
+            "type": "image",
+            "source": {"type": "base64", "media_type": content["media_type"], "data": encoded},
+        }
+    return [block, {"type": "text", "text": _EXTRACT_INSTRUCTION}]

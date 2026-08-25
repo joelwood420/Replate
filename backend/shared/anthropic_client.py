@@ -2,8 +2,13 @@
 
 Replaces the Amazon Bedrock wrapper (docs/decisions.md, 2026-08-17). Bedrock
 authenticated by the Lambda execution role and had no server-side web_search
-tool; the first-party API needs an API key but *does* expose web_search, which
-is why fetch_restaurant_menu can go back to a single search+fetch+extract call.
+tool; the first-party API needs an API key but *does* expose web_search.
+
+`web_search_completion` is no longer on the menu-fetch path - that moved to a
+deterministic SerpApi + page-fetch + structured-extract pipeline (see
+`shared/menu_extraction.py`, docs/decisions.md). The function and the WEB_SEARCH_*
+config are kept as generic infrastructure (a candidate for the Phase 6 recipe-
+grounding alternative), not dead-coded out.
 
 The API key is read from ANTHROPIC_API_KEY (Parameter Store SecureString when
 deployed, blank locally). `is_configured()` is the stub gate: with no key,
@@ -194,6 +199,7 @@ def generate_structured(
     system: str | None = None,
     max_tokens: int = 4096,
     effort: str = "medium",
+    timeout: float | None = None,
 ) -> dict:
     """Run a Messages call constrained to a JSON schema and return parsed JSON.
 
@@ -203,6 +209,11 @@ def generate_structured(
     defaults to medium: this backs the heaviest-output call in the pipeline
     (recipe generation), so thinking depth is bounded deliberately rather than
     left at the `high` default.
+
+    `timeout` bounds this one call below the client default. The menu-fetch caller
+    passes its remaining wall-clock budget so a slow extract fails here (degrading
+    to the vision-only outcome) instead of running until the Lambda is killed - the
+    same client-below-Lambda safety net the web_search path had.
     """
     if not is_configured():
         raise AnthropicError("ANTHROPIC_API_KEY is not set")
@@ -222,6 +233,8 @@ def generate_structured(
         request["system"] = system
 
     client = get_client()
+    if timeout is not None:
+        client = client.with_options(timeout=timeout)
     try:
         response = client.messages.create(**request)
         _log_usage("structured", response)

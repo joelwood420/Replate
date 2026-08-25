@@ -67,6 +67,38 @@
   text-transform: uppercase;
 }
 
+.processingBadge {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-gold);
+}
+
+.processingBadge .pulse {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-gold);
+  animation: cardPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes cardPulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .processingBadge .pulse {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+
 .name {
   font-size: 13px;
   font-weight: 600;

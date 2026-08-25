@@ -11,9 +11,10 @@ export function useRecentJobs(limit = 10) {
   useEffect(() => {
     refetch();
   }, [refetch]);
-  // "Recently Identified" only lists dishes that were actually identified. A Failed
-  // stage-1 scan (bad photo, moderation reject, or a pipeline error like a menu-fetch
-  // timeout) never produced an identification, so it does not belong here.
-  const identified = jobs.filter((job) => job.status !== 'Failed');
+  // "Recently Identified" only lists dishes that reached, or are on their way to, an
+  // identification. A Failed stage-1 scan (bad photo, moderation reject, pipeline error)
+  // and a Cancelled scan (the user stopped it) never produced one, so neither belongs here.
+  // In-flight jobs (Queued/Processing) stay - they show their "still processing" state.
+  const identified = jobs.filter((job) => job.status !== 'Failed' && job.status !== 'Cancelled');
   return { jobs: identified.slice(0, limit), isLoading, error, refetch };
 }
