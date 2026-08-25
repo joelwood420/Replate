@@ -20,6 +20,7 @@ cannot be fully buffered into the Lambda's memory before being rejected.
 
 import logging
 import re
+from urllib.parse import urljoin
 
 import httpx
 
@@ -32,6 +33,41 @@ _SCRIPT_STYLE = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.IGNORECASE | r
 _TAG = re.compile(r"<[^>]+>")
 _WHITESPACE = re.compile(r"[ \t\r\f\v]+")
 _BLANK_LINES = re.compile(r"\n\s*\n+")
+
+# PDF links in an HTML page - many restaurant "menu" pages just link to PDF menus.
+_PDF_HREF = re.compile(r'href=["\']([^"\']+\.pdf[^"\']*)["\']', re.IGNORECASE)
+_PDF_FOOD_HINTS = ("menu", "food", "dinner", "lunch", "breakfast", "set-menu", "set_menu", "a-la-carte", "main")
+_PDF_NEGATIVE_HINTS = ("drink", "wine", "bar", "kids", "child", "dessert", "cocktail", "beverage")
+# Cap how many candidate links we surface; the caller follows only a couple, so more is noise.
+_MAX_PDF_LINKS = 6
+
+
+def _find_menu_pdf_links(html: str, base_url: str) -> list[str]:
+    """Absolute URLs of PDF menus linked from an HTML page, most menu-like first.
+
+    Ranks food/menu links above drinks/kids so the caller (which follows only a couple) spends
+    its budget on the mains rather than the wine list. Relative hrefs are resolved against the
+    page URL; order is otherwise preserved (Python's sort is stable).
+    """
+    seen: set[str] = set()
+    links: list[str] = []
+    for href in _PDF_HREF.findall(html):
+        absolute = urljoin(base_url, href)
+        if absolute not in seen:
+            seen.add(absolute)
+            links.append(absolute)
+
+    def score(url: str) -> int:
+        low = url.lower()
+        value = 0
+        if any(hint in low for hint in _PDF_FOOD_HINTS):
+            value += 2
+        if any(hint in low for hint in _PDF_NEGATIVE_HINTS):
+            value -= 2
+        return value
+
+    links.sort(key=score, reverse=True)
+    return links[:_MAX_PDF_LINKS]
 
 
 class PageFetchError(Exception):
@@ -79,7 +115,7 @@ def fetch_menu_content(url: str, timeout: float) -> dict | None:
     """Fetch `url` and return a tagged content dict, or None if it yields no usable menu.
 
     Return shapes:
-    - {"kind": "html",  "text": <plain text>}
+    - {"kind": "html",  "text": <plain text>, "pdf_links": [<url>, ...]}
     - {"kind": "pdf",   "data": <bytes>, "media_type": "application/pdf"}
     - {"kind": "image", "data": <bytes>, "media_type": "image/..."}
 
@@ -99,6 +135,7 @@ def fetch_menu_content(url: str, timeout: float) -> dict | None:
             response.raise_for_status()
             # Content-Type can carry a charset/parameters, so match on the bare media type.
             content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+            final_url = str(response.url)
             body = _read_capped(response, max_bytes)
     except httpx.HTTPError as exc:
         raise PageFetchError(f"could not fetch {url}: {exc}") from exc
@@ -119,8 +156,14 @@ def fetch_menu_content(url: str, timeout: float) -> dict | None:
     if content_type in ("image/jpeg", "image/png", "image/gif", "image/webp"):
         return {"kind": "image", "data": body, "media_type": content_type}
     if content_type.startswith("text/") or content_type in ("application/xhtml+xml", ""):
-        text = _strip_html(body.decode("utf-8", "replace"))
-        return {"kind": "html", "text": text} if text else None
+        html = body.decode("utf-8", "replace")
+        text = _strip_html(html)
+        pdf_links = _find_menu_pdf_links(html, final_url)
+        # Keep the page even when it has no readable text, as long as it links to PDF menus -
+        # a menu landing page whose real menus are all PDFs is exactly the case to follow.
+        if not text and not pdf_links:
+            return None
+        return {"kind": "html", "text": text, "pdf_links": pdf_links}
 
     logging.info("Menu page for %s has unsupported content-type %r", url, content_type)
     return None

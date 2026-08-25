@@ -187,6 +187,13 @@ def page_fetch_max_bytes() -> int:
     return int(os.environ.get("PAGE_FETCH_MAX_BYTES", str(10 * 1024 * 1024)))
 
 
+def menu_pdf_max_follow() -> int:
+    # Many restaurant "menu" pages are HTML that only links to PDF menus (food, drinks, set
+    # menus). When the HTML has no items, follow up to this many linked menu PDFs and merge
+    # their items. Each followed PDF is one more fetch + extract, so this bounds that cost.
+    return int(os.environ.get("MENU_PDF_MAX_FOLLOW", "2"))
+
+
 def web_search_max_uses() -> int:
     # How many times the model may call the server-side web_search tool in a single
     # menu fetch. Each search costs money and pulls the read page into context (billed

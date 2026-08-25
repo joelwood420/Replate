@@ -10,6 +10,45 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-25: Menu fetch follows linked PDF menus when the HTML page has no dishes
+
+**Decision:** `menu_extraction` extracts the fetched page's own content first (with the full
+remaining budget), and **only when that yields no dishes** follows the PDF menus it links to:
+it detects the PDF links, ranks the food/menu ones above drinks/kids, and follows up to
+`MENU_PDF_MAX_FOLLOW` (default 2) of them - fetching each PDF and extracting from it directly
+(Claude reads PDFs natively), merging and de-duplicating items by name. `page_fetch` surfaces
+the ranked, absolute PDF URLs on its HTML result; the whole thing stays under the same
+menu-fetch budget. HTML-first (rather than PDF-first) is deliberate - see "Why the ordering"
+below.
+
+**Why:** a real scan of Baduzzi (2026-08-25) found the restaurant and its menu page fast and
+cheaply via SerpApi (7s, no timeout), but extracted zero items - the page
+(`baduzzi.co.nz/our-menus-2/`) is a WordPress landing page whose actual menus are five linked
+PDFs. `page_fetch` could already read PDFs, but nothing followed the links to reach them, so
+the scan silently fell back to vision-only. Following the linked PDFs closes that gap, which is
+common: a large share of restaurant sites put the real menu in a PDF behind an HTML page.
+
+**Context worth recording:**
+
+- **Why the ordering (HTML-first).** Following the PDFs before extracting the page's own text
+  would let a slow or empty linked PDF consume the budget and starve an extraction that would
+  otherwise have succeeded from the already-fetched HTML - a page that both shows a menu and
+  links a PDF could regress to vision-only. Extracting the page first, with the full budget,
+  removes that risk; the PDF follow only runs when the page genuinely has no dishes.
+- **A transient PDF failure retries, it does not cache a false "no menu".** If every followed
+  PDF fails to *fetch or extract* transiently (a network or model error, as opposed to a PDF
+  that genuinely lists no items) and nothing else yielded a menu, the step raises
+  `MenuExtractionError` so the next job retries - preserving the raise-don't-cache contract the
+  primary fetch upholds. A PDF that cleanly extracts to zero items is a real empty result and is
+  cached like any other.
+- **Bounded by design.** Following is capped (`MENU_PDF_MAX_FOLLOW`) and gated on the remaining
+  budget, so a page linking many PDFs costs at most a couple of extra fetch+extract calls, not
+  an unbounded sweep - the same discipline that replaced the web_search thrash.
+- **Merges multiple menus.** Food and set menus are often separate PDFs, so items from the top
+  few are merged (de-duped by name) to give the matcher more real dishes to match against.
+
+---
+
 ## 2026-08-25: The menu match is an in-context LLM classifier, not a difflib string match
 
 **Decision:** `activities/match_menu_item.py` now matches the vision guess to the restaurant's
