@@ -131,6 +131,22 @@ The job stays `Identified`, so it can be retried once the window reopens.
 
 **403/404** same ownership rules as `GET /jobs/{jobId}`.
 
+## `POST /jobs/{jobId}/cancel`
+
+Abort an in-flight scan (stage 1). Stops the identify state-machine execution so no further
+model spend accrues, and moves the job to `Cancelled` — a normal terminal state kept distinct
+from `Failed`. A job cancelled while still `Queued` is also caught by the SQS starter, which
+skips a `Cancelled` job rather than starting it.
+
+No body.
+
+**200 response:** `{ "job_id": "...", "status": "Cancelled" }`
+
+**409** if the job isn't `Queued` or `Processing` — there is no scan in flight to cancel
+(recipe generation is not cancellable through this endpoint).
+
+**403/404** same ownership rules as `GET /jobs/{jobId}`.
+
 ## `GET /jobs`
 
 List the caller's jobs, newest first.

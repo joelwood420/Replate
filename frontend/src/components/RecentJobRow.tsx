@@ -5,6 +5,7 @@ import { IconChevron } from './icons';
 import styles from './RecentJobRow.module.css';
 
 export function RecentJobRow({ job }: { job: JobSummary }) {
+  const inFlight = job.status === 'Queued' || job.status === 'Processing';
   const meta = [job.restaurant_name, timeAgo(job.created_at)].filter(Boolean).join(' · ');
 
   return (
@@ -14,7 +15,14 @@ export function RecentJobRow({ job }: { job: JobSummary }) {
       </div>
       <div className={styles.text}>
         <div className={styles.dish}>{job.dish_name ?? 'Identifying…'}</div>
-        <div className={styles.meta}>{meta || 'Processing'}</div>
+        {inFlight ? (
+          <div className={`${styles.meta} ${styles.processing}`}>
+            <span className={styles.pulse} aria-hidden="true" />
+            Still processing…
+          </div>
+        ) : (
+          <div className={styles.meta}>{meta || 'Processing'}</div>
+        )}
       </div>
       <div className={styles.chevron}>
         <IconChevron size={16} />

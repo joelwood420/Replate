@@ -37,7 +37,16 @@ def build_orchestration_input(job_id: str) -> dict:
 
 
 def start_for_job(job_id: str) -> bool:
-    """Move the job to Processing and start the identify state machine."""
+    """Move the job to Processing and start the identify state machine.
+
+    A job cancelled in the brief window between enqueue and this handler running is
+    left alone: starting it would undo the cancel and spend model budget the user
+    asked to stop. Returns False for that skip, same as an already-running dedupe.
+    """
+    job = repository.get_job(job_id)
+    if job and job.get("status") == JobStatus.CANCELLED:
+        return False
+
     execution_input = build_orchestration_input(job_id)
     return sfn.start_execution(
         config.identify_state_machine_arn(),

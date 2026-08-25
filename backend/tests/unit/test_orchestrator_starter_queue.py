@@ -121,3 +121,15 @@ def test_a_malformed_message_body_is_reported_not_raised(ddb_table, started):
     result = starter.handler({"Records": [{"messageId": "msg-0", "body": "not json"}]})
 
     assert result == {"batchItemFailures": [{"itemIdentifier": "msg-0"}]}
+
+
+def test_a_job_cancelled_before_start_is_skipped(ddb_table, started):
+    """A job cancelled in the window between enqueue and this handler must not be
+    started - doing so would undo the cancel and spend the budget the user stopped."""
+    _create_job(status=JobStatus.CANCELLED)
+
+    result = starter.handler(_sqs_event("job-1"))
+
+    assert result == {"batchItemFailures": []}
+    assert started == []
+    assert repository.get_job("job-1")["status"] == JobStatus.CANCELLED

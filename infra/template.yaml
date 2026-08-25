@@ -371,6 +371,31 @@ Resources:
             Path: /jobs/{jobId}/reverse-engineer
             Method: POST
 
+  CancelJobFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-cancel-job"
+      Handler: triggers.job_cancel_http.handler
+      Environment:
+        Variables:
+          IDENTIFY_STATE_MACHINE_ARN: !Ref IdentifyStateMachine
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        # No SAM policy template stops an execution, so grant states:StopExecution
+        # directly, scoped to this state machine's executions.
+        - Statement:
+            - Effect: Allow
+              Action: states:StopExecution
+              Resource: !Sub "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:${IdentifyStateMachine.Name}:*"
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /jobs/{jobId}/cancel
+            Method: POST
+
   RestaurantSearchFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -741,6 +766,9 @@ Resources:
   RestaurantSearchLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-restaurant-search", RetentionInDays: !Ref LogRetentionDays }
+  CancelJobLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-cancel-job", RetentionInDays: !Ref LogRetentionDays }
   StarterLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-starter", RetentionInDays: !Ref LogRetentionDays }

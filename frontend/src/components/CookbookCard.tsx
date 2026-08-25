@@ -25,6 +25,12 @@ export function CookbookCard({ job, onToggleSaved }: CookbookCardProps) {
         >
           {job.is_saved ? <IconTrash size={12} /> : <IconPlus size={13} />}
         </button>
+        {(job.status === 'Queued' || job.status === 'Processing') && (
+          <div className={`${styles.pendingBadge} ${styles.processingBadge}`}>
+            <span className={styles.pulse} aria-hidden="true" />
+            Processing
+          </div>
+        )}
         {job.status === 'Identified' && <div className={styles.pendingBadge}>Not yet reverse-engineered</div>}
       </div>
       <div className={styles.name}>{job.dish_name ?? 'Identifying…'}</div>

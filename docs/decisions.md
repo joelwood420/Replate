@@ -10,6 +10,42 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-25: Scans process in the background with a Cancel, and cancelling is its own state
+
+**Decision:** A scan no longer traps the user on a full-screen loader. After capture the dish
+page shows the just-taken photo with the orb over it, honest "this usually takes under a
+minute - you can leave" copy, and two controls: leave (the scan keeps running and the dish
+shows a "still processing" pulse in the Home list, updating live) or **Cancel scan**, which
+stops the identify state-machine execution so no further model spend accrues. A cancelled scan
+becomes a new terminal status, **CANCELLED**, distinct from FAILED. A new endpoint
+`POST /jobs/{jobId}/cancel` stops the execution and sets the status; the SQS starter also skips
+a job cancelled while still QUEUED. No timed auto-redirect.
+
+**Why:** the owner's:
+
+- **Let the user stop money being spent.** The scan is where a menu fetch and the vision call
+  cost tokens; a Cancel button is the escape hatch for a scan that is dragging or was a
+  mistake, rather than watching spend accrue with no way out.
+- **Background, not a wait.** Forcing the user to stare at a loader is the thing to remove. The
+  live-updating Home list makes leaving safe, so the "background processing" feel comes from
+  the list, not from kicking the user off the page.
+- **No timed redirect.** A timer that yanks the user to Home mid-glance was considered and
+  rejected: it feels janky at any interval, and since the result lands on the dish page it
+  would only add a tap to get back to it. Leaving is offered, never forced.
+- **CANCELLED over reusing FAILED.** A deliberate cancel is not an error; giving it its own
+  status keeps it out of the red error screen and out of failure metrics, and lets the list
+  hide it from "recently identified" the same way FAILED is hidden.
+
+**Context worth recording:**
+
+- **Scope is the identify scan only for now.** Recipe generation (GENERATING) is a separate,
+  user-initiated stage and is not cancellable through this endpoint yet - a noted follow-up.
+- **Execution ARN is derived, not stored.** Cancel reconstructs the execution ARN from the
+  state-machine ARN + the job-id-derived execution name (`shared/sfn.execution_arn`), so no
+  new persisted field was needed at StartExecution time.
+
+---
+
 ## 2026-08-25: Menu fetch is a deterministic SerpApi pipeline, not an Anthropic web_search sweep
 
 **Decision:** Replace the first-party `web_search` menu-fetch call with a deterministic,

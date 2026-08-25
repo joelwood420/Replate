@@ -51,6 +51,42 @@
   margin-top: 2px;
 }
 
+/* In-flight scan: a soft pulsing dot next to "Still processing…" so the list itself
+   signals work is happening, without a spinner per row. */
+.processing {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-gold);
+}
+
+.pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-gold);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+
 .chevron {
   display: flex;
   align-items: center;
