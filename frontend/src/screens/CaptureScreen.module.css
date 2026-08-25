@@ -151,18 +151,6 @@
   color: var(--color-cream);
 }
 
-.hiddenFileInput {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
 /* Explicit feedback for the multi-call photo submit — the highest-commitment tap in the
    flow. Covers the camera to block double-taps and names what's happening. A plain gold
    ring spinner (no glow — the orb keeps its monopoly on light). */
