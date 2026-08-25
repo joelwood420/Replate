@@ -178,34 +178,35 @@ def fetch_menu_items(name: str, address: str | None, menu_source_url: str | None
 
     # 3. Extract the page we fetched, giving it the full remaining budget so nothing can starve
     #    it. Many restaurant "menu" pages are an HTML shell with no dishes of their own that just
-    #    link to PDF menus, so only when the page itself yields nothing do we follow those PDFs.
+    #    link the real menus (PDFs or sub-pages), so only when the page itself yields nothing do
+    #    we follow those links.
     if remaining() <= 0:
         raise MenuExtractionError(f"Menu fetch for {name} ran out of budget before extracting")
 
-    pdf_links = content.get("pdf_links") or []
+    menu_links = content.get("menu_links") or []
     # Skip a pointless extract of an HTML shell with no text of its own and go straight to its
-    # PDFs. A directly-fetched PDF/image, or an HTML page with real text, is extracted first.
+    # linked menus. A directly-fetched PDF/image, or an HTML page with real text, is first.
     if content["kind"] != "html" or content.get("text"):
         logging.info("Extracting menu for %s from %s (%s)", name, url, content["kind"])
         items = _extract_content(model, name, content, timeout=remaining())
         if items:
             return items
-    if not pdf_links:
+    if not menu_links:
         return []
 
-    pdf_items, had_transient_failure = _follow_pdf_menus(model, name, pdf_links, deadline)
-    if pdf_items:
-        return pdf_items
+    linked_items, had_transient_failure = _follow_menu_links(model, name, menu_links, deadline)
+    if linked_items:
+        return linked_items
     if had_transient_failure:
-        # Every linked PDF failed transiently (a fetch or model error), not "genuinely empty".
+        # Every linked menu failed transiently (a fetch or model error), not "genuinely empty".
         # Raise so the caller retries next job rather than caching a false "no menu" for the TTL
         # - the same raise-don't-cache contract the primary page fetch above upholds.
-        raise MenuExtractionError(f"All linked PDF menus for {name} failed to fetch or extract")
+        raise MenuExtractionError(f"All linked menus for {name} failed to fetch or extract")
     return []
 
 
-# Need enough of the budget left for a PDF fetch plus its extract before following another one.
-_PDF_FOLLOW_MIN_BUDGET = 5.0
+# Need enough of the budget left for one more fetch plus its extract before following another.
+_FOLLOW_MIN_BUDGET = 5.0
 
 
 def _extract_content(model: str, name: str, content: dict, timeout: float) -> list[dict]:
@@ -233,17 +234,18 @@ def _extract_content(model: str, name: str, content: dict, timeout: float) -> li
         raise MenuExtractionError(f"Failed to parse menu for {name}: {exc}") from exc
 
 
-def _follow_pdf_menus(
-    model: str, name: str, pdf_links: list[str], deadline: float
+def _follow_menu_links(
+    model: str, name: str, links: list[str], deadline: float
 ) -> tuple[list[dict], bool]:
-    """Fetch and extract up to `menu_pdf_max_follow` linked PDF menus, merging their items.
+    """Fetch and extract up to `menu_links_max_follow` linked menus, merging their items.
 
-    Returns (items, had_transient_failure). Bounded by the shared deadline and the follow cap.
-    Items are de-duplicated by name so overlapping menus (a food PDF and a set menu) do not
-    double up. A PDF that fails to *fetch* or *extract* transiently (a network or model error,
-    as opposed to genuinely containing no items) is skipped but flips `had_transient_failure`,
-    so the caller can raise-and-retry rather than cache a false "no menu" when nothing else
-    yields a menu either.
+    Each link is fetched and extracted whatever it turns out to be - a PDF, an image, or an
+    HTML menu page (a menu served at a pretty URL comes back as a PDF here). Returns
+    (items, had_transient_failure). Bounded by the shared deadline and the follow cap. Items are
+    de-duplicated by name so overlapping menus (a food menu and a set menu) do not double up. A
+    link that fails to *fetch* or *extract* transiently (a network or model error, as opposed to
+    genuinely containing no items) is skipped but flips `had_transient_failure`, so the caller
+    can raise-and-retry rather than cache a false "no menu" when nothing else yields one either.
     """
     def remaining() -> float:
         return deadline - time.monotonic()
@@ -252,26 +254,26 @@ def _follow_pdf_menus(
     seen: set[str] = set()
     followed = 0
     had_transient_failure = False
-    for link in pdf_links:
-        if followed >= config.menu_pdf_max_follow() or remaining() <= _PDF_FOLLOW_MIN_BUDGET:
+    for link in links:
+        if followed >= config.menu_links_max_follow() or remaining() <= _FOLLOW_MIN_BUDGET:
             break
         try:
-            pdf = page_fetch.fetch_menu_content(link, min(config.page_fetch_timeout_seconds(), remaining()))
+            fetched = page_fetch.fetch_menu_content(link, min(config.page_fetch_timeout_seconds(), remaining()))
         except page_fetch.PageFetchError as exc:
-            logging.info("Could not fetch linked PDF %s for %s: %s", link, name, exc)
+            logging.info("Could not fetch linked menu %s for %s: %s", link, name, exc)
             had_transient_failure = True
             continue
-        if not pdf or pdf["kind"] != "pdf":
-            # A link that resolved to something that is not a usable PDF - a bad link, not a
+        if fetched is None:
+            # A link that resolved to nothing usable (unknown type, empty) - a bad link, not a
             # transient blip, so it does not force a retry.
             continue
         followed += 1
         if remaining() <= 0:
             break
         try:
-            extracted = _extract_content(model, name, pdf, timeout=remaining())
+            extracted = _extract_content(model, name, fetched, timeout=remaining())
         except MenuExtractionError as exc:
-            logging.info("Linked PDF %s for %s did not extract: %s", link, name, exc)
+            logging.info("Linked menu %s for %s did not extract: %s", link, name, exc)
             had_transient_failure = True
             continue
         for item in extracted:
@@ -281,7 +283,7 @@ def _follow_pdf_menus(
                 items.append(item)
 
     if items:
-        logging.info("Extracted %d menu items for %s from %d linked PDF(s)", len(items), name, followed)
+        logging.info("Extracted %d menu items for %s from %d linked menu(s)", len(items), name, followed)
     return items, had_transient_failure
 
 

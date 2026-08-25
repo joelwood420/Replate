@@ -131,7 +131,7 @@ def test_blank_html_returns_none(monkeypatch):
     assert page_fetch.fetch_menu_content("https://x.com", 10) is None
 
 
-def test_html_surfaces_linked_pdf_menus_food_first(monkeypatch):
+def test_html_surfaces_linked_menus_food_first(monkeypatch):
     html = (
         b'<html><body><h1>Our Menus</h1>'
         b'<a href="/uploads/Kids-Menu.pdf">Kids</a>'
@@ -148,26 +148,48 @@ def test_html_surfaces_linked_pdf_menus_food_first(monkeypatch):
 
     assert result["kind"] == "html"
     # Relative hrefs resolved against the page URL; the food/set menu ranks above drinks/kids.
-    assert result["pdf_links"][0] == "https://baduzzi.co.nz/uploads/85-Set-Menu.pdf"
-    assert "https://baduzzi.co.nz/uploads/Drinks-Menu.pdf" in result["pdf_links"]
-    assert "https://baduzzi.co.nz/uploads/Kids-Menu.pdf" in result["pdf_links"]
+    assert result["menu_links"][0] == "https://baduzzi.co.nz/uploads/85-Set-Menu.pdf"
+    assert "https://baduzzi.co.nz/uploads/Drinks-Menu.pdf" in result["menu_links"]
+    assert "https://baduzzi.co.nz/uploads/Kids-Menu.pdf" in result["menu_links"]
 
 
-def test_a_menu_landing_page_with_only_pdf_links_is_kept(monkeypatch):
-    """No readable dishes, but it links to PDF menus - exactly the page to follow, not drop."""
-    html = b'<html><body><a href="https://x.com/food-menu.pdf"></a></body></html>'
-    _patch_stream(monkeypatch, response=_response([html], "text/html"))
+def test_surfaces_a_same_host_menu_page_at_an_extensionless_url(monkeypatch):
+    """The a-la-carte case: a same-host page whose PATH reads as a menu (e.g. /menu1-2/, which
+    actually serves a PDF) is surfaced even without a .pdf extension. The page itself and API
+    links whose menu word is only in the query are excluded."""
+    html = (
+        b'<html><body>'
+        b'<a href="/our-menus-2/">Menus</a>'                      # the page itself - excluded
+        b'<a href="/wp-json/oembed/1.0/embed?url=/our-menus-2/">oembed</a>'  # menu only in query
+        b'<a href="/menu1-2/">A la carte</a>'                     # extensionless menu page - kept
+        b'<a href="https://facebook.com/baduzzi">Facebook</a>'    # off-site, not a menu - excluded
+        b'</body></html>'
+    )
+    _patch_stream(
+        monkeypatch,
+        response=_response([html], "text/html", url="https://baduzzi.co.nz/our-menus-2/"),
+    )
+
+    result = page_fetch.fetch_menu_content("https://baduzzi.co.nz/our-menus-2/", 10)
+
+    assert result["menu_links"] == ["https://baduzzi.co.nz/menu1-2/"]
+
+
+def test_a_landing_page_with_no_text_but_menu_links_is_kept(monkeypatch):
+    """No readable dishes, but it links a menu - exactly the page to follow, not drop."""
+    html = b'<html><body><a href="https://cdn.example.com/food-menu.pdf"></a></body></html>'
+    _patch_stream(monkeypatch, response=_response([html], "text/html", url="https://x.com/menu"))
 
     result = page_fetch.fetch_menu_content("https://x.com/menu", 10)
 
     assert result is not None
-    assert result["kind"] == "html"
-    assert result["pdf_links"] == ["https://x.com/food-menu.pdf"]
+    # A .pdf link is followed even cross-host (menus are sometimes on a CDN).
+    assert result["menu_links"] == ["https://cdn.example.com/food-menu.pdf"]
 
 
-def test_html_without_pdf_links_has_an_empty_pdf_list(monkeypatch):
+def test_html_without_menu_links_has_an_empty_list(monkeypatch):
     _patch_stream(monkeypatch, response=_response([b"<html><body>Pad Thai 13.00</body></html>"], "text/html"))
 
     result = page_fetch.fetch_menu_content("https://x.com/menu", 10)
 
-    assert result["pdf_links"] == []
+    assert result["menu_links"] == []

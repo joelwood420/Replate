@@ -20,7 +20,7 @@ cannot be fully buffered into the Lambda's memory before being rejected.
 
 import logging
 import re
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -34,40 +34,62 @@ _TAG = re.compile(r"<[^>]+>")
 _WHITESPACE = re.compile(r"[ \t\r\f\v]+")
 _BLANK_LINES = re.compile(r"\n\s*\n+")
 
-# PDF links in an HTML page - many restaurant "menu" pages just link to PDF menus.
-_PDF_HREF = re.compile(r'href=["\']([^"\']+\.pdf[^"\']*)["\']', re.IGNORECASE)
-_PDF_FOOD_HINTS = ("menu", "food", "dinner", "lunch", "breakfast", "set-menu", "set_menu", "a-la-carte", "main")
-_PDF_NEGATIVE_HINTS = ("drink", "wine", "bar", "kids", "child", "dessert", "cocktail", "beverage")
-# Cap how many candidate links we surface; the caller follows only a couple, so more is noise.
-_MAX_PDF_LINKS = 6
+# Links from an HTML page. Many restaurant "menu" pages are a shell that links the real menus
+# as separate PDFs or sub-pages - sometimes at pretty, extensionless URLs that still serve a
+# PDF (e.g. /menu1-2/ returning application/pdf). So a menu link is either a .pdf href OR a
+# same-host page whose PATH reads as a menu; page_fetch sorts out PDF-vs-HTML per target.
+_HREF = re.compile(r'href=["\']([^"\']+)["\']', re.IGNORECASE)
+# Matched against the URL PATH only, so API links like /wp-json/oembed?url=...menu... are excluded.
+_MENU_PATH_HINTS = ("menu", "food", "dinner", "lunch", "breakfast", "carte", "mains")
+_FOOD_HINTS = ("menu", "food", "dinner", "lunch", "breakfast", "set-menu", "set_menu", "a-la-carte", "carte", "main")
+_NEGATIVE_HINTS = ("drink", "wine", "bar", "kids", "child", "dessert", "cocktail", "beverage")
+# Cap how many candidate links we surface; the caller follows only a few, so more is noise.
+_MAX_MENU_LINKS = 8
 
 
-def _find_menu_pdf_links(html: str, base_url: str) -> list[str]:
-    """Absolute URLs of PDF menus linked from an HTML page, most menu-like first.
+def _menu_link_score(url: str) -> int:
+    low = url.lower()
+    value = 0
+    if any(hint in low for hint in _FOOD_HINTS):
+        value += 2
+    if any(hint in low for hint in _NEGATIVE_HINTS):
+        value -= 2
+    return value
 
-    Ranks food/menu links above drinks/kids so the caller (which follows only a couple) spends
-    its budget on the mains rather than the wine list. Relative hrefs are resolved against the
-    page URL; order is otherwise preserved (Python's sort is stable).
+
+def _find_menu_links(html: str, base_url: str) -> list[str]:
+    """Absolute URLs of menus linked from an HTML page, most menu-like first.
+
+    A candidate is either a `.pdf` href (any host) or a same-host page whose PATH contains a
+    menu word - the latter catches menus served at extensionless URLs. The page we are already
+    on is excluded. Ranks food/menu above drinks/kids so the caller (which follows only a few)
+    spends its budget on the mains, not the wine list. Relative hrefs are resolved against the
+    page URL; ties keep page order (Python's sort is stable).
     """
-    seen: set[str] = set()
+    base = urlparse(base_url)
+    base_key = (base.netloc, base.path.rstrip("/"))
+    seen: set[tuple] = set()
     links: list[str] = []
-    for href in _PDF_HREF.findall(html):
+    for href in _HREF.findall(html):
         absolute = urljoin(base_url, href)
-        if absolute not in seen:
-            seen.add(absolute)
-            links.append(absolute)
+        parsed = urlparse(absolute)
+        if parsed.scheme not in ("http", "https"):
+            continue
+        low_path = parsed.path.lower()
+        is_pdf = low_path.endswith(".pdf")
+        is_menu_page = parsed.netloc == base.netloc and any(h in low_path for h in _MENU_PATH_HINTS)
+        if not (is_pdf or is_menu_page):
+            continue
+        if (parsed.netloc, parsed.path.rstrip("/")) == base_key:
+            continue  # the page we're already on
+        key = (parsed.netloc, parsed.path.rstrip("/"), parsed.query)
+        if key in seen:
+            continue
+        seen.add(key)
+        links.append(absolute)
 
-    def score(url: str) -> int:
-        low = url.lower()
-        value = 0
-        if any(hint in low for hint in _PDF_FOOD_HINTS):
-            value += 2
-        if any(hint in low for hint in _PDF_NEGATIVE_HINTS):
-            value -= 2
-        return value
-
-    links.sort(key=score, reverse=True)
-    return links[:_MAX_PDF_LINKS]
+    links.sort(key=_menu_link_score, reverse=True)
+    return links[:_MAX_MENU_LINKS]
 
 
 class PageFetchError(Exception):
@@ -115,7 +137,7 @@ def fetch_menu_content(url: str, timeout: float) -> dict | None:
     """Fetch `url` and return a tagged content dict, or None if it yields no usable menu.
 
     Return shapes:
-    - {"kind": "html",  "text": <plain text>, "pdf_links": [<url>, ...]}
+    - {"kind": "html",  "text": <plain text>, "menu_links": [<url>, ...]}
     - {"kind": "pdf",   "data": <bytes>, "media_type": "application/pdf"}
     - {"kind": "image", "data": <bytes>, "media_type": "image/..."}
 
@@ -158,12 +180,12 @@ def fetch_menu_content(url: str, timeout: float) -> dict | None:
     if content_type.startswith("text/") or content_type in ("application/xhtml+xml", ""):
         html = body.decode("utf-8", "replace")
         text = _strip_html(html)
-        pdf_links = _find_menu_pdf_links(html, final_url)
-        # Keep the page even when it has no readable text, as long as it links to PDF menus -
-        # a menu landing page whose real menus are all PDFs is exactly the case to follow.
-        if not text and not pdf_links:
+        menu_links = _find_menu_links(html, final_url)
+        # Keep the page even when it has no readable text, as long as it links to menus - a
+        # landing page whose real menus are all separate files/pages is exactly what to follow.
+        if not text and not menu_links:
             return None
-        return {"kind": "html", "text": text, "pdf_links": pdf_links}
+        return {"kind": "html", "text": text, "menu_links": menu_links}
 
     logging.info("Menu page for %s has unsupported content-type %r", url, content_type)
     return None

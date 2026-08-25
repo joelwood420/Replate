@@ -273,7 +273,44 @@ def test_a_url_yielding_no_content_is_a_cacheable_empty_result(monkeypatch):
     assert menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None) == []
 
 
-# --- following linked PDF menus ---------------------------------------------
+# --- following linked menus -------------------------------------------------
+
+
+def test_follows_an_extensionless_menu_page_that_serves_a_pdf(monkeypatch):
+    """The a-la-carte case: a menu link with no .pdf extension (e.g. /menu1-2/) that page_fetch
+    returns as a PDF is still followed and extracted."""
+    _patch_url(monkeypatch, "https://x.com/our-menus")
+    _patch_fetch_map(
+        monkeypatch,
+        {
+            "our-menus": {"kind": "html", "text": "", "menu_links": ["https://x.com/menu1-2/"]},
+            "menu1-2": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
+        },
+    )
+    extract_calls = _patch_extract_seq(monkeypatch, EXTRACTED)
+
+    items = menu_extraction.fetch_menu_items("Baduzzi", None, None)
+
+    assert items[0]["item_name"] == "Pad Thai"
+    assert extract_calls[0]["messages"][0]["content"][0]["type"] == "document"  # read as a PDF
+
+
+def test_follows_a_linked_html_menu_page(monkeypatch):
+    """A followed menu link that resolves to an HTML page (not a PDF) is extracted too."""
+    _patch_url(monkeypatch, "https://x.com/menus")
+    _patch_fetch_map(
+        monkeypatch,
+        {
+            "menus": {"kind": "html", "text": "", "menu_links": ["https://x.com/dinner-menu/"]},
+            "dinner-menu": {"kind": "html", "text": "Pad Thai 13.00", "menu_links": []},
+        },
+    )
+    extract_calls = _patch_extract_seq(monkeypatch, EXTRACTED)
+
+    items = menu_extraction.fetch_menu_items("Baduzzi", None, None)
+
+    assert items[0]["item_name"] == "Pad Thai"
+    assert extract_calls[0]["messages"][0]["content"][0]["type"] == "text"  # extracted as HTML text
 
 
 def test_a_pdf_only_landing_page_skips_the_html_extract(monkeypatch):
@@ -282,7 +319,7 @@ def test_a_pdf_only_landing_page_skips_the_html_extract(monkeypatch):
     _patch_fetch_map(
         monkeypatch,
         {
-            "menus": {"kind": "html", "text": "", "pdf_links": ["https://x.com/food.pdf"]},
+            "menus": {"kind": "html", "text": "", "menu_links": ["https://x.com/food.pdf"]},
             "food.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
         },
     )
@@ -302,7 +339,7 @@ def test_html_with_no_dishes_falls_through_to_the_pdf(monkeypatch):
     _patch_fetch_map(
         monkeypatch,
         {
-            "menus": {"kind": "html", "text": "about us and opening hours", "pdf_links": ["https://x.com/food.pdf"]},
+            "menus": {"kind": "html", "text": "about us and opening hours", "menu_links": ["https://x.com/food.pdf"]},
             "food.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
         },
     )
@@ -323,7 +360,7 @@ def test_html_with_a_real_menu_does_not_follow_pdfs(monkeypatch):
     fetch_calls = _patch_fetch_map(
         monkeypatch,
         {
-            "menus": {"kind": "html", "text": "Pad Thai 13.00", "pdf_links": ["https://x.com/food.pdf"]},
+            "menus": {"kind": "html", "text": "Pad Thai 13.00", "menu_links": ["https://x.com/food.pdf"]},
             "food.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
         },
     )
@@ -337,12 +374,12 @@ def test_html_with_a_real_menu_does_not_follow_pdfs(monkeypatch):
 
 
 def test_merges_and_dedups_across_followed_pdfs(monkeypatch):
-    monkeypatch.setenv("MENU_PDF_MAX_FOLLOW", "2")
+    monkeypatch.setenv("MENU_LINKS_MAX_FOLLOW", "2")
     _patch_url(monkeypatch, "https://x.com/menus")
     _patch_fetch_map(
         monkeypatch,
         {
-            "menus": {"kind": "html", "text": "", "pdf_links": ["https://x.com/a.pdf", "https://x.com/b.pdf"]},
+            "menus": {"kind": "html", "text": "", "menu_links": ["https://x.com/a.pdf", "https://x.com/b.pdf"]},
             "a.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
             "b.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
         },
@@ -359,12 +396,12 @@ def test_merges_and_dedups_across_followed_pdfs(monkeypatch):
 
 
 def test_respects_the_pdf_follow_cap(monkeypatch):
-    monkeypatch.setenv("MENU_PDF_MAX_FOLLOW", "1")
+    monkeypatch.setenv("MENU_LINKS_MAX_FOLLOW", "1")
     _patch_url(monkeypatch, "https://x.com/menus")
     _patch_fetch_map(
         monkeypatch,
         {
-            "menus": {"kind": "html", "text": "", "pdf_links": ["https://x.com/a.pdf", "https://x.com/b.pdf"]},
+            "menus": {"kind": "html", "text": "", "menu_links": ["https://x.com/a.pdf", "https://x.com/b.pdf"]},
             "a.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
             "b.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
         },
@@ -384,7 +421,7 @@ def test_all_pdfs_failing_to_fetch_raises_not_caches(monkeypatch):
     _patch_fetch_map(
         monkeypatch,
         {
-            "menus": {"kind": "html", "text": "", "pdf_links": ["https://x.com/food.pdf"]},
+            "menus": {"kind": "html", "text": "", "menu_links": ["https://x.com/food.pdf"]},
             "food.pdf": page_fetch.PageFetchError("network blip"),
         },
     )
@@ -399,7 +436,7 @@ def test_all_pdfs_failing_to_extract_raises_not_caches(monkeypatch):
     _patch_fetch_map(
         monkeypatch,
         {
-            "menus": {"kind": "html", "text": "", "pdf_links": ["https://x.com/food.pdf"]},
+            "menus": {"kind": "html", "text": "", "menu_links": ["https://x.com/food.pdf"]},
             "food.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
         },
     )
@@ -416,7 +453,7 @@ def test_genuinely_empty_pdfs_return_empty_and_are_cacheable(monkeypatch):
     _patch_fetch_map(
         monkeypatch,
         {
-            "menus": {"kind": "html", "text": "", "pdf_links": ["https://x.com/food.pdf"]},
+            "menus": {"kind": "html", "text": "", "menu_links": ["https://x.com/food.pdf"]},
             "food.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
         },
     )
