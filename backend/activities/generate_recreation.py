@@ -79,15 +79,29 @@ _RESULT_SCHEMA = {
 def _prompt(matched_menu_item: dict, vision_guess: dict, embeddings_context: list[dict]) -> str:
     """Assemble the user message from the three grounding sources."""
     dish_name = matched_menu_item.get("dish_name") or vision_guess.get("dish_name_guess") or "this dish"
+    # The menu item's description carries components the short title omits (e.g.
+    # "cannellini beans & preserved lemon"); it is only set on a menu match and is
+    # never shown on the page, but it must reach the model so those elements are
+    # actually recreated.
+    dish_description = matched_menu_item.get("dish_description")
     cuisine = vision_guess.get("cuisine_guess")
     elements = vision_guess.get("elements") or []
     techniques = [e.get("source_text") for e in (embeddings_context or []) if e.get("source_text")]
 
     lines = [f"Dish: {dish_name}"]
+    if dish_description:
+        lines.append(f"Menu description: {dish_description}")
     if cuisine:
         lines.append(f"Cuisine: {cuisine}")
     if matched_menu_item.get("match_method") == "menu_matched":
-        lines.append("This name comes from the restaurant's actual menu - trust it over any guess.")
+        if dish_description:
+            lines.append(
+                "This name and menu description come from the restaurant's actual menu - trust "
+                "them over any guess, and make sure every component they name (including each one "
+                "in the description) appears as its own element in your recreation."
+            )
+        else:
+            lines.append("This name comes from the restaurant's actual menu - trust it over any guess.")
 
     lines.append("")
     lines.append("Visible elements identified from the photo:")

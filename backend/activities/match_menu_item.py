@@ -154,6 +154,7 @@ def run(activity_input: dict) -> dict:
             "match_confidence": 0.0,
             "match_method": MatchMethod.VISION_ONLY_LOW,
             "dish_name": dish_name,
+            "dish_description": None,
             "cuisine": cuisine,
             "vision_confidence": vision_confidence,
         }
@@ -175,6 +176,11 @@ def run(activity_input: dict) -> dict:
             "match_confidence": round(confidence, 4),
             "match_method": MatchMethod.MENU_MATCHED,
             "dish_name": best_item.get("item_name", dish_name),
+            # The item_name is the short display title; item_description holds the
+            # rest of the real dish (e.g. "cannellini beans & preserved lemon"),
+            # which is carried through to ground recipe generation - see
+            # generate_recreation._prompt. It is not shown on the page.
+            "dish_description": best_item.get("item_description"),
             "cuisine": cuisine,
             "vision_confidence": vision_confidence,
         }
@@ -185,6 +191,7 @@ def run(activity_input: dict) -> dict:
         "match_confidence": round(confidence, 4),
         "match_method": MatchMethod.VISION_ONLY_MEDIUM,
         "dish_name": dish_name,
+        "dish_description": None,
         "cuisine": cuisine,
         "vision_confidence": vision_confidence,
     }

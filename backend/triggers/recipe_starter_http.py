@@ -33,6 +33,7 @@ def _load_job_for_recipe(job_id: str) -> dict | None:
         "updated_at": job.get("updated_at"),
         "match_result": {
             "dish_name": result.get("dish_name"),
+            "dish_description": result.get("dish_description"),
             "cuisine": result.get("cuisine"),
             "vision_confidence": result.get("confidence"),
             "matched_restaurant_id": result.get("matched_restaurant_id"),
