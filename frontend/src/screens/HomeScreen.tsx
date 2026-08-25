@@ -30,9 +30,10 @@ export function HomeScreen() {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    // Hand the chosen photo to the capture screen, which runs the uploaded-photo
-    // flow (EXIF location or manual restaurant search) without ever opening the camera.
-    navigate('/capture', { state: { uploadedFile: file } });
+    // Uploads have their own screen, separate from the camera: it takes location from the
+    // photo's EXIF (or a manual restaurant search) and never opens the camera or asks for
+    // device location. See docs/decisions.md.
+    navigate('/upload', { state: { uploadedFile: file } });
   }
 
   return (

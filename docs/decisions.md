@@ -10,6 +10,65 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-25: The menu match is an in-context LLM classifier, not a difflib string match
+
+**Decision:** `activities/match_menu_item.py` now matches the vision guess to the restaurant's
+menu with a small in-context LLM classifier (`generate_structured`, effort low, model
+`ANTHROPIC_MATCH_MODEL`, default `claude-sonnet-5`): it is handed the vision guess plus the one
+restaurant's numbered menu and returns the best item's index or -1 for "none", with a
+confidence, which maps onto the existing three outcomes against the same
+`MENU_MATCH_CONFIDENCE_THRESHOLD`. The model may only pick a listed item or none - never invent
+one - so the anti-hallucination property holds, and an out-of-range index is coerced to
+"none". The old `difflib` character matcher is kept as a fallback for a stub deploy (no key) or
+a failed/errored call, so the step always yields one of the three outcomes and never fails the
+job.
+
+**Why:** the owner's - `difflib.SequenceMatcher` compares characters, so it misses matches
+where the same dish is written differently ("The Classic Benny" vs "Eggs Benedict"): near-zero
+character overlap scored as no match, silently downgrading a real menu hit to the lower-
+confidence vision-only outcome. An LLM matches on meaning and fixes exactly that, while the
+"choose only from this menu or none" constraint keeps it from inventing a dish.
+
+**Context worth recording:**
+
+- **Not embeddings.** The match is against ONE restaurant's short menu, so a vector store /
+  embedding provider is overkill and would pull in the paid embedding dependency deliberately
+  deferred to Phase 6. An in-context classifier needs neither.
+- **Cost.** This adds one small structured call per scan that finds a menu (previously the
+  match was free and local) - tiny input and output, cents at most, `effort` low to keep it
+  cheap. `ANTHROPIC_MATCH_MODEL` is the lever; a missing key costs nothing (difflib fallback).
+  `MatchMenuFunction` gains `ssm:GetParameter` on `replate/*` to read the key.
+
+---
+
+## 2026-08-25: Photo upload has its own screen, separate from the camera capture flow
+
+**Decision:** Uploading a photo no longer routes into `CaptureScreen`. A new `UploadScreen`
+(`/upload`) owns the upload flow: it shows the chosen photo, takes the location from the
+photo's **EXIF GPS**, and when the photo has none, asks the user to search for the restaurant.
+It never opens the camera and never requests device geolocation. `CaptureScreen` is now
+camera-only (live viewfinder + device GPS); its uploaded-mode branches, EXIF reading, and
+camera/upload mode toggles are removed. Home's "Upload a photo" navigates to `/upload`.
+`useGeolocation` also gained an `enabled` flag as a safety net so device location is only ever
+requested by the camera path.
+
+**Why:** the owner's - dropping an uploaded photo into the camera-oriented capture screen was
+confusing: it wore camera chrome (viewfinder, shutter, flip) and, worst of all, prompted for
+device location, which an upload should never do. An upload should "just upload." Splitting the
+two flows makes each screen do one thing: the camera uses the device's GPS, an upload uses the
+photo's own EXIF (or a manual restaurant pick), and neither leaks the other's behaviour.
+
+**Context worth recording:**
+
+- **The manual restaurant search stays, for uploads with no EXIF location.** It is not camera
+  chrome - it is the only way to give the pipeline a restaurant to match the menu against, so a
+  location-less upload does not silently collapse to the low-confidence vision-only outcome.
+- **Supersedes the 2026-08-?? "upload runs inside Capture" arrangement** (PR #15 moved the
+  upload entry point onto the Home scan card but kept it pointed at `CaptureScreen`); the entry
+  point stays on Home, now pointed at the dedicated screen.
+
+---
+
 ## 2026-08-25: Scans process in the background with a Cancel, and cancelling is its own state
 
 **Decision:** A scan no longer traps the user on a full-screen loader. After capture the dish

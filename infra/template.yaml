@@ -32,6 +32,13 @@ Parameters:
       CloudFormation can't make SecureStrings). The fetch-menu function reads it at runtime to
       find a restaurant's menu URL; the execution role grants ssm:GetParameter on replate/*.
       If the parameter is absent, menu discovery falls back to the OSM website hint only.
+  AnthropicMatchModel:
+    Type: String
+    Default: "claude-sonnet-5"
+    Description: >
+      Anthropic model id for the menu-match classifier (activities/match_menu_item.py). A
+      short structured call; must support output_config effort (Sonnet/Opus, not Haiku 4.5).
+      Blank or a missing key falls back to the local difflib matcher.
   AnthropicVisionModel:
     Type: String
     Default: ""
@@ -100,6 +107,7 @@ Globals:
         STUB_AUTH_HEADER_NAME: "X-Debug-User-Oid"
         STUB_DEFAULT_USER_OID: "00000000-0000-0000-0000-000000000001"
         ANTHROPIC_MENU_MODEL: !Ref AnthropicMenuModel
+        ANTHROPIC_MATCH_MODEL: !Ref AnthropicMatchModel
         ANTHROPIC_VISION_MODEL: !Ref AnthropicVisionModel
         ANTHROPIC_GENERATOR_MODEL: !Ref AnthropicGeneratorModel
         MODERATION_ENABLED: !Ref ModerationEnabled
@@ -511,6 +519,11 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref Table
+        # Reads ANTHROPIC_API_KEY for the in-context menu-match classifier. No IAM for the
+        # model itself - the Anthropic API authenticates by key; a missing key falls back to
+        # the local difflib matcher.
+        - SSMParameterReadPolicy:
+            ParameterName: replate/*
 
   PersistMatchFunction:
     Type: AWS::Serverless::Function

@@ -114,6 +114,13 @@ def anthropic_menu_model() -> str:
     return os.environ.get("ANTHROPIC_MENU_MODEL", "claude-sonnet-5")
 
 
+def anthropic_match_model() -> str:
+    # Model for the menu-match classifier (activities/match_menu_item.py). A short structured
+    # call, so effort is kept low; it must support output_config effort (Sonnet/Opus, not
+    # Haiku 4.5). Blank or a missing key falls back to the local difflib matcher.
+    return os.environ.get("ANTHROPIC_MATCH_MODEL", "claude-sonnet-5")
+
+
 def anthropic_vision_model() -> str:
     # Placeholder for Phase 3b - vision_guess is still a stub.
     return os.environ.get("ANTHROPIC_VISION_MODEL", "")

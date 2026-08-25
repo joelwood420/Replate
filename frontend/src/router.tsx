@@ -9,6 +9,7 @@ import { JobScreen } from './screens/JobScreen';
 import { OnboardingScreen } from './screens/OnboardingScreen';
 import { ProfileScreen } from './screens/ProfileScreen';
 import { SignInScreen } from './screens/SignInScreen';
+import { UploadScreen } from './screens/UploadScreen';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -45,6 +46,14 @@ export function AppRoutes() {
         element={
           <RequireAuth>
             <CaptureScreen />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/upload"
+        element={
+          <RequireAuth>
+            <UploadScreen />
           </RequireAuth>
         }
       />
