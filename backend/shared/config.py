@@ -166,7 +166,10 @@ def serpapi_key() -> str:
 
 
 def serpapi_timeout_seconds() -> float:
-    return float(os.environ.get("SERPAPI_TIMEOUT_SECONDS", "10"))
+    # SerpApi's synchronous Google search is usually 2-6s but occasionally exceeds 10s; a read
+    # timeout there drops the whole menu (observed 2026-08-25). The menu-fetch budget (45s) and
+    # Lambda timeout (60s) leave room to wait longer, so give it 20s.
+    return float(os.environ.get("SERPAPI_TIMEOUT_SECONDS", "20"))
 
 
 def menu_fetch_budget_seconds() -> float:
@@ -187,11 +190,14 @@ def page_fetch_max_bytes() -> int:
     return int(os.environ.get("PAGE_FETCH_MAX_BYTES", str(10 * 1024 * 1024)))
 
 
-def menu_pdf_max_follow() -> int:
-    # Many restaurant "menu" pages are HTML that only links to PDF menus (food, drinks, set
-    # menus). When the HTML has no items, follow up to this many linked menu PDFs and merge
-    # their items. Each followed PDF is one more fetch + extract, so this bounds that cost.
-    return int(os.environ.get("MENU_PDF_MAX_FOLLOW", "2"))
+def menu_links_max_follow() -> int:
+    # Many restaurant "menu" pages are an HTML shell that links to the real menus (food, drinks,
+    # set, a-la-carte) as separate PDFs or sub-pages - sometimes at pretty, extensionless URLs
+    # that still serve a PDF. When the page itself has no items, follow up to this many linked
+    # same-host menu resources (food/menu first) and merge their items. Each is one more fetch +
+    # extract, so this bounds that cost. 4 comfortably covers a site's food + set + a-la-carte
+    # menus; restaurant sites rarely host unrelated PDFs.
+    return int(os.environ.get("MENU_LINKS_MAX_FOLLOW", "4"))
 
 
 def web_search_max_uses() -> int:

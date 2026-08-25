@@ -10,42 +10,52 @@ less than one that shows where the thinking changed.
 
 ---
 
-## 2026-08-25: Menu fetch follows linked PDF menus when the HTML page has no dishes
+## 2026-08-25: Menu fetch follows linked menus (PDFs and sub-pages) when the HTML page has no dishes
 
 **Decision:** `menu_extraction` extracts the fetched page's own content first (with the full
-remaining budget), and **only when that yields no dishes** follows the PDF menus it links to:
-it detects the PDF links, ranks the food/menu ones above drinks/kids, and follows up to
-`MENU_PDF_MAX_FOLLOW` (default 2) of them - fetching each PDF and extracting from it directly
-(Claude reads PDFs natively), merging and de-duplicating items by name. `page_fetch` surfaces
-the ranked, absolute PDF URLs on its HTML result; the whole thing stays under the same
-menu-fetch budget. HTML-first (rather than PDF-first) is deliberate - see "Why the ordering"
-below.
+remaining budget), and **only when that yields no dishes** follows the menus it links to: it
+detects menu links, ranks the food/menu ones above drinks/kids, and follows up to
+`MENU_LINKS_MAX_FOLLOW` (default 4), fetching and extracting each - whatever it turns out to be,
+a PDF, an image, or an HTML menu page - and merging/de-duplicating items by name. A "menu link"
+is either a `.pdf` href (any host) or a **same-host page whose URL path reads as a menu**, which
+catches menus served at pretty, extensionless URLs. `page_fetch` surfaces the ranked links on
+its HTML result and sorts out PDF-vs-HTML per target; the whole thing stays under the same
+menu-fetch budget. HTML-first (rather than links-first) is deliberate - see "Why the ordering".
+Separately, `SERPAPI_TIMEOUT_SECONDS` was raised 10 -> 20 after a scan lost its whole menu to a
+slow (>10s) SerpApi call; the budget and Lambda timeout leave room to wait.
 
-**Why:** a real scan of Baduzzi (2026-08-25) found the restaurant and its menu page fast and
-cheaply via SerpApi (7s, no timeout), but extracted zero items - the page
-(`baduzzi.co.nz/our-menus-2/`) is a WordPress landing page whose actual menus are five linked
-PDFs. `page_fetch` could already read PDFs, but nothing followed the links to reach them, so
-the scan silently fell back to vision-only. Following the linked PDFs closes that gap, which is
-common: a large share of restaurant sites put the real menu in a PDF behind an HTML page.
+**Why:** a real scan of Baduzzi (2026-08-25) found the restaurant and its menu page but matched
+no dish. The page (`baduzzi.co.nz/our-menus-2/`) is a WordPress shell whose real menus are
+separate files: the set menus are `.pdf` links (followed, matched), but the **a-la-carte** menu
+- the one the diner's dish was actually on - is served at `baduzzi.co.nz/menu1-2/`, a pretty URL
+with **no `.pdf` extension** that nonetheless returns `Content-Type: application/pdf`. `page_fetch`
+would have read it correctly as a PDF; the gap was that link detection only surfaced hrefs
+ending in `.pdf`, so that URL was never followed. Detecting same-host menu-path links closes the
+gap, and generalizes: many sites serve menus at extensionless URLs or as HTML sub-pages.
 
 **Context worth recording:**
 
-- **Why the ordering (HTML-first).** Following the PDFs before extracting the page's own text
-  would let a slow or empty linked PDF consume the budget and starve an extraction that would
+- **Why the ordering (HTML-first).** Following the links before extracting the page's own text
+  would let a slow or empty linked menu consume the budget and starve an extraction that would
   otherwise have succeeded from the already-fetched HTML - a page that both shows a menu and
-  links a PDF could regress to vision-only. Extracting the page first, with the full budget,
-  removes that risk; the PDF follow only runs when the page genuinely has no dishes.
-- **A transient PDF failure retries, it does not cache a false "no menu".** If every followed
-  PDF fails to *fetch or extract* transiently (a network or model error, as opposed to a PDF
-  that genuinely lists no items) and nothing else yielded a menu, the step raises
-  `MenuExtractionError` so the next job retries - preserving the raise-don't-cache contract the
-  primary fetch upholds. A PDF that cleanly extracts to zero items is a real empty result and is
-  cached like any other.
-- **Bounded by design.** Following is capped (`MENU_PDF_MAX_FOLLOW`) and gated on the remaining
-  budget, so a page linking many PDFs costs at most a couple of extra fetch+extract calls, not
-  an unbounded sweep - the same discipline that replaced the web_search thrash.
-- **Merges multiple menus.** Food and set menus are often separate PDFs, so items from the top
-  few are merged (de-duped by name) to give the matcher more real dishes to match against.
+  links others could regress to vision-only. Extracting the page first, with the full budget,
+  removes that risk; the follow only runs when the page genuinely has no dishes.
+- **A transient follow failure retries, it does not cache a false "no menu".** If every followed
+  link fails to *fetch or extract* transiently (a network or model error, as opposed to one that
+  genuinely lists no items) and nothing else yielded a menu, the step raises `MenuExtractionError`
+  so the next job retries - preserving the raise-don't-cache contract the primary fetch upholds.
+  A link that cleanly extracts to zero items is a real empty result and is cached like any other.
+- **Same-host only for path-matched pages; `.pdf` links may be cross-host.** Path-matched menu
+  pages are restricted to the restaurant's own domain so we do not chase a site's social/nav
+  links; a `.pdf` link is followed even cross-host, since menus are sometimes hosted on a CDN.
+  Menu-word matching is on the URL *path*, not the query, so API links (`/wp-json/oembed?url=...menu`)
+  are excluded.
+- **Bounded by design.** Following is capped (`MENU_LINKS_MAX_FOLLOW`, default 4) and gated on the
+  remaining budget, so a page linking many menus costs at most a few extra fetch+extract calls,
+  not an unbounded sweep - the same discipline that replaced the web_search thrash. 4 covers a
+  site's food + set + a-la-carte menus; restaurant sites rarely host unrelated PDFs.
+- **Merges multiple menus.** Food, set and a-la-carte menus are often separate files, so items
+  from the top few are merged (de-duped by name) to give the matcher more real dishes.
 
 ---
 
