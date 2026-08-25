@@ -276,13 +276,13 @@ def test_a_url_yielding_no_content_is_a_cacheable_empty_result(monkeypatch):
 # --- following linked PDF menus ---------------------------------------------
 
 
-def test_follows_a_linked_pdf_menu(monkeypatch):
-    """An HTML menu page that only links to PDF menus: follow the PDF and extract from it."""
+def test_a_pdf_only_landing_page_skips_the_html_extract(monkeypatch):
+    """An HTML shell with no text of its own goes straight to its PDFs - no wasted extract."""
     _patch_url(monkeypatch, "https://x.com/menus")
     _patch_fetch_map(
         monkeypatch,
         {
-            "menus": {"kind": "html", "text": "nav and marketing only", "pdf_links": ["https://x.com/food.pdf"]},
+            "menus": {"kind": "html", "text": "", "pdf_links": ["https://x.com/food.pdf"]},
             "food.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
         },
     )
@@ -291,28 +291,49 @@ def test_follows_a_linked_pdf_menu(monkeypatch):
     items = menu_extraction.fetch_menu_items("Baduzzi", None, None)
 
     assert items == [{"item_name": "Pad Thai", "item_description": "desc", "price": "13.00"}]
-    # One extract, on the PDF (a document block) - the empty HTML text is never extracted.
+    # Exactly one extract, on the PDF (a document block); the empty HTML text is never extracted.
     assert len(extract_calls) == 1
     assert extract_calls[0]["messages"][0]["content"][0]["type"] == "document"
 
 
-def test_falls_back_to_html_when_the_pdf_yields_nothing(monkeypatch):
+def test_html_with_no_dishes_falls_through_to_the_pdf(monkeypatch):
+    """A page with only marketing text is extracted first (yields nothing), then its PDF."""
     _patch_url(monkeypatch, "https://x.com/menus")
     _patch_fetch_map(
         monkeypatch,
         {
-            "menus": {"kind": "html", "text": "Pad Thai on the page", "pdf_links": ["https://x.com/food.pdf"]},
+            "menus": {"kind": "html", "text": "about us and opening hours", "pdf_links": ["https://x.com/food.pdf"]},
             "food.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
         },
     )
-    # PDF extract empty, then the HTML text extract finds items.
     extract_calls = _patch_extract_seq(monkeypatch, {"items": []}, EXTRACTED)
 
     items = menu_extraction.fetch_menu_items("Baduzzi", None, None)
 
     assert items[0]["item_name"] == "Pad Thai"
     assert len(extract_calls) == 2
-    assert extract_calls[1]["messages"][0]["content"][0]["type"] == "text"
+    assert extract_calls[0]["messages"][0]["content"][0]["type"] == "text"  # HTML first
+    assert extract_calls[1]["messages"][0]["content"][0]["type"] == "document"  # then the PDF
+
+
+def test_html_with_a_real_menu_does_not_follow_pdfs(monkeypatch):
+    """The HTML-first fix: a page whose own text has dishes is used with the full budget and
+    never spends time following a (possibly slow) linked PDF."""
+    _patch_url(monkeypatch, "https://x.com/menus")
+    fetch_calls = _patch_fetch_map(
+        monkeypatch,
+        {
+            "menus": {"kind": "html", "text": "Pad Thai 13.00", "pdf_links": ["https://x.com/food.pdf"]},
+            "food.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
+        },
+    )
+    extract_calls = _patch_extract_seq(monkeypatch, EXTRACTED)
+
+    items = menu_extraction.fetch_menu_items("Baduzzi", None, None)
+
+    assert items[0]["item_name"] == "Pad Thai"
+    assert len(extract_calls) == 1
+    assert fetch_calls == ["https://x.com/menus"]  # the PDF was never fetched
 
 
 def test_merges_and_dedups_across_followed_pdfs(monkeypatch):
@@ -321,7 +342,7 @@ def test_merges_and_dedups_across_followed_pdfs(monkeypatch):
     _patch_fetch_map(
         monkeypatch,
         {
-            "menus": {"kind": "html", "text": "nav", "pdf_links": ["https://x.com/a.pdf", "https://x.com/b.pdf"]},
+            "menus": {"kind": "html", "text": "", "pdf_links": ["https://x.com/a.pdf", "https://x.com/b.pdf"]},
             "a.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
             "b.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
         },
@@ -343,7 +364,7 @@ def test_respects_the_pdf_follow_cap(monkeypatch):
     _patch_fetch_map(
         monkeypatch,
         {
-            "menus": {"kind": "html", "text": "nav", "pdf_links": ["https://x.com/a.pdf", "https://x.com/b.pdf"]},
+            "menus": {"kind": "html", "text": "", "pdf_links": ["https://x.com/a.pdf", "https://x.com/b.pdf"]},
             "a.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
             "b.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
         },
@@ -354,6 +375,54 @@ def test_respects_the_pdf_follow_cap(monkeypatch):
 
     assert len(extract_calls) == 1  # only the first PDF was followed
     assert [i["item_name"] for i in items] == ["A"]
+
+
+def test_all_pdfs_failing_to_fetch_raises_not_caches(monkeypatch):
+    """A transient fetch failure on every linked PDF must raise (retry), not return [] which the
+    caller would cache as a false 'no menu' for the TTL."""
+    _patch_url(monkeypatch, "https://x.com/menus")
+    _patch_fetch_map(
+        monkeypatch,
+        {
+            "menus": {"kind": "html", "text": "", "pdf_links": ["https://x.com/food.pdf"]},
+            "food.pdf": page_fetch.PageFetchError("network blip"),
+        },
+    )
+    _patch_extract_seq(monkeypatch, EXTRACTED)  # never reached
+
+    with pytest.raises(menu_extraction.MenuExtractionError, match="failed to fetch or extract"):
+        menu_extraction.fetch_menu_items("Baduzzi", None, None)
+
+
+def test_all_pdfs_failing_to_extract_raises_not_caches(monkeypatch):
+    _patch_url(monkeypatch, "https://x.com/menus")
+    _patch_fetch_map(
+        monkeypatch,
+        {
+            "menus": {"kind": "html", "text": "", "pdf_links": ["https://x.com/food.pdf"]},
+            "food.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
+        },
+    )
+    _patch_extract_seq(monkeypatch, anthropic_client.AnthropicError("rate limited"))
+
+    with pytest.raises(menu_extraction.MenuExtractionError, match="failed to fetch or extract"):
+        menu_extraction.fetch_menu_items("Baduzzi", None, None)
+
+
+def test_genuinely_empty_pdfs_return_empty_and_are_cacheable(monkeypatch):
+    """A PDF that fetches and extracts cleanly but has no items is a real 'no menu' - return []
+    (which the caller caches), not a raise."""
+    _patch_url(monkeypatch, "https://x.com/menus")
+    _patch_fetch_map(
+        monkeypatch,
+        {
+            "menus": {"kind": "html", "text": "", "pdf_links": ["https://x.com/food.pdf"]},
+            "food.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
+        },
+    )
+    _patch_extract_seq(monkeypatch, {"items": []})
+
+    assert menu_extraction.fetch_menu_items("Baduzzi", None, None) == []
 
 
 # --- budget -----------------------------------------------------------------
