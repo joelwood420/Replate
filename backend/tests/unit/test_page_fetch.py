@@ -22,13 +22,14 @@ class _FakeStream:
         return False
 
 
-def _response(chunks, content_type, status_error=None):
+def _response(chunks, content_type, status_error=None, url="https://x.com/menu"):
     response = MagicMock()
     if status_error:
         response.raise_for_status.side_effect = status_error
     else:
         response.raise_for_status.return_value = None
     response.headers = {"content-type": content_type}
+    response.url = url
     response.iter_bytes.return_value = iter(chunks)
     return response
 
@@ -128,3 +129,45 @@ def test_blank_html_returns_none(monkeypatch):
     _patch_stream(monkeypatch, response=_response([b"<html><body></body></html>"], "text/html"))
 
     assert page_fetch.fetch_menu_content("https://x.com", 10) is None
+
+
+def test_html_surfaces_linked_pdf_menus_food_first(monkeypatch):
+    html = (
+        b'<html><body><h1>Our Menus</h1>'
+        b'<a href="/uploads/Kids-Menu.pdf">Kids</a>'
+        b'<a href="/uploads/Drinks-Menu.pdf">Drinks</a>'
+        b'<a href="/uploads/85-Set-Menu.pdf">Set Menu</a>'
+        b'</body></html>'
+    )
+    _patch_stream(
+        monkeypatch,
+        response=_response([html], "text/html", url="https://baduzzi.co.nz/our-menus-2/"),
+    )
+
+    result = page_fetch.fetch_menu_content("https://baduzzi.co.nz/our-menus-2/", 10)
+
+    assert result["kind"] == "html"
+    # Relative hrefs resolved against the page URL; the food/set menu ranks above drinks/kids.
+    assert result["pdf_links"][0] == "https://baduzzi.co.nz/uploads/85-Set-Menu.pdf"
+    assert "https://baduzzi.co.nz/uploads/Drinks-Menu.pdf" in result["pdf_links"]
+    assert "https://baduzzi.co.nz/uploads/Kids-Menu.pdf" in result["pdf_links"]
+
+
+def test_a_menu_landing_page_with_only_pdf_links_is_kept(monkeypatch):
+    """No readable dishes, but it links to PDF menus - exactly the page to follow, not drop."""
+    html = b'<html><body><a href="https://x.com/food-menu.pdf"></a></body></html>'
+    _patch_stream(monkeypatch, response=_response([html], "text/html"))
+
+    result = page_fetch.fetch_menu_content("https://x.com/menu", 10)
+
+    assert result is not None
+    assert result["kind"] == "html"
+    assert result["pdf_links"] == ["https://x.com/food-menu.pdf"]
+
+
+def test_html_without_pdf_links_has_an_empty_pdf_list(monkeypatch):
+    _patch_stream(monkeypatch, response=_response([b"<html><body>Pad Thai 13.00</body></html>"], "text/html"))
+
+    result = page_fetch.fetch_menu_content("https://x.com/menu", 10)
+
+    assert result["pdf_links"] == []

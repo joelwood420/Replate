@@ -176,11 +176,30 @@ def fetch_menu_items(name: str, address: str | None, menu_source_url: str | None
         logging.info("Menu URL %s for %s yielded no usable content", url, name)
         return []
 
-    # 3. Extract into the schema with one cheap, tool-free structured call.
+    # 3. Prefer linked PDF menus. Many HTML "menu" pages carry no dishes themselves and just
+    #    link to PDF menus, so follow the best of those first; fall back to the page's own
+    #    content (its text, or a directly-fetched PDF/image) when that yields nothing.
+    if content["kind"] == "html" and content.get("pdf_links"):
+        pdf_items = _follow_pdf_menus(model, name, content["pdf_links"], deadline)
+        if pdf_items:
+            return pdf_items
+
     if remaining() <= 0:
         raise MenuExtractionError(f"Menu fetch for {name} ran out of budget before extracting")
-
     logging.info("Extracting menu for %s from %s (%s)", name, url, content["kind"])
+    return _extract_content(model, name, content, timeout=remaining())
+
+
+# Need enough of the budget left for a PDF fetch plus its extract before following another one.
+_PDF_FOLLOW_MIN_BUDGET = 5.0
+
+
+def _extract_content(model: str, name: str, content: dict, timeout: float) -> list[dict]:
+    """One cheap, tool-free structured extract of already-fetched content (html/pdf/image).
+
+    `timeout` bounds the call by what is left of the menu-fetch budget so a slow extract
+    degrades here rather than getting the Lambda killed.
+    """
     try:
         data = anthropic_client.generate_structured(
             model=model,
@@ -189,9 +208,7 @@ def fetch_menu_items(name: str, address: str | None, menu_source_url: str | None
             schema=_MENU_SCHEMA,
             max_tokens=2048,
             effort="low",
-            # Bound the call by what is left of the menu-fetch budget so a slow extract
-            # degrades to vision-only here rather than getting the Lambda killed.
-            timeout=remaining(),
+            timeout=timeout,
         )
     except anthropic_client.AnthropicError as exc:
         raise MenuExtractionError(f"Anthropic error extracting menu for {name}: {exc}") from exc
@@ -200,6 +217,48 @@ def fetch_menu_items(name: str, address: str | None, menu_source_url: str | None
         return _validate(data)
     except (ValueError, json.JSONDecodeError) as exc:
         raise MenuExtractionError(f"Failed to parse menu for {name}: {exc}") from exc
+
+
+def _follow_pdf_menus(model: str, name: str, pdf_links: list[str], deadline: float) -> list[dict]:
+    """Fetch and extract up to `menu_pdf_max_follow` linked PDF menus, merging their items.
+
+    Bounded by the shared deadline and the follow cap. A PDF that fails to fetch or extract is
+    skipped (the caller still has the HTML fallback), and items are de-duplicated by name so
+    overlapping menus (e.g. a food PDF and a set menu) do not double up.
+    """
+    def remaining() -> float:
+        return deadline - time.monotonic()
+
+    items: list[dict] = []
+    seen: set[str] = set()
+    followed = 0
+    for link in pdf_links:
+        if followed >= config.menu_pdf_max_follow() or remaining() <= _PDF_FOLLOW_MIN_BUDGET:
+            break
+        try:
+            pdf = page_fetch.fetch_menu_content(link, min(config.page_fetch_timeout_seconds(), remaining()))
+        except page_fetch.PageFetchError as exc:
+            logging.info("Could not fetch linked PDF %s for %s: %s", link, name, exc)
+            continue
+        if not pdf or pdf["kind"] != "pdf":
+            continue
+        followed += 1
+        if remaining() <= 0:
+            break
+        try:
+            extracted = _extract_content(model, name, pdf, timeout=remaining())
+        except MenuExtractionError as exc:
+            logging.info("Linked PDF %s for %s did not extract: %s", link, name, exc)
+            continue
+        for item in extracted:
+            key = item["item_name"].strip().lower()
+            if key not in seen:
+                seen.add(key)
+                items.append(item)
+
+    if items:
+        logging.info("Extracted %d menu items for %s from %d linked PDF(s)", len(items), name, followed)
+    return items
 
 
 def _build_content(content: dict) -> list[dict]:

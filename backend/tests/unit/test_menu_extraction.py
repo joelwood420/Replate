@@ -59,6 +59,42 @@ def _patch_extract(monkeypatch, outcome):
     return calls
 
 
+def _patch_fetch_map(monkeypatch, mapping):
+    """Stub page_fetch by URL substring. Values are content dicts, None, or an Exception."""
+    calls = []
+
+    def fake(url, timeout):
+        calls.append(url)
+        for key, value in mapping.items():
+            if key in url:
+                if isinstance(value, Exception):
+                    raise value
+                return value
+        return None
+
+    monkeypatch.setattr(page_fetch, "fetch_menu_content", fake)
+    return calls
+
+
+def _patch_extract_seq(monkeypatch, *outcomes):
+    """Stub generate_structured with a per-call sequence (last outcome repeats if exhausted)."""
+    calls = []
+
+    def fake(model, messages, schema, system=None, **kwargs):
+        outcome = outcomes[len(calls)] if len(calls) < len(outcomes) else outcomes[-1]
+        calls.append({"messages": messages, "kwargs": kwargs})
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(anthropic_client, "generate_structured", fake)
+    return calls
+
+
+def _item(name):
+    return {"item_name": name, "item_description": "d", "price": "1"}
+
+
 # --- happy paths ------------------------------------------------------------
 
 
@@ -235,6 +271,89 @@ def test_a_url_yielding_no_content_is_a_cacheable_empty_result(monkeypatch):
     _patch_extract(monkeypatch, {"items": []})  # should never be reached
 
     assert menu_extraction.fetch_menu_items("Bangkok Kitchen", None, None) == []
+
+
+# --- following linked PDF menus ---------------------------------------------
+
+
+def test_follows_a_linked_pdf_menu(monkeypatch):
+    """An HTML menu page that only links to PDF menus: follow the PDF and extract from it."""
+    _patch_url(monkeypatch, "https://x.com/menus")
+    _patch_fetch_map(
+        monkeypatch,
+        {
+            "menus": {"kind": "html", "text": "nav and marketing only", "pdf_links": ["https://x.com/food.pdf"]},
+            "food.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
+        },
+    )
+    extract_calls = _patch_extract_seq(monkeypatch, EXTRACTED)
+
+    items = menu_extraction.fetch_menu_items("Baduzzi", None, None)
+
+    assert items == [{"item_name": "Pad Thai", "item_description": "desc", "price": "13.00"}]
+    # One extract, on the PDF (a document block) - the empty HTML text is never extracted.
+    assert len(extract_calls) == 1
+    assert extract_calls[0]["messages"][0]["content"][0]["type"] == "document"
+
+
+def test_falls_back_to_html_when_the_pdf_yields_nothing(monkeypatch):
+    _patch_url(monkeypatch, "https://x.com/menus")
+    _patch_fetch_map(
+        monkeypatch,
+        {
+            "menus": {"kind": "html", "text": "Pad Thai on the page", "pdf_links": ["https://x.com/food.pdf"]},
+            "food.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
+        },
+    )
+    # PDF extract empty, then the HTML text extract finds items.
+    extract_calls = _patch_extract_seq(monkeypatch, {"items": []}, EXTRACTED)
+
+    items = menu_extraction.fetch_menu_items("Baduzzi", None, None)
+
+    assert items[0]["item_name"] == "Pad Thai"
+    assert len(extract_calls) == 2
+    assert extract_calls[1]["messages"][0]["content"][0]["type"] == "text"
+
+
+def test_merges_and_dedups_across_followed_pdfs(monkeypatch):
+    monkeypatch.setenv("MENU_PDF_MAX_FOLLOW", "2")
+    _patch_url(monkeypatch, "https://x.com/menus")
+    _patch_fetch_map(
+        monkeypatch,
+        {
+            "menus": {"kind": "html", "text": "nav", "pdf_links": ["https://x.com/a.pdf", "https://x.com/b.pdf"]},
+            "a.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
+            "b.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
+        },
+    )
+    _patch_extract_seq(
+        monkeypatch,
+        {"items": [_item("Pad Thai"), _item("Soup")]},
+        {"items": [_item("pad thai"), _item("Curry")]},  # "pad thai" duplicates across PDFs
+    )
+
+    items = menu_extraction.fetch_menu_items("Baduzzi", None, None)
+
+    assert [i["item_name"] for i in items] == ["Pad Thai", "Soup", "Curry"]
+
+
+def test_respects_the_pdf_follow_cap(monkeypatch):
+    monkeypatch.setenv("MENU_PDF_MAX_FOLLOW", "1")
+    _patch_url(monkeypatch, "https://x.com/menus")
+    _patch_fetch_map(
+        monkeypatch,
+        {
+            "menus": {"kind": "html", "text": "nav", "pdf_links": ["https://x.com/a.pdf", "https://x.com/b.pdf"]},
+            "a.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
+            "b.pdf": {"kind": "pdf", "data": b"%PDF", "media_type": "application/pdf"},
+        },
+    )
+    extract_calls = _patch_extract_seq(monkeypatch, {"items": [_item("A")]})
+
+    items = menu_extraction.fetch_menu_items("Baduzzi", None, None)
+
+    assert len(extract_calls) == 1  # only the first PDF was followed
+    assert [i["item_name"] for i in items] == ["A"]
 
 
 # --- budget -----------------------------------------------------------------

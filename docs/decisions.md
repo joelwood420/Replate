@@ -10,6 +10,33 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-25: Menu fetch follows linked PDF menus when the HTML page has no dishes
+
+**Decision:** When the fetched menu URL is an HTML page that only links to PDF menus,
+`menu_extraction` now detects those PDF links, ranks the food/menu ones above drinks/kids, and
+follows up to `MENU_PDF_MAX_FOLLOW` (default 2) of them - fetching each PDF and extracting from
+it directly (Claude reads PDFs natively), merging and de-duplicating the items by name. It
+falls back to the HTML page's own text only when the PDFs yield nothing. `page_fetch` surfaces
+the ranked, absolute PDF URLs on its HTML result; the whole thing stays under the same
+menu-fetch budget.
+
+**Why:** a real scan of Baduzzi (2026-08-25) found the restaurant and its menu page fast and
+cheaply via SerpApi (7s, no timeout), but extracted zero items - the page
+(`baduzzi.co.nz/our-menus-2/`) is a WordPress landing page whose actual menus are five linked
+PDFs. `page_fetch` could already read PDFs, but nothing followed the links to reach them, so
+the scan silently fell back to vision-only. Following the linked PDFs closes that gap, which is
+common: a large share of restaurant sites put the real menu in a PDF behind an HTML page.
+
+**Context worth recording:**
+
+- **Bounded by design.** Following is capped (`MENU_PDF_MAX_FOLLOW`) and gated on the remaining
+  budget, so a page linking many PDFs costs at most a couple of extra fetch+extract calls, not
+  an unbounded sweep - the same discipline that replaced the web_search thrash.
+- **Merges multiple menus.** Food and set menus are often separate PDFs, so items from the top
+  few are merged (de-duped by name) to give the matcher more real dishes to match against.
+
+---
+
 ## 2026-08-25: The menu match is an in-context LLM classifier, not a difflib string match
 
 **Decision:** `activities/match_menu_item.py` now matches the vision guess to the restaurant's
