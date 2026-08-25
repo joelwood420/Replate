@@ -209,6 +209,7 @@ def put_job_result(job_id: str, result: dict, vision_guess: dict | None = None) 
             "SK": ddb.SK_RESULT,
             "job_id": job_id,
             "dish_name": result.get("dish_name"),
+            "dish_description": result.get("dish_description"),
             "cuisine": result.get("cuisine"),
             "confidence": result.get("vision_confidence"),
             "matched_restaurant_id": result.get("matched_restaurant_id"),

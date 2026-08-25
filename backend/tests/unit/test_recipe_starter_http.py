@@ -8,6 +8,7 @@ _OWNER = "11111111-1111-1111-1111-111111111111"
 _VISION_GUESS = {"dish_name_guess": "Pad Thai", "cuisine_guess": "Thai", "elements": []}
 _MATCH_RESULT = {
     "dish_name": "Pad Thai Goong",
+    "dish_description": "prawns, tamarind, peanuts",
     "cuisine": "Thai",
     "vision_confidence": 0.8,
     "matched_restaurant_id": "place-1",

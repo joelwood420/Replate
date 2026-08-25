@@ -131,7 +131,23 @@ def test_llm_match_selects_the_chosen_item(monkeypatch, sample_vision_guess, sam
     # index 1 is Spaghetti Carbonara - the model's pick is trusted over a character match.
     assert result["matched_menu_item_id"] == "item-2"
     assert result["dish_name"] == "Spaghetti Carbonara"
+    # The full menu description is carried alongside the short name so recipe
+    # generation can ground on components the title omits.
+    assert result["dish_description"] == "Pasta with egg, pecorino, guanciale, and black pepper"
     assert result["match_confidence"] == 0.91
+
+
+def test_vision_only_outcomes_have_no_menu_description(sample_vision_guess):
+    """Only a menu match has a real description; the vision-only paths carry None."""
+    low = match_menu_item.run(
+        {"vision_guess": sample_vision_guess, "menu_items": [], "candidate_found": False, "restaurant_id": None}
+    )
+    medium = match_menu_item.run(
+        {"vision_guess": sample_vision_guess, "menu_items": [], "candidate_found": True, "restaurant_id": "stub-3"}
+    )
+
+    assert low["dish_description"] is None
+    assert medium["dish_description"] is None
 
 
 def test_llm_none_yields_vision_only_medium(monkeypatch, sample_vision_guess, sample_menu_items):
