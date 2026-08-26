@@ -47,14 +47,19 @@ export function CookbookCard({ job, onToggleSaved }: CookbookCardProps) {
             )}
           </div>
         </Link>
-        <button
-          type="button"
-          className={styles.remove}
-          onClick={() => onToggleSaved(job.job_id, !job.is_saved)}
-          aria-label={job.is_saved ? 'Remove from cookbook' : 'Add to cookbook'}
-        >
-          {job.is_saved ? <IconTrash size={12} /> : <IconPlus size={13} />}
-        </button>
+        {/* A settled, saved dish is the only card you remove. While a scan is in flight or has
+            failed it isn't a keepable dish yet (Cancel lives on the processing screen), so the
+            add/remove control would only confuse - hide it. */}
+        {!inFlight && !failed && (
+          <button
+            type="button"
+            className={styles.remove}
+            onClick={() => onToggleSaved(job.job_id, !job.is_saved)}
+            aria-label={job.is_saved ? 'Remove from cookbook' : 'Add to cookbook'}
+          >
+            {job.is_saved ? <IconTrash size={12} /> : <IconPlus size={13} />}
+          </button>
+        )}
         {job.status === 'Identified' && <div className={styles.pendingBadge}>Not yet reverse-engineered</div>}
       </div>
       <div className={`${styles.name} ${failed ? styles.nameFailed : ''}`}>{displayName}</div>

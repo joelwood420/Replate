@@ -1,20 +1,28 @@
 import { useEffect } from 'react';
 import { useJobsStore } from './JobsProvider';
 
+// A live scan is auto-saved server-side only once identification finishes (is_saved flips
+// true then), but the Cookbook is now where a scan lands to process in place, so it must
+// also show a job that is still in flight or has just failed - neither of which is is_saved
+// yet. Including these statuses shows the just-scanned dish immediately (as a processing
+// card) and keeps a Failed scan visible with its retry state.
+const IN_FLIGHT_OR_FAILED = new Set(['Queued', 'Processing', 'Failed']);
+
 /**
- * The Cookbook view: saved jobs, derived from the shared cache. Exposes `patchJob` so the
- * save toggle can update the cache optimistically. Triggers a background refresh on mount.
+ * The Cookbook view, derived from the shared cache. Exposes `patchJob` so the save toggle can
+ * update the cache optimistically. Triggers a background refresh on mount.
  *
- * A scan lands here to process in place (that's where capture now navigates), so in-flight,
- * identified, completed and Failed jobs all belong - a Failed scan shows a retry state on its
- * card. A Cancelled scan is one the user deliberately stopped, so it's dropped rather than
- * left sitting in the cookbook.
+ * Shows a job when it is saved OR still in flight OR failed. A Cancelled scan (the user
+ * deliberately stopped it) is dropped, and an un-hearted settled dish (is_saved false, not in
+ * flight, not failed) falls out on its own.
  */
 export function useSavedJobs() {
   const { jobs, isLoading, error, refetch, patchJob } = useJobsStore();
   useEffect(() => {
     refetch();
   }, [refetch]);
-  const saved = jobs.filter((job) => job.is_saved && job.status !== 'Cancelled');
-  return { jobs: saved, isLoading, error, refetch, patchJob };
+  const cookbook = jobs.filter(
+    (job) => job.status !== 'Cancelled' && (job.is_saved || IN_FLIGHT_OR_FAILED.has(job.status)),
+  );
+  return { jobs: cookbook, isLoading, error, refetch, patchJob };
 }
