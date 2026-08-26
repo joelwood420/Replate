@@ -65,10 +65,6 @@ Parameters:
     Type: Number
     Default: 14
     Description: Retention on every Lambda log group — the CloudWatch default is never-expire, a slow cost.
-  UploadRetentionDays:
-    Type: Number
-    Default: 7
-    Description: Days before an uploaded photo is expired from the uploads bucket.
 
 # ---------------------------------------------------------------------------------------
 Globals:
@@ -653,7 +649,9 @@ Resources:
 
   # --- S3: uploads bucket --------------------------------------------------------------
   # Client PUTs the photo straight here with a role-signed presigned URL, so browser CORS
-  # must allow the PUT. Lifecycle expiry keeps photos from accumulating (Phase 3 step 1).
+  # must allow the PUT. No lifecycle expiry: a dish saved to the cookbook keeps its photo
+  # indefinitely (see docs/decisions.md, 2026-08-26). This trades bounded storage for a
+  # permanent cookbook; a future refinement is to expire only orphaned (never-saved) uploads.
   UploadsBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -676,12 +674,6 @@ Resources:
               - !Ref LocalDevOrigin
             AllowedHeaders: ["*"]
             MaxAge: 3000
-      LifecycleConfiguration:
-        Rules:
-          - Id: ExpireUploads
-            Status: Enabled
-            Prefix: uploads/
-            ExpirationInDays: !Ref UploadRetentionDays
 
   # --- S3 + CloudFront: the React site -------------------------------------------------
   SiteBucket:

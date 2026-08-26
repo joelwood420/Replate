@@ -46,7 +46,11 @@ export function CaptureScreen() {
       await uploadPhotoToBlob(uploadUrl, photo);
       // Only now is the photo actually there for the pipeline to read.
       await markUploadComplete(jobId, authHeaders);
-      navigate(`/jobs/${jobId}`);
+      // Land in the cookbook, where the dish is already saved and processes in place. This
+      // avoids the "sit and wait" feeling of a dedicated processing screen: the scan is
+      // captured, it's in your cookbook, you can put your phone away. Replace so Back from
+      // the cookbook doesn't return to the camera.
+      navigate('/cookbook', { replace: true });
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Something went wrong. Try again.');
       setIsSubmitting(false);

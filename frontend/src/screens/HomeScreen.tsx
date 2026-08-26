@@ -2,12 +2,8 @@ import { useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Avatar } from '../components/Avatar';
 import { BottomTabBar } from '../components/BottomTabBar';
-import { ErrorState } from '../components/ErrorState';
-import { LoadingState } from '../components/LoadingState';
-import { RecentJobRow } from '../components/RecentJobRow';
 import { ScanCard } from '../components/ScanCard';
 import { useAuth } from '../lib/auth/useAuth';
-import { useRecentJobs } from '../lib/jobs/useRecentJobs';
 import { TAB_ROUTES, useSwipeEntryClass, useSwipeNavigation } from '../lib/nav/swipeNav';
 import styles from './HomeScreen.module.css';
 
@@ -21,7 +17,6 @@ function timeGreeting(): string {
 export function HomeScreen() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { jobs, isLoading, error, refetch } = useRecentJobs();
   useSwipeNavigation(TAB_ROUTES);
   const swipeEntry = useSwipeEntryClass();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -58,22 +53,6 @@ export function HomeScreen() {
           onOpenCamera={() => navigate('/capture')}
           onUploadPhoto={() => fileInputRef.current?.click()}
         />
-      </div>
-
-      <div className={styles.recentSection}>
-        <div className={styles.sectionLabel}>Recently Identified</div>
-        {isLoading && <LoadingState label="Loading your dishes…" />}
-        {error && <ErrorState message={error} onRetry={refetch} />}
-        {!isLoading && !error && jobs.length === 0 && (
-          <div className={styles.empty}>No dishes identified yet — scan your first plate.</div>
-        )}
-        {!isLoading && !error && jobs.length > 0 && (
-          <div className={styles.recentList}>
-            {jobs.map((job) => (
-              <RecentJobRow key={job.job_id} job={job} />
-            ))}
-          </div>
-        )}
       </div>
 
       <BottomTabBar active="home" />

@@ -5,7 +5,6 @@ import { AuthWrapper, makeAuthValue } from '../../test/renderWithAuth';
 import type { AuthContextValue } from '../auth/AuthProvider';
 import type { JobSummary } from '../apiClient';
 import { JobsProvider, useJobsStore } from './JobsProvider';
-import { useRecentJobs } from './useRecentJobs';
 import { useSavedJobs } from './useSavedJobs';
 
 vi.mock('../apiClient', () => ({
@@ -121,15 +120,21 @@ describe('derived job views', () => {
     mockedListJobs.mockResolvedValue(sampleJobs);
   });
 
-  it('useRecentJobs slices the newest N from the shared cache', async () => {
-    const { result } = renderHook(() => useRecentJobs(2), { wrapper: wrapperFor(makeAuthValue()) });
-    await waitFor(() => expect(result.current.jobs.length).toBe(2));
-    expect(result.current.jobs.map((j) => j.job_id)).toEqual(['job-1', 'job-2']);
-  });
-
   it('useSavedJobs returns only saved jobs from the shared cache', async () => {
     const { result } = renderHook(() => useSavedJobs(), { wrapper: wrapperFor(makeAuthValue()) });
     await waitFor(() => expect(result.current.jobs.length).toBe(2));
     expect(result.current.jobs.map((j) => j.job_id)).toEqual(['job-1', 'job-3']);
+  });
+
+  it('useSavedJobs drops a cancelled scan even when it is still flagged saved', async () => {
+    // A cancelled scan is one the user deliberately stopped, so it must not linger in the
+    // cookbook, whatever its is_saved flag says.
+    mockedListJobs.mockResolvedValue([
+      makeJob({ job_id: 'job-1', is_saved: true }),
+      makeJob({ job_id: 'job-cancelled', is_saved: true, status: 'Cancelled' }),
+    ]);
+    const { result } = renderHook(() => useSavedJobs(), { wrapper: wrapperFor(makeAuthValue()) });
+    await waitFor(() => expect(result.current.jobs.length).toBe(1));
+    expect(result.current.jobs.map((j) => j.job_id)).toEqual(['job-1']);
   });
 });

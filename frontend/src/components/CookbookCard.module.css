@@ -37,6 +37,30 @@
   object-fit: cover;
 }
 
+/* Covers the thumb while a scan processes (orb over the photo) or after it fails (retry
+   prompt). A warm dark scrim keeps the orb and copy legible over any photo while the dish
+   still shows through - "your dish, being worked on" rather than a blank wait. */
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  padding: 12px;
+  background: linear-gradient(180deg, rgba(12, 10, 9, 0.5) 0%, rgba(12, 10, 9, 0.74) 100%);
+}
+
+.failedHint {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-cream);
+}
+
 .remove {
   position: absolute;
   top: 8px;
@@ -67,43 +91,15 @@
   text-transform: uppercase;
 }
 
-.processingBadge {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--color-gold);
-}
-
-.processingBadge .pulse {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--color-gold);
-  animation: cardPulse 1.4s ease-in-out infinite;
-}
-
-@keyframes cardPulse {
-  0%,
-  100% {
-    opacity: 0.35;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .processingBadge .pulse {
-    animation: none;
-    opacity: 0.8;
-  }
-}
-
 .name {
   font-size: 13px;
   font-weight: 600;
   color: var(--color-cream);
   line-height: 1.25;
+}
+
+.nameFailed {
+  color: var(--color-muted-light);
 }
 
 .place {
