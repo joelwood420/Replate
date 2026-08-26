@@ -10,6 +10,39 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-26: Removing a dish is a hard delete, not a soft un-save
+
+**Decision:** The trash control on a dish (in the Cookbook and on the dish detail screen) now
+**permanently deletes** the job - a new `DELETE /api/jobs/{jobId}` endpoint (`job_delete_http`
++ `repository.delete_job`) removes the job's whole partition (META, RESULT, every ELEMENT#) and
+the owner's cookbook listing projection. There is no soft-hide and no undo. The endpoint is
+ownership-guarded and refuses (409) to delete a scan that is still in flight (Queued /
+Processing / Generating) - stopping a live scan stays the job of Cancel. The old
+`setJobSaved(false)` "remove from cookbook" path (which just flipped `is_saved` to hide the
+row) is retired from the frontend. `is_saved` itself stays: the pipeline still sets it true on
+auto-save at identification, and the Cookbook still reads it.
+
+**Why:** removing a dish has no undo either way, so a soft-hide just leaves dead rows
+accumulating in DynamoDB - pointless data the user can never see or recover. The soft-save/
+un-save model was leftover from an earlier design that had a heart-to-favourite gesture; with
+that gone, "remove" should mean delete. This also fixes the concrete bug that surfaced it: the
+2026-08-26 "scan lands in the cookbook" change made Failed scans appear in the Cookbook but
+gave them no working remove control (they're `is_saved=false`, so an un-save was a no-op), so
+failed scans piled up with no way to clear them.
+
+**Context worth recording:**
+
+- **Hard delete is right for a failed scan specifically:** a failed job holds no identified
+  dish and no recipe, so there is nothing worth keeping - deleting it outright is the honest
+  action, not hiding it.
+- **In-flight deletes are blocked server-side,** not just hidden in the UI, so a delete can't
+  orphan a running Step Functions execution (which could otherwise re-create partial rows as it
+  finishes).
+- The backend `PATCH /jobs/{jobId}/save` endpoint is now unused by the client but left in place;
+  retiring that Lambda/route is a separate cleanup, and `is_saved` is still live.
+
+---
+
 ## 2026-08-26: Scanning lands in the Cookbook, not a dedicated processing screen; photos are permanent
 
 **Decision:** After a scan (camera or upload) the app navigates straight to the **Cookbook**

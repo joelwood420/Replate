@@ -173,6 +173,24 @@ def update_job(job_id: str, **changes) -> dict | None:
     return ddb.strip_keys(updated) if updated else None
 
 
+def delete_job(job_id: str) -> bool:
+    """Permanently delete a job and everything under it.
+
+    Removes the canonical partition (META, RESULT and every ELEMENT#) and the owner's
+    cookbook listing projection. Returns False if the job doesn't exist. There is no
+    soft-delete/undo: a removed dish is one the user chose to discard, so keeping a
+    hidden row would just be dead data (see docs/decisions.md, 2026-08-26).
+    """
+    job = get_job(job_id)
+    if job is None:
+        return False
+    ddb.delete(ddb.job_pk(job_id), ddb.SK_META)
+    ddb.delete(ddb.job_pk(job_id), ddb.SK_RESULT)
+    ddb.delete_prefix(ddb.job_pk(job_id), "ELEMENT#")
+    ddb.delete(ddb.user_pk(job["user_id"]), ddb.job_index_sk(job["created_at"], job_id))
+    return True
+
+
 def list_jobs(user_oid: str, saved: bool | None = None, limit: int = 20) -> list[dict]:
     """The cookbook listing - newest first.
 

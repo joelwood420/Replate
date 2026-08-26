@@ -1,6 +1,6 @@
 import type { MatchMethod } from '../lib/apiClient';
 import { ConfidenceBadge } from './ConfidenceBadge';
-import { IconBack, IconPlus, IconTrash } from './icons';
+import { IconBack, IconTrash } from './icons';
 import styles from './RecipeHero.module.css';
 
 interface RecipeHeroProps {
@@ -9,9 +9,9 @@ interface RecipeHeroProps {
   restaurantMeta: string;
   matchMethod: MatchMethod;
   mode: 'new' | 'cookbook';
-  isSaved: boolean;
   onBack: () => void;
-  onToggleSaved: () => void;
+  onDelete: () => void;
+  isDeleting: boolean;
 }
 
 export function RecipeHero({
@@ -20,9 +20,9 @@ export function RecipeHero({
   restaurantMeta,
   matchMethod,
   mode,
-  isSaved,
   onBack,
-  onToggleSaved,
+  onDelete,
+  isDeleting,
 }: RecipeHeroProps) {
   return (
     <div className={styles.hero}>
@@ -35,10 +35,11 @@ export function RecipeHero({
         <button
           type="button"
           className={styles.remove}
-          onClick={onToggleSaved}
-          aria-label={isSaved ? 'Remove from cookbook' : 'Add to cookbook'}
+          onClick={onDelete}
+          disabled={isDeleting}
+          aria-label="Delete dish"
         >
-          {isSaved ? <IconTrash size={15} /> : <IconPlus size={16} />}
+          <IconTrash size={15} />
         </button>
       )}
       <div className={styles.overlayText}>

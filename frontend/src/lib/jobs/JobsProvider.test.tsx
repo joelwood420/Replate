@@ -112,6 +112,15 @@ describe('JobsProvider', () => {
     act(() => result.current.patchJob('job-1', { is_saved: false }));
     expect(result.current.jobs.find((j) => j.job_id === 'job-1')?.is_saved).toBe(false);
   });
+
+  it('removeJob drops a job from the cache', async () => {
+    mockedListJobs.mockResolvedValue(sampleJobs);
+    const { result } = renderHook(() => useJobsStore(), { wrapper: wrapperFor(makeAuthValue()) });
+    await waitFor(() => expect(result.current.jobs).toEqual(sampleJobs));
+
+    act(() => result.current.removeJob('job-1'));
+    expect(result.current.jobs.map((j) => j.job_id)).toEqual(['job-2', 'job-3']);
+  });
 });
 
 describe('derived job views', () => {

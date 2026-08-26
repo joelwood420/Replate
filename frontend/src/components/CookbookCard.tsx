@@ -2,15 +2,15 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { JobSummary } from '../lib/apiClient';
 import { ProcessingOrb } from './ProcessingOrb';
-import { IconPlus, IconTrash } from './icons';
+import { IconTrash } from './icons';
 import styles from './CookbookCard.module.css';
 
 interface CookbookCardProps {
   job: JobSummary;
-  onToggleSaved: (jobId: string, saved: boolean) => void;
+  onDelete: (jobId: string) => void;
 }
 
-export function CookbookCard({ job, onToggleSaved }: CookbookCardProps) {
+export function CookbookCard({ job, onDelete }: CookbookCardProps) {
   // A photo whose object was purged (or never loaded) should fall back to the striped
   // placeholder, never the browser's broken-image glyph.
   const [imgFailed, setImgFailed] = useState(false);
@@ -47,17 +47,17 @@ export function CookbookCard({ job, onToggleSaved }: CookbookCardProps) {
             )}
           </div>
         </Link>
-        {/* A settled, saved dish is the only card you remove. While a scan is in flight or has
-            failed it isn't a keepable dish yet (Cancel lives on the processing screen), so the
-            add/remove control would only confuse - hide it. */}
-        {!inFlight && !failed && (
+        {/* Delete is a hard delete (there is no undo), offered on any settled card - a finished
+            dish or a failed scan. A scan still in flight can't be deleted out from under its
+            running pipeline; that's what Cancel on the processing screen is for. */}
+        {!inFlight && (
           <button
             type="button"
             className={styles.remove}
-            onClick={() => onToggleSaved(job.job_id, !job.is_saved)}
-            aria-label={job.is_saved ? 'Remove from cookbook' : 'Add to cookbook'}
+            onClick={() => onDelete(job.job_id)}
+            aria-label="Delete dish"
           >
-            {job.is_saved ? <IconTrash size={12} /> : <IconPlus size={13} />}
+            <IconTrash size={12} />
           </button>
         )}
         {job.status === 'Identified' && <div className={styles.pendingBadge}>Not yet reverse-engineered</div>}
