@@ -231,18 +231,14 @@ export function updateProfile(
   );
 }
 
-export function setJobSaved(
+/**
+ * Permanently delete a job and its recipe. There is no undo - a removed dish is discarded,
+ * not hidden. The backend refuses (409) to delete a scan that is still in flight; cancel it
+ * first. Returns 404 if it's already gone.
+ */
+export function deleteJob(
   jobId: string,
-  saved: boolean,
   authHeaders: AuthHeaders,
-): Promise<{ job_id: string; is_saved: boolean }> {
-  return request(
-    `/jobs/${jobId}/save`,
-    {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ saved }),
-    },
-    authHeaders,
-  );
+): Promise<{ job_id: string; deleted: boolean }> {
+  return request(`/jobs/${jobId}`, { method: 'DELETE' }, authHeaders);
 }

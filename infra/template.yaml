@@ -230,6 +230,7 @@ Resources:
           - GET
           - POST
           - PATCH
+          - DELETE
           - OPTIONS
         AllowCredentials: false
 
@@ -321,6 +322,22 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /jobs/{jobId}/save
             Method: PATCH
+
+  JobDeleteFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-job-delete"
+      Handler: triggers.job_delete_http.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /jobs/{jobId}
+            Method: DELETE
 
   ProfileGetFunction:
     Type: AWS::Serverless::Function
@@ -765,6 +782,9 @@ Resources:
   JobSaveLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-job-save", RetentionInDays: !Ref LogRetentionDays }
+  JobDeleteLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-job-delete", RetentionInDays: !Ref LogRetentionDays }
   ReverseEngineerLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: { LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-reverse-engineer", RetentionInDays: !Ref LogRetentionDays }

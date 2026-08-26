@@ -8,9 +8,10 @@ import { PillButton } from '../components/PillButton';
 import { ProcessingOrb, type OrbStage } from '../components/ProcessingOrb';
 import { RecipeHero } from '../components/RecipeHero';
 import { IconBack } from '../components/icons';
-import { cancelJob, reverseEngineerJob, setJobSaved } from '../lib/apiClient';
+import { cancelJob, deleteJob, reverseEngineerJob } from '../lib/apiClient';
 import { useAuth } from '../lib/auth/useAuth';
 import { formatQuantity, timeAgo } from '../lib/format';
+import { useJobsStore } from '../lib/jobs/JobsProvider';
 import { useJobPolling } from '../lib/jobs/useJobPolling';
 import styles from './JobScreen.module.css';
 
@@ -69,8 +70,8 @@ export function JobScreen() {
   const navigate = useNavigate();
   const { authHeaders } = useAuth();
   const { job, error, isLoading, refetch } = useJobPolling(jobId);
-  const [isSaved, setIsSaved] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
+  const { removeJob } = useJobsStore();
+  const [isDeleting, setIsDeleting] = useState(false);
   const [isStartingRecipe, setIsStartingRecipe] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
@@ -78,24 +79,21 @@ export function JobScreen() {
   // Which component's recipe to show; null shows the full dish (every component combined).
   const [selectedComponent, setSelectedComponent] = useState<number | null>(null);
 
-  useEffect(() => {
-    if (job) setIsSaved(job.is_saved);
-  }, [job?.job_id, job?.is_saved]);
-
   // A different dish means the previous component selection no longer applies.
   useEffect(() => {
     setSelectedComponent(null);
   }, [job?.job_id]);
 
-  async function handleToggleSaved() {
-    if (!jobId || isSaving) return;
-    const next = !isSaved;
-    setIsSaving(true);
+  async function handleDelete() {
+    if (!jobId || isDeleting) return;
+    setIsDeleting(true);
     try {
-      await setJobSaved(jobId, next, authHeaders);
-      setIsSaved(next);
-    } finally {
-      setIsSaving(false);
+      await deleteJob(jobId, authHeaders);
+      removeJob(jobId);
+      navigate('/cookbook');
+    } catch {
+      // Leave the screen as-is on failure; the dish still exists, so the user can retry.
+      setIsDeleting(false);
     }
   }
 
@@ -229,9 +227,9 @@ export function JobScreen() {
           restaurantMeta={restaurantMeta}
           matchMethod={result.match_method}
           mode="cookbook"
-          isSaved={isSaved}
           onBack={() => navigate(-1)}
-          onToggleSaved={handleToggleSaved}
+          onDelete={handleDelete}
+          isDeleting={isDeleting}
         />
 
         {awaitingRecipe ? (

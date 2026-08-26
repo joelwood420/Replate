@@ -4,7 +4,7 @@ import { CookbookCard } from '../components/CookbookCard';
 import { ErrorState } from '../components/ErrorState';
 import { LoadingState } from '../components/LoadingState';
 import { PillButton } from '../components/PillButton';
-import { setJobSaved } from '../lib/apiClient';
+import { deleteJob } from '../lib/apiClient';
 import { useAuth } from '../lib/auth/useAuth';
 import { useSavedJobs } from '../lib/jobs/useSavedJobs';
 import { TAB_ROUTES, useSwipeEntryClass, useSwipeNavigation } from '../lib/nav/swipeNav';
@@ -12,7 +12,7 @@ import styles from './CookbookScreen.module.css';
 
 export function CookbookScreen() {
   const { authHeaders } = useAuth();
-  const { jobs, isLoading, error, refetch, patchJob } = useSavedJobs();
+  const { jobs, isLoading, error, refetch, removeJob } = useSavedJobs();
   const navigate = useNavigate();
   useSwipeNavigation(TAB_ROUTES);
   const swipeEntry = useSwipeEntryClass();
@@ -25,17 +25,15 @@ export function CookbookScreen() {
       ? 'No dishes yet'
       : `${jobs.length} ${jobs.length === 1 ? 'dish' : 'dishes'} · ${reverseEngineered} reverse-engineered`;
 
-  async function handleToggleSaved(jobId: string, saved: boolean) {
-    // Update the shared cache first so the card drops/stays instantly; the patch
-    // is authoritative for the UI, so there's no immediate refetch. Refetching here
-    // would be a full list re-read per toggle and, because list reads are eventually
-    // consistent, could momentarily read back the pre-write value and revert the
-    // card. A later focus/mount refresh reconciles. Revert only if the write fails.
-    patchJob(jobId, { is_saved: saved });
+  async function handleDelete(jobId: string) {
+    // Drop from the shared cache first so the card disappears instantly. On failure,
+    // refetch to restore the true list rather than trying to re-insert the removed job
+    // (we no longer hold it locally, and a full read reconciles cleanly).
+    removeJob(jobId);
     try {
-      await setJobSaved(jobId, saved, authHeaders);
+      await deleteJob(jobId, authHeaders);
     } catch {
-      patchJob(jobId, { is_saved: !saved });
+      refetch();
     }
   }
 
@@ -81,7 +79,7 @@ export function CookbookScreen() {
         {!isLoading && !error && jobs.length > 0 && (
           <div className={styles.grid}>
             {jobs.map((job) => (
-              <CookbookCard key={job.job_id} job={job} onToggleSaved={handleToggleSaved} />
+              <CookbookCard key={job.job_id} job={job} onDelete={handleDelete} />
             ))}
           </div>
         )}

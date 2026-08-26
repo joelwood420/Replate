@@ -17,12 +17,12 @@ const IN_FLIGHT_OR_FAILED = new Set(['Queued', 'Processing', 'Failed']);
  * flight, not failed) falls out on its own.
  */
 export function useSavedJobs() {
-  const { jobs, isLoading, error, refetch, patchJob } = useJobsStore();
+  const { jobs, isLoading, error, refetch, patchJob, removeJob } = useJobsStore();
   useEffect(() => {
     refetch();
   }, [refetch]);
   const cookbook = jobs.filter(
     (job) => job.status !== 'Cancelled' && (job.is_saved || IN_FLIGHT_OR_FAILED.has(job.status)),
   );
-  return { jobs: cookbook, isLoading, error, refetch, patchJob };
+  return { jobs: cookbook, isLoading, error, refetch, patchJob, removeJob };
 }

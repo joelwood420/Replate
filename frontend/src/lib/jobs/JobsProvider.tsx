@@ -37,6 +37,8 @@ interface JobsStore extends JobListState {
   hasLoadedOnce: boolean;
   /** Optimistically update one cached job in place (e.g. a save toggle). */
   patchJob: (jobId: string, changes: Partial<JobSummary>) => void;
+  /** Optimistically drop one job from the cache (a hard delete). */
+  removeJob: (jobId: string) => void;
 }
 
 const JobsContext = createContext<JobsStore | null>(null);
@@ -115,9 +117,13 @@ export function JobsProvider({ children }: { children: ReactNode }) {
     setJobs((prev) => prev.map((job) => (job.job_id === jobId ? { ...job, ...changes } : job)));
   }, []);
 
+  const removeJob = useCallback((jobId: string) => {
+    setJobs((prev) => prev.filter((job) => job.job_id !== jobId));
+  }, []);
+
   const value = useMemo<JobsStore>(
-    () => ({ jobs, isLoading, error, refetch, patchJob, hasLoadedOnce }),
-    [jobs, isLoading, error, refetch, patchJob, hasLoadedOnce],
+    () => ({ jobs, isLoading, error, refetch, patchJob, removeJob, hasLoadedOnce }),
+    [jobs, isLoading, error, refetch, patchJob, removeJob, hasLoadedOnce],
   );
   return <JobsContext.Provider value={value}>{children}</JobsContext.Provider>;
 }
