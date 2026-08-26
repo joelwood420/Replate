@@ -61,39 +61,60 @@ const STAGE_CONFIG: Record<OrbStage, { phrases: string[]; intervalMs: number; su
 // Cycles on a timer independent of real pipeline progress: GET /api/jobs/{jobId} only
 // exposes coarse status (Processing / Generating), not finer-grained pipeline stages, so
 // the phrases set an honest mood rather than a fake progress bar.
-export function ProcessingOrb({ stage = 'identify' }: { stage?: OrbStage }) {
+/**
+ * `compact` strips the orb down to just the spinning mark - no cycling phrases, no subline,
+ * no molten shader - for placing over a small surface like a processing Cookbook card, where
+ * the narration and the shader would be noise (and one shader per grid card would be heavy).
+ */
+export function ProcessingOrb({
+  stage = 'identify',
+  compact = false,
+}: {
+  stage?: OrbStage;
+  compact?: boolean;
+}) {
   const { phrases, intervalMs, subline } = STAGE_CONFIG[stage];
   const [phraseIndex, setPhraseIndex] = useState(0);
 
   // Reset when the stage changes so a stale index can't point past a shorter phrase list.
+  // The compact orb shows no phrases, so it needs no timer.
   useEffect(() => {
+    if (compact) return;
     setPhraseIndex(0);
     const timer = setInterval(() => {
       setPhraseIndex((i) => (i + 1) % phrases.length);
     }, intervalMs);
     return () => clearInterval(timer);
-  }, [stage, phrases.length, intervalMs]);
+  }, [stage, phrases.length, intervalMs, compact]);
 
   const isGenerate = stage === 'generate';
   const reducedMotion = usePrefersReducedMotion();
 
+  const orb = (
+    <div className={`${styles.orb} ${isGenerate ? styles.orbGenerate : ''} ${compact ? styles.orbCompact : ''}`}>
+      {!reducedMotion && !compact && (
+        <MoltenOrb
+          className={styles.molten}
+          intensity={isGenerate ? 1 : 0.35}
+          warm={isGenerate ? 1 : 0}
+        />
+      )}
+      <div className={styles.track} />
+      <div className={styles.spinner}>
+        <div className={styles.arc} />
+        <div className={styles.dot} />
+      </div>
+      <div className={styles.glyph}>R</div>
+    </div>
+  );
+
+  if (compact) {
+    return orb;
+  }
+
   return (
     <div className={styles.wrap}>
-      <div className={`${styles.orb} ${isGenerate ? styles.orbGenerate : ''}`}>
-        {!reducedMotion && (
-          <MoltenOrb
-            className={styles.molten}
-            intensity={isGenerate ? 1 : 0.35}
-            warm={isGenerate ? 1 : 0}
-          />
-        )}
-        <div className={styles.track} />
-        <div className={styles.spinner}>
-          <div className={styles.arc} />
-          <div className={styles.dot} />
-        </div>
-        <div className={styles.glyph}>R</div>
-      </div>
+      {orb}
       <div className={styles.phraseBox} role="status" aria-live="polite">
         <div
           key={`${stage}-${phraseIndex}`}

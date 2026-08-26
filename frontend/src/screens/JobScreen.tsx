@@ -7,7 +7,7 @@ import { MethodStep } from '../components/MethodStep';
 import { PillButton } from '../components/PillButton';
 import { ProcessingOrb, type OrbStage } from '../components/ProcessingOrb';
 import { RecipeHero } from '../components/RecipeHero';
-import { IconClose } from '../components/icons';
+import { IconBack } from '../components/icons';
 import { cancelJob, reverseEngineerJob, setJobSaved } from '../lib/apiClient';
 import { useAuth } from '../lib/auth/useAuth';
 import { formatQuantity, timeAgo } from '../lib/format';
@@ -22,28 +22,25 @@ function ProcessingShell({ stage = 'identify' }: { stage?: OrbStage }) {
   );
 }
 
-// The identify-stage waiting screen: the just-captured photo behind a scrim, the orb over
-// it, and copy that makes leaving feel safe. The close button and Cancel are both offered —
-// leaving keeps the scan running (it lands in the cookbook), Cancel stops it outright.
+// The identify-stage waiting screen, reached by tapping a still-processing dish in the
+// cookbook: a plain near-black field with just the orb and copy that makes leaving feel safe
+// (no photo behind it). The back arrow returns to the cookbook and keeps the scan running
+// there; Cancel stops it outright.
 function ScanningOverlay({
-  imageUrl,
   isCancelling,
   cancelError,
   onCancel,
-  onLeave,
+  onBack,
 }: {
-  imageUrl: string | undefined;
   isCancelling: boolean;
   cancelError: string | null;
   onCancel: () => void;
-  onLeave: () => void;
+  onBack: () => void;
 }) {
   return (
     <div className={styles.scanOverlay}>
-      {imageUrl && <img src={imageUrl} alt="" className={styles.scanPhoto} />}
-      <div className={styles.scanScrim} />
-      <button type="button" className={styles.scanClose} onClick={onLeave} aria-label="Leave — keep processing">
-        <IconClose size={18} />
+      <button type="button" className={styles.scanClose} onClick={onBack} aria-label="Back to cookbook">
+        <IconBack size={18} />
       </button>
       <div className={styles.scanContent}>
         <ProcessingOrb stage="identify" />
@@ -185,11 +182,10 @@ export function JobScreen() {
   if (job.status === 'Queued' || job.status === 'Processing') {
     return (
       <ScanningOverlay
-        imageUrl={job.image_url}
         isCancelling={isCancelling}
         cancelError={cancelError}
         onCancel={handleCancel}
-        onLeave={() => navigate('/home')}
+        onBack={() => navigate('/cookbook')}
       />
     );
   }

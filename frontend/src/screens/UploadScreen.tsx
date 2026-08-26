@@ -86,7 +86,9 @@ export function UploadScreen() {
       await uploadPhotoToBlob(uploadUrl, photo);
       // Only now is the photo actually there for the pipeline to read.
       await markUploadComplete(jobId, authHeaders);
-      navigate(`/jobs/${jobId}`);
+      // Land in the cookbook, where the dish is already saved and processes in place, rather
+      // than on a dedicated processing screen. Replace so Back doesn't return to the upload form.
+      navigate('/cookbook', { replace: true });
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Something went wrong. Try again.');
       setIsSubmitting(false);

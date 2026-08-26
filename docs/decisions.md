@@ -10,6 +10,48 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-08-26: Scanning lands in the Cookbook, not a dedicated processing screen; photos are permanent
+
+**Decision:** After a scan (camera or upload) the app navigates straight to the **Cookbook**
+instead of the full-screen `/jobs/:id` processing view. The just-scanned dish appears as a
+Cookbook card that processes **in place** - the captured photo under a dim scrim with the
+loading orb over it - and resolves to its normal state when identification finishes. Tapping
+a still-processing card opens the full-screen processing view, which is now a **plain
+near-black screen with the orb, the reassuring copy and a Cancel control** and **no photo
+behind it** (the old identify-stage view put the photo behind a scrim; that is removed). The
+top-left control on that screen is a **back arrow** (was a close X). A **failed** scan now
+surfaces as a Cookbook card in a "Scan failed - retry" state that opens the retry screen when
+tapped; **cancelled** scans are hidden from the Cookbook. The **"Recently Identified" list on
+the Home screen is removed entirely** (Home is now just the greeting and the Scan card), as it
+duplicated the Cookbook. Separately, uploaded photos are **no longer expired** from the S3
+uploads bucket - the `ExpireUploads` lifecycle rule is removed so a saved dish keeps its photo
+indefinitely.
+
+**Why:** sitting in a restaurant, snapping a dish and being dropped on a processing-orb screen
+makes it feel like you have to sit and wait for the scan to finish. Landing in the Cookbook
+with the dish already there and quietly processing gives an instant "it's saved, I'm done, I
+can put my phone away" feeling - the identification finishes on its own and the result is
+waiting whenever you come back. The photo-behind-the-orb full screen was disliked visually, so
+the tap-through processing view is the calmer plain-orb treatment. Photos were disappearing
+from older dishes because the uploads bucket deleted objects after 7 days; a cookbook of dishes
+you saved to cook later is worthless if the photo vanishes, so the dish photo must persist.
+
+**Context worth recording:**
+
+- **The "Recently Identified" removal** followed an `/impeccable critique` of that list (baseline
+  18/36): because dishes auto-save at capture, Home's list and the Cookbook read the same cache
+  and overlapped almost entirely, and the list was where duplicate rows and broken thumbnails
+  were most visible. Rather than polish a redundant surface, it was cut.
+- **Photo permanence is a cost tradeoff** (Global Rule 1). Removing `ExpireUploads` means the
+  uploads bucket grows without bound; S3 has no always-free storage tier (5 GB free for 12
+  months only), so this is an accepted, flagged cost. A future refinement is to expire only
+  *orphaned* uploads (scans that were never saved / were cancelled) rather than everything, but
+  lifecycle rules cannot read DynamoDB save state, so that needs object tagging and is deferred.
+- Already-deleted photos (dishes older than 7 days at the time of this change) are **not
+  recoverable**; the fix is forward-looking only.
+
+---
+
 ## 2026-08-25: Menu fetch follows linked menus (PDFs and sub-pages) when the HTML page has no dishes
 
 **Decision:** `menu_extraction` extracts the fetched page's own content first (with the full

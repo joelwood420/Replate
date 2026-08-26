@@ -42,29 +42,5 @@
 
 .scanWrap {
   padding: 18px 22px;
-}
-
-.recentSection {
-  padding: 4px 22px;
   flex: 1;
-}
-
-.sectionLabel {
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--color-muted);
-  margin: 10px 2px;
-}
-
-.recentList {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.empty {
-  font-size: 13px;
-  color: var(--color-muted);
-  padding: 20px 2px;
 }

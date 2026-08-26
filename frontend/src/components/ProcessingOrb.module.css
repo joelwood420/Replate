@@ -142,6 +142,25 @@
   }
 }
 
+/* Compact orb for a small surface (a processing Cookbook card): same DNA, scaled down, with
+   the glyph and travelling dot sized to match. Phrases and molten shader are dropped in the
+   component, not here. */
+.orbCompact {
+  width: 58px;
+  height: 58px;
+}
+
+.orbCompact .glyph {
+  font-size: 21px;
+}
+
+.orbCompact .dot {
+  width: 9px;
+  height: 9px;
+  top: -1px;
+  left: calc(50% - 4.5px);
+}
+
 .glyph {
   position: relative;
   color: var(--color-gold);

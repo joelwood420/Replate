@@ -5,7 +5,6 @@ import { AuthWrapper, makeAuthValue } from '../../test/renderWithAuth';
 import type { AuthContextValue } from '../auth/AuthProvider';
 import type { JobSummary } from '../apiClient';
 import { JobsProvider, useJobsStore } from './JobsProvider';
-import { useRecentJobs } from './useRecentJobs';
 import { useSavedJobs } from './useSavedJobs';
 
 vi.mock('../apiClient', () => ({
@@ -121,15 +120,26 @@ describe('derived job views', () => {
     mockedListJobs.mockResolvedValue(sampleJobs);
   });
 
-  it('useRecentJobs slices the newest N from the shared cache', async () => {
-    const { result } = renderHook(() => useRecentJobs(2), { wrapper: wrapperFor(makeAuthValue()) });
-    await waitFor(() => expect(result.current.jobs.length).toBe(2));
-    expect(result.current.jobs.map((j) => j.job_id)).toEqual(['job-1', 'job-2']);
-  });
-
-  it('useSavedJobs returns only saved jobs from the shared cache', async () => {
+  it('useSavedJobs returns saved jobs from the shared cache', async () => {
     const { result } = renderHook(() => useSavedJobs(), { wrapper: wrapperFor(makeAuthValue()) });
     await waitFor(() => expect(result.current.jobs.length).toBe(2));
     expect(result.current.jobs.map((j) => j.job_id)).toEqual(['job-1', 'job-3']);
+  });
+
+  it('useSavedJobs also shows in-flight and failed scans, and drops cancelled and un-hearted ones', async () => {
+    // A live scan isn't is_saved until identification finishes, but it lands in the cookbook to
+    // process in place, so Queued/Processing (and a Failed retry) must show. A Cancelled scan
+    // and an un-hearted settled dish (is_saved false, not in flight, not failed) must not.
+    mockedListJobs.mockResolvedValue([
+      makeJob({ job_id: 'saved', is_saved: true, status: 'Completed' }),
+      makeJob({ job_id: 'processing', is_saved: false, status: 'Processing' }),
+      makeJob({ job_id: 'queued', is_saved: false, status: 'Queued' }),
+      makeJob({ job_id: 'failed', is_saved: false, status: 'Failed' }),
+      makeJob({ job_id: 'cancelled', is_saved: true, status: 'Cancelled' }),
+      makeJob({ job_id: 'unhearted', is_saved: false, status: 'Identified' }),
+    ]);
+    const { result } = renderHook(() => useSavedJobs(), { wrapper: wrapperFor(makeAuthValue()) });
+    await waitFor(() => expect(result.current.jobs.length).toBe(4));
+    expect(result.current.jobs.map((j) => j.job_id)).toEqual(['saved', 'processing', 'queued', 'failed']);
   });
 });

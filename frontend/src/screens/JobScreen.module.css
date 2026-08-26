@@ -89,7 +89,8 @@
   background: var(--color-bg);
 }
 
-/* Identify-stage waiting screen: captured photo behind a scrim with the orb over it. */
+/* Identify-stage waiting screen: a plain near-black field with the orb and reassuring copy,
+   reached by tapping a still-processing dish in the cookbook. No photo behind it. */
 .scanOverlay {
   position: relative;
   min-height: 100vh;
@@ -97,24 +98,6 @@
   flex-direction: column;
   overflow: hidden;
   background: var(--color-bg);
-}
-
-.scanPhoto {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transform: scale(1.05);
-  filter: saturate(0.9);
-}
-
-/* Dark enough that the orb and copy read cleanly over any photo, but the dish still
-   shows through so it feels like "your dish, being worked on" rather than a blank wait. */
-.scanScrim {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(12, 10, 9, 0.72) 0%, rgba(12, 10, 9, 0.86) 55%, rgba(12, 10, 9, 0.94) 100%);
 }
 
 .scanClose {
@@ -175,16 +158,16 @@
   font-weight: 500;
   letter-spacing: 0.01em;
   color: var(--color-cream);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: oklch(93% 0.015 80 / 0.06);
+  border: 1px solid oklch(93% 0.015 80 / 0.22);
   border-radius: 999px;
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .scanCancel:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.35);
+  background: oklch(93% 0.015 80 / 0.12);
+  border-color: oklch(93% 0.015 80 / 0.35);
 }
 
 .scanCancel:disabled {
