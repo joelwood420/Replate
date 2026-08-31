@@ -5,11 +5,11 @@ SAM template that provisions everything below now lives in `infra/template.yaml`
 being rolled out in two passes (see `docs/decisions.md`, 2026-08-14):
 
 - **Phase 3a (current):** deploy the whole stack with the paid integrations stubbed —
-  `ANTHROPIC_API_KEY` blank, Rekognition off, Places key empty, embeddings left as the SHA-256
+  `ANTHROPIC_API_KEY` blank, Rekognition off, SerpApi key empty, embeddings left as the SHA-256
   pseudo-vector. Everything else — Lambda, API Gateway, Step Functions, DynamoDB, SQS, S3,
   CloudFront, Cognito, IAM, CloudWatch — is real. The pipeline runs end-to-end returning
   canned data, so it deploys, demos and tears down without a per-token bill.
-- **Phase 3b:** fill in the real model calls and load the Anthropic + Places `SecureString`
+- **Phase 3b:** fill in the real model calls and load the Anthropic + SerpApi `SecureString`
   params.
 
 The stack deploys to **`ap-southeast-2` (Sydney)**. The pre-migration Bicep is recoverable
@@ -21,9 +21,11 @@ Three deviations from a by-the-book AWS design, all logged in `docs/decisions.md
   and the few hundred culinary-technique embeddings are scanned brute-force with numpy inside
   the Lambda. This is what the Azure design was already doing with an unindexed
   `VECTOR_DISTANCE` — it just moves from the database into the process.
-- **Menu lookup is one model call** using the first-party Anthropic API's server-side
-  `web_search` tool, which finds, fetches and extracts the menu together (see `docs/decisions.md`,
-  2026-08-17).
+- **Menu lookup is a deterministic SerpApi pipeline.** SerpApi finds the menu-page URL from the
+  restaurant name and address, the page is fetched directly (HTML, PDF or image), and one tool-free
+  Claude call extracts structured menu items, the whole step wall-clock bounded. This replaced the
+  single `web_search` call, which was location-blind and ran to dollars per scan (see
+  `docs/decisions.md`, 2026-08-25).
 - **No push channel.** The client polls `GET /api/jobs/{id}`; `useJobPolling.ts` remains the
   documented swap seam.
 
@@ -65,7 +67,7 @@ flowchart TB
     end
 
     subgraph Security["Security"]
-        SSM["SSM Parameter Store<br/>Anthropic + Places keys (SecureString)"]
+        SSM["SSM Parameter Store<br/>Anthropic + SerpApi keys (SecureString)"]
     end
 
     subgraph AI["AI"]
@@ -77,7 +79,8 @@ flowchart TB
     end
 
     subgraph External["External APIs (3rd-party)"]
-        Anthropic["Anthropic API<br/>Claude — vision, menu (web_search), generation"]
+        Anthropic["Anthropic API<br/>Claude: vision, menu extract, generation"]
+        SerpApi["SerpApi<br/>menu-page URL discovery"]
         Places["Restaurant lookup (OpenStreetMap)<br/>Overpass (GPS) + Nominatim (name typeahead)"]
     end
 
@@ -99,7 +102,8 @@ flowchart TB
     SFN --> TaskFns
 
     TaskFns -- "moderate upload" --> Rek
-    TaskFns -- "dish/element guess, menu fetch (web_search),<br/>recipe generation" --> Anthropic
+    TaskFns -- "dish/element guess, menu extract,<br/>recipe generation" --> Anthropic
+    TaskFns -- "menu-page URL discovery" --> SerpApi
     TaskFns -- "restaurant lookup" --> Places
     TaskFns -- "read blob, read/write items,<br/>scan EMBEDDINGS partition" --> DDB
     TaskFns -- "read photo" --> S3U
@@ -112,11 +116,11 @@ flowchart TB
 > `frontend/src/lib/jobs/useJobPolling.ts` is the seam to swap if that changes — on AWS the
 > alternatives are API Gateway WebSockets or AWS IoT Core over MQTT.
 
-**Everything except the Anthropic API, OpenStreetMap and (only its endpoint) Rekognition
-authenticates via IAM.** Rekognition itself is IAM, and OpenStreetMap (Overpass for GPS,
-Nominatim for name search) is a key-less public API; the only stored credential in the whole
-system is the Anthropic API key, held in Parameter Store as
-`SecureString` parameters. The Anthropic API is reached over plain HTTPS egress — there is no
+**Everything except the Anthropic API, SerpApi, OpenStreetMap and (only its endpoint)
+Rekognition authenticates via IAM.** Rekognition itself is IAM, and OpenStreetMap (Overpass for
+GPS, Nominatim for name search) is a key-less public API; the two stored credentials in the
+whole system are the Anthropic API key and the SerpApi key (menu-page URL discovery), both held
+in Parameter Store as `SecureString` parameters. The Anthropic API is reached over plain HTTPS egress — there is no
 VPC and therefore no NAT Gateway, which is the most common way a nominally serverless AWS
 project starts costing real money.
 
@@ -175,7 +179,8 @@ monthly grants with 12-month trial grants, and the difference only shows up a ye
 | S3 | 5 GB + 20k GET + 2k PUT/month | **12 months** | ~per-GB-month; lifecycle-expire uploads | No |
 | API Gateway (HTTP API) | 1M requests/month | **12 months** | Per-million requests | No |
 | Rekognition | 5,000 images/month | **12 months** | Per-image | No |
-| Anthropic API | **None** — pay per token | — | Per input/output token (+ per web_search) | No |
+| Anthropic API | **None** — pay per token | — | Per input/output token | No |
+| SerpApi (menu-page URL discovery) | ~100 searches/month | Always (small free tier) | Per-search on a paid plan; re-verify terms | No |
 | OpenStreetMap (Overpass GPS + Nominatim search) | Free, fair use | Always | None (public instance) | No |
 
 **Nothing in this design carries a fixed hourly cost**, provided DynamoDB stays on provisioned
