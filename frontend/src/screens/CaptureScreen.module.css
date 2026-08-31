@@ -1,6 +1,10 @@
 .screen {
   position: relative;
-  min-height: 100vh;
+  /* dvh tracks the *visible* viewport on mobile; plain 100vh is the larger,
+     toolbar-excluded height, so the camera never quite matched the screen. 100vh
+     stays as the fallback for browsers without dvh. Matches #root in global.css. */
+  height: 100vh;
+  height: 100dvh;
   background: var(--color-bg-camera);
   overflow: hidden;
 }

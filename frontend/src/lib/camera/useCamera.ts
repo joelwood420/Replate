@@ -38,7 +38,20 @@ export function useCamera(enabled = true): CameraState {
     async function start() {
       try {
         streamRef.current?.getTracks().forEach((track) => track.stop());
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode }, audio: false });
+        // Ask for a portrait-oriented stream so the viewfinder's `object-fit: cover`
+        // barely has to crop. With no hint the phone hands back its native landscape
+        // frame, which cover then scales up to fill the tall screen, cropping the sides
+        // hard - that crop reads as the camera being "zoomed in". All ideal (never
+        // exact) so a device without a rear camera or these exact dimensions still
+        // starts rather than throwing OverconstrainedError.
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: facingMode },
+            width: { ideal: 1080 },
+            height: { ideal: 1920 },
+          },
+          audio: false,
+        });
         if (cancelled) {
           stream.getTracks().forEach((track) => track.stop());
           return;
