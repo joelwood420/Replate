@@ -31,29 +31,27 @@ flowchart TD
 
     Moderate["ModerateImage (Rekognition)<br/>runs first, alone"]
     Moderate -->|"unsafe verdict"| Rejected["Mark job failed<br/>(rejected, friendly reason)"]
-    Moderate -->|"safe, OR unchecked<br/>(service error / timeout /<br/>missing config: fail-open)"| Parallel
+    Moderate -->|"safe, OR unchecked<br/>(service error / timeout /<br/>missing config: fail-open)"| Vision
 
-    subgraph Parallel["Parallel: vision guess runs alongside restaurant + menu"]
-        direction TB
-        Vision["VisionGuess (one Claude call):<br/>is_food + dish / element guess"]
+    Vision["VisionGuess (one Claude call):<br/>is_food + dish / element guess"]
+    Vision --> IsFood{"is_food?"}
+    IsFood -->|"no"| NotFood["Mark job failed<br/>(not food, friendly reason)<br/>no restaurant or menu spend"]
+    IsFood -->|"yes"| Loc{"Selected restaurant?"}
 
-        Loc{"Selected restaurant?"}
-        Loc -->|"yes (picked by name)"| SelCand["SelectRestaurantCandidate"]
-        Loc -->|"no (has GPS)"| Geo["GeocodeRestaurantCandidates<br/>Overpass, then Claude<br/>web_search fallback if empty"]
-        SelCand --> HasCand{"Candidate found?"}
-        Geo --> HasCand
-        HasCand -->|"no"| NoMenu["Empty menu"]
-        HasCand -->|"yes<br/>(nearest auto-selected)"| Cache{"Menu cached and fresh?<br/>(MenuLastFetchedAt &lt; 24h)"}
-        Cache -->|"yes"| MenuReady["Menu items"]
-        Cache -->|"no / stale"| Fetch["FetchRestaurantMenu:<br/>SerpApi finds URL (OSM website<br/>tag fallback) -> fetch page<br/>(HTML/PDF/image, follows linked<br/>menus) -> Claude extract"]
-        Fetch -->|"items, or empty (negative-cached)"| MenuReady
-        Fetch -->|"transient error"| DegradeMenu["Empty menu<br/>(degrade, not fail)"]
-    end
+    Loc -->|"yes (picked by name)"| SelCand["SelectRestaurantCandidate"]
+    Loc -->|"no (has GPS)"| Geo["GeocodeRestaurantCandidates<br/>Overpass, then Claude<br/>web_search fallback if empty"]
+    SelCand --> HasCand{"Candidate found?"}
+    Geo --> HasCand
+    HasCand -->|"no"| NoMenu["Empty menu"]
+    HasCand -->|"yes<br/>(nearest auto-selected)"| Cache{"Menu cached and fresh?<br/>(MenuLastFetchedAt &lt; 24h)"}
+    Cache -->|"yes"| Match
+    Cache -->|"no / stale"| Fetch["FetchRestaurantMenu:<br/>SerpApi finds URL (OSM website<br/>tag fallback) -> fetch page<br/>(HTML/PDF/image, follows linked<br/>menus) -> Claude extract"]
+    Fetch -->|"items, or empty (negative-cached)"| Match
+    Fetch -->|"transient error"| Degrade["Empty menu<br/>(degrade, not fail)"]
+    Degrade --> Match
+    NoMenu --> Match
 
-    Parallel --> IsFood{"is_food?"}
-    IsFood -->|"no"| NotFood["Mark job failed<br/>(not food, friendly reason)"]
-    IsFood -->|"yes"| Match["MatchMenuItem"]
-
+    Match["MatchMenuItem"]
     Match --> MHasRest{"Restaurant found?"}
     MHasRest -->|"no"| Low["vision_only_low"]
     MHasRest -->|"yes"| Classify["Claude classifier picks a menu<br/>item or none (difflib fallback<br/>if model unavailable)"]
@@ -75,11 +73,12 @@ flowchart TD
   rejected photo costs one Rekognition call and no model spend. An explicit unsafe verdict fails
   the job; a service error, timeout, missing config or exhausted quota is `unchecked` and allowed
   through, not failed.
-- **One vision call doubles as the food gate.** `VisionGuess` returns `is_food` plus the
-  dish/element breakdown together; a `false` skips the match and menu spend and ends the job with
-  a friendly reason, the same shape as a moderation rejection.
-- **Vision runs in parallel with restaurant + menu.** The two independent branches join at the
-  match step.
+- **One vision call is the food gate, and it runs before any restaurant or menu spend.**
+  `VisionGuess` returns `is_food` plus the dish/element breakdown together; a `false` ends the job
+  with a friendly reason before geocode or the paid menu fetch ever run, the same first-and-alone
+  discipline as moderation one step up. It is sequential, not parallel with the menu branch, on
+  purpose: a wasted paid menu fetch on a non-food photo is not worth the few seconds of overlap it
+  would save on the happy path.
 - **Restaurant selection auto-picks the nearest.** The candidate list is the geocode result
   (nearest first); `candidate_envelope` takes the top one. The full list is persisted, so a
   frontend override after the fact is possible; the pipeline never blocks on it. No restaurant

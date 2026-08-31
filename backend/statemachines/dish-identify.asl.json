@@ -1,5 +1,5 @@
 {
-  "Comment": "Stage 1: moderate the photo, identify the restaurant and its menu, guess the dish, and match the guess against the real menu. Stops at Identified - recipe generation is a separate, user-triggered state machine. Ported from orchestrators/dish_orchestrator.py.",
+  "Comment": "Stage 1: moderate the photo, then use the vision guess as a food gate before spending anything on restaurant lookup or menu fetch. A non-food photo stops here and nothing downstream runs. If it is food, identify the restaurant and its menu, then match the guess against the real menu. Stops at Identified - recipe generation is a separate, user-triggered state machine.",
   "StartAt": "ModerateImage",
   "States": {
     "ModerateImage": {
@@ -37,7 +37,7 @@
           "Next": "MarkJobRejected"
         }
       ],
-      "Default": "IdentifyAndFetchMenu"
+      "Default": "VisionGuess"
     },
 
     "MarkJobRejected": {
@@ -52,10 +52,22 @@
       "End": true
     },
 
-    "IdentifyAndFetchMenu": {
-      "Comment": "The vision guess runs concurrently with restaurant lookup and menu fetch, then both join at the match step - the same fan-out/fan-in the Durable orchestrator expressed by starting vision_task before yielding on the restaurant branch.",
-      "Type": "Parallel",
-      "ResultPath": "$.parallel",
+    "VisionGuess": {
+      "Comment": "The cheap food gate, run before any restaurant lookup or menu fetch. A non-food photo (pills, a pet, a landscape, an empty plate) costs one vision call and no restaurant/menu spend - the same first-and-alone discipline moderation uses one step up. It is sequential rather than parallel with the menu branch on purpose: a wasted paid menu fetch on a non-food photo is not worth the few seconds of overlap it would save on the happy path.",
+      "Type": "Task",
+      "Resource": "${VisionGuessFunctionArn}",
+      "Parameters": {
+        "image_key.$": "$.image_key"
+      },
+      "ResultPath": "$.vision",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
@@ -63,125 +75,20 @@
           "Next": "MarkJobFailed"
         }
       ],
-      "Branches": [
-        {
-          "StartAt": "VisionGuess",
-          "States": {
-            "VisionGuess": {
-              "Type": "Task",
-              "Resource": "${VisionGuessFunctionArn}",
-              "Parameters": {
-                "image_key.$": "$.image_key"
-              },
-              "Retry": [
-                {
-                  "ErrorEquals": ["States.TaskFailed"],
-                  "IntervalSeconds": 2,
-                  "MaxAttempts": 2,
-                  "BackoffRate": 2
-                }
-              ],
-              "End": true
-            }
-          }
-        },
-        {
-          "StartAt": "HasSelectedRestaurant",
-          "States": {
-            "HasSelectedRestaurant": {
-              "Comment": "The user either shared GPS or picked a restaurant by name - never both, which POST /api/jobs enforces.",
-              "Type": "Choice",
-              "Choices": [
-                {
-                  "Variable": "$.selected_restaurant_id",
-                  "IsPresent": true,
-                  "Next": "SelectRestaurantCandidate"
-                }
-              ],
-              "Default": "GeocodeRestaurantCandidates"
-            },
-
-            "SelectRestaurantCandidate": {
-              "Type": "Task",
-              "Resource": "${SelectRestaurantCandidateFunctionArn}",
-              "Parameters": {
-                "job_id.$": "$.job_id",
-                "restaurant_id.$": "$.selected_restaurant_id"
-              },
-              "Next": "HasCandidate"
-            },
-
-            "GeocodeRestaurantCandidates": {
-              "Type": "Task",
-              "Resource": "${GeocodeRestaurantCandidatesFunctionArn}",
-              "Parameters": {
-                "job_id.$": "$.job_id",
-                "latitude.$": "$.latitude",
-                "longitude.$": "$.longitude"
-              },
-              "Next": "HasCandidate"
-            },
-
-            "HasCandidate": {
-              "Comment": "No restaurant near those coordinates is a valid outcome, not an error - it produces the vision-only low-confidence match downstream.",
-              "Type": "Choice",
-              "Choices": [
-                {
-                  "Variable": "$.candidate_found",
-                  "BooleanEquals": true,
-                  "Next": "FetchRestaurantMenu"
-                }
-              ],
-              "Default": "NoMenu"
-            },
-
-            "FetchRestaurantMenu": {
-              "Type": "Task",
-              "Resource": "${FetchRestaurantMenuFunctionArn}",
-              "Parameters": {
-                "restaurant_id.$": "$.top_candidate.restaurant_id",
-                "restaurant_name.$": "$.top_candidate.name",
-                "restaurant_address.$": "$.top_candidate.address",
-                "menu_source_url.$": "$.top_candidate.menu_source_url"
-              },
-              "ResultPath": "$.menu",
-              "Comment": "The activity already degrades a menu-fetch failure to an empty menu internally, so a task-level failure here is an infra hiccup, not a menu miss. Retry once only - each real attempt can run a paid SerpApi search plus an extract call, so a higher count risks re-billing it.",
-              "Retry": [
-                {
-                  "ErrorEquals": ["States.TaskFailed"],
-                  "IntervalSeconds": 3,
-                  "MaxAttempts": 1,
-                  "BackoffRate": 2
-                }
-              ],
-              "End": true
-            },
-
-            "NoMenu": {
-              "Type": "Pass",
-              "Result": {
-                "items": []
-              },
-              "ResultPath": "$.menu",
-              "End": true
-            }
-          }
-        }
-      ],
       "Next": "IsFood"
     },
 
     "IsFood": {
-      "Comment": "The vision guess doubles as an 'is this even food' gate. A non-food photo (a pet, a landscape, an empty plate) is a normal terminal outcome, not a failure, so it skips the match and menu spend and ends like a moderation rejection.",
+      "Comment": "The food gate. A non-food photo is a normal terminal outcome, not a failure, so it skips restaurant lookup, the menu fetch and the match, and ends like a moderation rejection.",
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.parallel[0].is_food",
+          "Variable": "$.vision.is_food",
           "BooleanEquals": false,
           "Next": "MarkJobNotFood"
         }
       ],
-      "Default": "MatchMenuItem"
+      "Default": "HasSelectedRestaurant"
     },
 
     "MarkJobNotFood": {
@@ -190,10 +97,111 @@
       "Resource": "${MarkJobFailedFunctionArn}",
       "Parameters": {
         "job_id.$": "$.job_id",
-        "error_message.$": "$.parallel[0].not_food_reason"
+        "error_message.$": "$.vision.not_food_reason"
       },
       "ResultPath": null,
       "End": true
+    },
+
+    "HasSelectedRestaurant": {
+      "Comment": "The user either shared GPS or picked a restaurant by name - never both, which POST /api/jobs enforces.",
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.selected_restaurant_id",
+          "IsPresent": true,
+          "Next": "SelectRestaurantCandidate"
+        }
+      ],
+      "Default": "GeocodeRestaurantCandidates"
+    },
+
+    "SelectRestaurantCandidate": {
+      "Type": "Task",
+      "Resource": "${SelectRestaurantCandidateFunctionArn}",
+      "Parameters": {
+        "job_id.$": "$.job_id",
+        "restaurant_id.$": "$.selected_restaurant_id"
+      },
+      "ResultPath": "$.restaurant",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkJobFailed"
+        }
+      ],
+      "Next": "HasCandidate"
+    },
+
+    "GeocodeRestaurantCandidates": {
+      "Type": "Task",
+      "Resource": "${GeocodeRestaurantCandidatesFunctionArn}",
+      "Parameters": {
+        "job_id.$": "$.job_id",
+        "latitude.$": "$.latitude",
+        "longitude.$": "$.longitude"
+      },
+      "ResultPath": "$.restaurant",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkJobFailed"
+        }
+      ],
+      "Next": "HasCandidate"
+    },
+
+    "HasCandidate": {
+      "Comment": "No restaurant near those coordinates is a valid outcome, not an error - it produces the vision-only low-confidence match downstream.",
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.restaurant.candidate_found",
+          "BooleanEquals": true,
+          "Next": "FetchRestaurantMenu"
+        }
+      ],
+      "Default": "NoMenu"
+    },
+
+    "FetchRestaurantMenu": {
+      "Type": "Task",
+      "Resource": "${FetchRestaurantMenuFunctionArn}",
+      "Parameters": {
+        "restaurant_id.$": "$.restaurant.top_candidate.restaurant_id",
+        "restaurant_name.$": "$.restaurant.top_candidate.name",
+        "restaurant_address.$": "$.restaurant.top_candidate.address",
+        "menu_source_url.$": "$.restaurant.top_candidate.menu_source_url"
+      },
+      "ResultPath": "$.menu",
+      "Comment": "The activity already degrades a menu-fetch failure to an empty menu internally, so a task-level failure here is an infra hiccup, not a menu miss. Retry once only - each real attempt can run a paid SerpApi search plus an extract call, so a higher count risks re-billing it.",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 3,
+          "MaxAttempts": 1,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkJobFailed"
+        }
+      ],
+      "Next": "MatchMenuItem"
+    },
+
+    "NoMenu": {
+      "Type": "Pass",
+      "Result": {
+        "items": []
+      },
+      "ResultPath": "$.menu",
+      "Next": "MatchMenuItem"
     },
 
     "MatchMenuItem": {
@@ -201,10 +209,10 @@
       "Type": "Task",
       "Resource": "${MatchMenuItemFunctionArn}",
       "Parameters": {
-        "vision_guess.$": "$.parallel[0]",
-        "menu_items.$": "$.parallel[1].menu.items",
-        "candidate_found.$": "$.parallel[1].candidate_found",
-        "restaurant_id.$": "$.parallel[1].restaurant_id"
+        "vision_guess.$": "$.vision",
+        "menu_items.$": "$.menu.items",
+        "candidate_found.$": "$.restaurant.candidate_found",
+        "restaurant_id.$": "$.restaurant.restaurant_id"
       },
       "ResultPath": "$.match",
       "Catch": [
@@ -224,7 +232,7 @@
       "Parameters": {
         "job_id.$": "$.job_id",
         "match_result.$": "$.match",
-        "vision_guess.$": "$.parallel[0]"
+        "vision_guess.$": "$.vision"
       },
       "ResultPath": null,
       "Retry": [

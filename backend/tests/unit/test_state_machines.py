@@ -128,42 +128,43 @@ def test_only_an_explicit_false_verdict_blocks():
     Default, so a moderation outage does not stop the pipeline."""
     choice = IDENTIFY["States"]["IsImageAllowed"]
 
-    assert choice["Default"] == "IdentifyAndFetchMenu"
+    assert choice["Default"] == "VisionGuess"
     assert all(c.get("BooleanEquals") is False for c in choice["Choices"])
 
 
 def test_a_non_food_photo_skips_the_match_and_ends_successfully():
-    """The vision guess doubles as a food gate: a non-food photo skips the match and
-    menu spend and ends like a moderation rejection, not as an execution failure."""
-    assert IDENTIFY["States"]["IdentifyAndFetchMenu"]["Next"] == "IsFood"
+    """The vision guess is a food gate: a non-food photo skips restaurant lookup, the
+    menu fetch and the match, and ends like a moderation rejection, not as a failure."""
+    assert IDENTIFY["States"]["VisionGuess"]["Next"] == "IsFood"
 
     choice = IDENTIFY["States"]["IsFood"]
     not_food = [c for c in choice["Choices"] if c.get("BooleanEquals") is False]
 
     assert len(not_food) == 1
-    assert not_food[0]["Variable"] == "$.parallel[0].is_food"
+    assert not_food[0]["Variable"] == "$.vision.is_food"
     assert not_food[0]["Next"] == "MarkJobNotFood"
-    assert choice["Default"] == "MatchMenuItem"
+    assert choice["Default"] == "HasSelectedRestaurant"
     assert IDENTIFY["States"]["MarkJobNotFood"]["End"] is True
     # The user-facing reason comes from the vision guess.
     assert (
         IDENTIFY["States"]["MarkJobNotFood"]["Parameters"]["error_message.$"]
-        == "$.parallel[0].not_food_reason"
+        == "$.vision.not_food_reason"
     )
 
 
-def test_vision_runs_concurrently_with_the_menu_branch():
-    parallel = IDENTIFY["States"]["IdentifyAndFetchMenu"]
+def test_vision_gates_before_any_restaurant_or_menu_spend():
+    """The food gate runs alone and first, ahead of geocode and the paid menu fetch,
+    so a non-food photo triggers neither. No parallel fan-out any more."""
+    states = IDENTIFY["States"]
 
-    assert parallel["Type"] == "Parallel"
-    branches = parallel["Branches"]
-    assert len(branches) == 2
-    assert branches[0]["StartAt"] == "VisionGuess"
-    assert branches[1]["StartAt"] == "HasSelectedRestaurant"
+    assert all(state["Type"] != "Parallel" for state in states.values())
+    assert states["IsImageAllowed"]["Default"] == "VisionGuess"
+    assert states["VisionGuess"]["Next"] == "IsFood"
+    assert states["IsFood"]["Default"] == "HasSelectedRestaurant"
 
 
 def test_a_selected_restaurant_skips_geocoding():
-    choice = IDENTIFY["States"]["IdentifyAndFetchMenu"]["Branches"][1]["States"]["HasSelectedRestaurant"]
+    choice = IDENTIFY["States"]["HasSelectedRestaurant"]
 
     assert choice["Choices"][0]["Variable"] == "$.selected_restaurant_id"
     assert choice["Choices"][0]["Next"] == "SelectRestaurantCandidate"
@@ -173,29 +174,31 @@ def test_a_selected_restaurant_skips_geocoding():
 def test_no_candidate_skips_the_menu_fetch_but_still_matches():
     """No restaurant near those coordinates is a valid outcome - it produces the
     vision-only low-confidence match, not a failure."""
-    branch = IDENTIFY["States"]["IdentifyAndFetchMenu"]["Branches"][1]["States"]
-    choice = branch["HasCandidate"]
+    states = IDENTIFY["States"]
+    choice = states["HasCandidate"]
 
     assert choice["Choices"][0]["Next"] == "FetchRestaurantMenu"
     assert choice["Default"] == "NoMenu"
-    # Both paths produce the same shape, so the match step needs no special case.
-    assert branch["NoMenu"]["ResultPath"] == "$.menu"
-    assert branch["FetchRestaurantMenu"]["ResultPath"] == "$.menu"
+    # Both paths produce the same shape and flow on to the match step.
+    assert states["NoMenu"]["ResultPath"] == "$.menu"
+    assert states["NoMenu"]["Next"] == "MatchMenuItem"
+    assert states["FetchRestaurantMenu"]["ResultPath"] == "$.menu"
+    assert states["FetchRestaurantMenu"]["Next"] == "MatchMenuItem"
 
 
-def test_the_match_step_receives_both_halves_of_the_fan_in():
+def test_the_match_step_receives_the_vision_guess_and_the_menu():
     params = IDENTIFY["States"]["MatchMenuItem"]["Parameters"]
 
-    assert params["vision_guess.$"] == "$.parallel[0]"
-    assert params["menu_items.$"] == "$.parallel[1].menu.items"
-    assert params["candidate_found.$"] == "$.parallel[1].candidate_found"
+    assert params["vision_guess.$"] == "$.vision"
+    assert params["menu_items.$"] == "$.menu.items"
+    assert params["candidate_found.$"] == "$.restaurant.candidate_found"
 
 
 def test_the_vision_guess_reaches_persistence():
     """Stage 2 reads it back - nothing else records it until a recipe exists."""
     params = IDENTIFY["States"]["PersistMatchResult"]["Parameters"]
 
-    assert params["vision_guess.$"] == "$.parallel[0]"
+    assert params["vision_guess.$"] == "$.vision"
     assert params["match_result.$"] == "$.match"
 
 
