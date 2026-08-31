@@ -10,6 +10,34 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-09-01: The vision food gate runs before restaurant lookup and menu fetch, not in parallel
+
+**Decision:** `dish-identify` no longer fans the vision guess out in a `Parallel` state alongside
+restaurant lookup and menu fetch. The vision guess now runs alone, right after moderation, as a
+food gate: `Moderate -> Vision -> is_food? -> (stop | restaurant lookup -> menu fetch -> match)`.
+A non-food photo ends the job before any geocode or paid menu fetch runs. The state-machine data
+paths move with it (`$.parallel[0]` / `$.parallel[1]` become `$.vision`, `$.restaurant` and
+`$.menu`).
+
+**Why:** a non-food photo (the last prod scan was a blister pack of pills) was still triggering a
+real SerpApi search and a Claude menu extract, because the paid menu branch ran concurrently with
+the vision guess and was only short-circuited at the join, after the spend. Making the cheap
+vision call gate the expensive ones, the same way moderation already gates vision, drops menu
+spend to zero on every non-food photo. The cost is latency: the menu fetch no longer overlaps the
+vision call, so a food photo whose menu is not cached waits the vision call's few seconds before
+the fetch starts. Given the menu fetch is the ~45s long pole and the vision call is a low-effort
+Sonnet call, that overlap was worth little, and not spending money on junk input is worth more.
+
+**Context worth recording:**
+
+- Moderation stays off in prod for now (the Phase 3a stub, `MODERATION_ENABLED` false), so the
+  vision food gate is currently the first check that actually runs.
+- Geocode (free Overpass) now runs only for food photos too. It could have stayed parallel with
+  vision since it is free, but the rule chosen was simpler and stricter: if it is not food,
+  nothing else runs.
+
+---
+
 ## 2026-09-01: The menu match keeps a confidence floor on top of the Claude classifier
 
 **Decision:** The menu-match step stays a Claude in-context classifier (pick the single best

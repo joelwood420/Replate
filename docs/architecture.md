@@ -141,10 +141,11 @@ see `docs/decisions.md`.
 4. `POST /api/jobs/{id}/uploaded` enqueues to SQS, now that there is an image to read.
 5. The SQS message triggers the starter Lambda, which begins the `dish-identify` execution.
    First, and alone, `ModerateImage` gates everything below it, so a rejected photo costs one
-   Rekognition call and no model spend. Then geocode (or select the chosen restaurant) → menu
-   fetch (cached per restaurant) runs in a `Parallel` state alongside the vision-model guess,
-   and both join at the menu-match step (the anti-hallucination check). The execution **stops
-   there**.
+   Rekognition call and no model spend. Then the vision guess runs as a second gate: it also
+   decides `is_food`, and a non-food photo ends the job there, before any restaurant lookup or
+   paid menu fetch. Only for a food photo does geocode (or select the chosen restaurant) → menu
+   fetch (cached per restaurant) run, feeding the menu-match step (the anti-hallucination
+   check). The execution **stops there**.
 6. `PersistMatchResult` writes the result item — including the raw vision guess, which stage 2
    needs as input — sets the job to `Identified` and marks it saved, putting the dish in the
    user's cookbook automatically. The client picks it up on its next poll of
