@@ -10,6 +10,33 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-09-01: The menu match keeps a confidence floor on top of the Claude classifier
+
+**Decision:** The menu-match step stays a Claude in-context classifier (pick the single best
+menu item or none) with a numeric confidence floor layered on top: a positive pick must clear
+`MENU_MATCH_CONFIDENCE_THRESHOLD` (default 0.6) to record `menu_matched`; below it, or a "none",
+degrades to `vision_only_medium`. The floor is deliberately kept, not dropped in favour of
+trusting the classifier's own item-or-none verdict alone. Separately,
+`docs/identify-pipeline.md` now models only the post-submit, fire-and-forget pipeline; the
+interactive steps (location sourcing, re-shooting a not-food photo) are documented as pre-submit
+frontend behaviour, because a polled Step Functions execution cannot stop to prompt or loop.
+
+**Why:** the classifier can return a confident-looking but wrong pick, and this match is the
+anti-hallucination spine of the product, so a cheap second guard earns its place. "We are not
+sure" (the medium badge) is a more honest result than a bad match shown as definitive, and the
+floor is one dial to tune matching strictness without touching the prompt. The diagram split
+reflects how the system is actually built: prompting and retries live in the app before submit,
+not as pipeline states, so drawing them inside the pipeline misrepresented it.
+
+**Context worth recording:**
+
+- The owner initially expected the match to be "just a Claude call"; retaining the floor was a
+  deliberate call for defense in depth, not a leftover.
+- A `difflib` character-similarity matcher remains the fallback when the model is unconfigured
+  (stub deploys), so the step always yields one of the three outcomes and never fails the job.
+
+---
+
 ## 2026-08-26: Removing a dish is a hard delete, not a soft un-save
 
 **Decision:** The trash control on a dish (in the Cookbook and on the dish detail screen) now
