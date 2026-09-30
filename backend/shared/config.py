@@ -15,6 +15,9 @@ if not os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
 # a scan's cost and latency visible. config is imported by every handler, so raise the
 # level here once, at cold start. Override with LOG_LEVEL (e.g. WARNING to quieten it).
 logging.getLogger().setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
+# httpx logs every request URL at INFO, and SerpApi takes its key as a query param, so
+# that key landed in CloudWatch in plain text. Keep httpx at WARNING so URLs stay out.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def aws_region() -> str:

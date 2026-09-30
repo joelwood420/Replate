@@ -203,3 +203,35 @@ def test_web_search_stops_after_the_resume_cap(monkeypatch):
     assert out == "final menu"
     # initial + _MAX_PAUSE_RESUMES resumes, then it stops even though still paused.
     assert fake.create_calls == 1 + anthropic_client._MAX_PAUSE_RESUMES
+
+
+# --- structured output: truncated or malformed replies -----------------------
+# A reply cut off at max_tokens used to escape as a bare JSONDecodeError, which
+# callers don't catch, so a large menu failed the whole scan instead of degrading
+# to vision-only (Baduzzi, 2026-10-01).
+
+
+def test_structured_reply_hitting_max_tokens_is_an_anthropic_error(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    fake = _FakeClient([_FakeResponse('{"items": [{"name": "Tart', "max_tokens")])
+    monkeypatch.setattr(anthropic_client, "get_client", lambda: fake)
+
+    with pytest.raises(anthropic_client.AnthropicError, match="max_tokens"):
+        anthropic_client.generate_structured("claude-test", _msgs(), schema={})
+
+
+def test_structured_reply_with_invalid_json_is_an_anthropic_error(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    fake = _FakeClient([_FakeResponse('{"items": [} oops', "end_turn")])
+    monkeypatch.setattr(anthropic_client, "get_client", lambda: fake)
+
+    with pytest.raises(anthropic_client.AnthropicError, match="invalid JSON"):
+        anthropic_client.generate_structured("claude-test", _msgs(), schema={})
+
+
+def test_structured_reply_parses_valid_json(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    fake = _FakeClient([_FakeResponse('{"items": []}', "end_turn")])
+    monkeypatch.setattr(anthropic_client, "get_client", lambda: fake)
+
+    assert anthropic_client.generate_structured("claude-test", _msgs(), schema={}) == {"items": []}
