@@ -231,3 +231,36 @@ def test_a_failed_status_reaches_the_listing(ddb_table):
     persist_job_result.run_mark_failed({"job_id": "job-123", "error_message": "boom"})
 
     assert repository.list_jobs("user-1")[0]["status"] == JobStatus.FAILED
+
+
+def test_a_not_food_job_is_removed_from_the_cookbook(ddb_table):
+    """A cat photo is not a dish, so it never sits in the cookbook as a failed card."""
+    _job()
+
+    persist_job_result.run_mark_failed(
+        {"job_id": "job-123", "error_message": "That is a cat.", "failure_code": "not_food"}
+    )
+
+    assert repository.list_jobs("user-1") == []
+    # The job itself stays, so the not-food screen can still load it by id.
+    assert repository.get_job("job-123")["failure_code"] == "not_food"
+
+
+def test_a_later_status_write_does_not_bring_the_card_back(ddb_table):
+    """UpdateItem upserts, so a stray write must not recreate the listing as a partial row."""
+    _job()
+    persist_job_result.run_mark_failed(
+        {"job_id": "job-123", "error_message": "That is a cat.", "failure_code": "not_food"}
+    )
+
+    repository.update_job("job-123", status=JobStatus.FAILED)
+
+    assert repository.list_jobs("user-1") == []
+
+
+def test_an_ordinary_failure_stays_in_the_cookbook(ddb_table):
+    _job()
+
+    persist_job_result.run_mark_failed({"job_id": "job-123", "error_message": "boom"})
+
+    assert [j["status"] for j in repository.list_jobs("user-1")] == [JobStatus.FAILED]

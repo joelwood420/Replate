@@ -42,6 +42,7 @@ def run(job_id: str, user_oid: str) -> dict:
             error_message=NOT_FOOD_MESSAGE,
             failure_code=FailureCode.NOT_FOOD,
         )
+        repository.remove_from_cookbook(job_id)
         return {
             "status_code": 200,
             "body": {

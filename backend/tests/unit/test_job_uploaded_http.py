@@ -103,3 +103,13 @@ def test_the_food_check_is_not_run_for_a_job_that_cannot_start(ddb_table, sent, 
     )
 
     assert job_uploaded_http.run("job-1", _OWNER)["status_code"] == 409
+
+
+def test_a_non_food_photo_never_reaches_the_cookbook(ddb_table, sent, monkeypatch):
+    _job()
+    monkeypatch.setattr(job_uploaded_http.food_check, "looks_like_food", lambda _key: False)
+
+    job_uploaded_http.run("job-1", _OWNER)
+
+    assert repository.list_jobs(_OWNER) == []
+    assert repository.get_job("job-1") is not None
