@@ -25,6 +25,7 @@ import datetime
 import uuid
 
 from shared import ddb
+from shared.models import FailureCode
 
 # Fields duplicated from the canonical job/result items onto the user's listing
 # projection. Kept as a named set so it is obvious what has to be maintained in
@@ -149,6 +150,10 @@ def _sync_projection(job: dict, changes: dict) -> None:
     projected = {k: v for k, v in changes.items() if k in PROJECTED_FIELDS}
     if not projected:
         return
+    # A not-food job has had its listing item removed (remove_from_cookbook). UpdateItem
+    # would recreate it as a partial row, so a later status write must not touch it.
+    if job.get("failure_code") == FailureCode.NOT_FOOD:
+        return
     ddb.update(
         ddb.user_pk(job["user_id"]),
         ddb.job_index_sk(job["created_at"], job["job_id"]),
@@ -171,6 +176,20 @@ def update_job(job_id: str, **changes) -> dict | None:
     updated = ddb.update(ddb.job_pk(job_id), ddb.SK_META, changes)
     _sync_projection(job, changes)
     return ddb.strip_keys(updated) if updated else None
+
+
+def remove_from_cookbook(job_id: str) -> None:
+    """Drop a job's cookbook listing item, keeping the job itself.
+
+    For not-food photos: a picture of the cat is not a dish, so it should never sit in
+    the cookbook as a failed card. The job item stays so GET /api/jobs/{jobId} can
+    still show the "that doesn't look like food" screen; the photo expires with the
+    uploads bucket's lifecycle rule.
+    """
+    job = get_job(job_id)
+    if job is None:
+        return
+    ddb.delete(ddb.user_pk(job["user_id"]), ddb.job_index_sk(job["created_at"], job_id))
 
 
 def delete_job(job_id: str) -> bool:

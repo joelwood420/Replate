@@ -96,7 +96,9 @@ The pipeline runs in two stages, and `status` says which one a job is in:
   be retried.
 - `"failure_code"` is present on some `Failed` jobs so the client can pick its copy without
   parsing `error_message`. Today the only value is `"not_food"`: the photo is not a dish,
-  caught either by the upload-time pre-check or by the vision step.
+  caught either by the upload-time pre-check or by the vision step. A `not_food` job is
+  left out of `GET /jobs` (it is not a dish, so it has no cookbook entry) but can still be
+  read here by id.
 - `"result"` is present from `Identified` onward — **not** only when `Completed` — so the
   client can show the dish, restaurant and confidence badge before any recipe exists.
   `result.elements` is an empty array until stage 2 has run.

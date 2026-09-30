@@ -13,7 +13,7 @@ Identified so the user can retry generation without losing the menu match.
 """
 
 from shared import repository
-from shared.models import JobStatus
+from shared.models import FailureCode, JobStatus
 
 # Step Functions wraps a failed task's Cause in a long message including the full
 # remote stack trace. DynamoDB items cap at 400 KB, so this is no longer a column
@@ -75,6 +75,10 @@ def run_mark_failed(activity_input: dict) -> None:
     if activity_input.get("failure_code"):
         changes["failure_code"] = activity_input["failure_code"]
     repository.update_job(activity_input["job_id"], **changes)
+    # Not a dish, so not a cookbook entry: the diner never wants a cat photo listed as a
+    # failed scan (see repository.remove_from_cookbook).
+    if changes.get("failure_code") == FailureCode.NOT_FOOD:
+        repository.remove_from_cookbook(activity_input["job_id"])
 
 
 def run_mark_recipe_failed(activity_input: dict) -> None:
