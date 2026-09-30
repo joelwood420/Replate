@@ -110,15 +110,15 @@ def anthropic_api_key_param() -> str:
 def anthropic_menu_model() -> str:
     # The menu path no longer uses web_search - SerpApi finds the menu URL and this model
     # only extracts the fetched page (docs/decisions.md). It must be vision-capable, since a
-    # menu is often fetched as a PDF or an image; claude-sonnet-5 is.
-    return os.environ.get("ANTHROPIC_MENU_MODEL", "claude-sonnet-5")
+    # menu is often fetched as a PDF or an image; claude-sonnet-5-5 is.
+    return os.environ.get("ANTHROPIC_MENU_MODEL", "claude-sonnet-5-5")
 
 
 def anthropic_match_model() -> str:
     # Model for the menu-match classifier (activities/match_menu_item.py). A short structured
     # call, so effort is kept low; it must support output_config effort (Sonnet/Opus, not
     # Haiku 4.5). Blank or a missing key falls back to the local difflib matcher.
-    return os.environ.get("ANTHROPIC_MATCH_MODEL", "claude-sonnet-5")
+    return os.environ.get("ANTHROPIC_MATCH_MODEL", "claude-sonnet-5-5")
 
 
 def anthropic_vision_model() -> str:

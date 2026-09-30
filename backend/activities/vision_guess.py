@@ -10,7 +10,7 @@ restaurant's real fetched menu in match_menu_item (the anti-hallucination spine)
 so this call is prompted to give its best visual read rather than to be
 authoritative - a wrong name here is corrected downstream by the menu match. It is
 the frequent, at-the-table stage-1 call, so it runs at low effort on a mid-tier
-model (claude-sonnet-5).
+model (claude-sonnet-5-5).
 
 A blank ANTHROPIC_VISION_MODEL (or missing key) degrades to the canned stub,
 matching generate_recreation's posture - local runs and the smoke test work

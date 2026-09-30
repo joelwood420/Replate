@@ -19,12 +19,12 @@ region = "ap-southeast-2"
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = true
 resolve_s3 = true
-# Vision, menu, and generator all run real claude-sonnet-5 calls against the
+# Vision, menu, and generator all run real claude-sonnet-5-5 calls against the
 # ANTHROPIC_API_KEY held in SSM. Moderation stays off deliberately: the non-food
 # vision gate (is_food) covers relevance, but it is not a safety classifier and it
 # runs at the model rather than before it. BEFORE opening uploads to the public,
 # turn ModerationEnabled back on (ideally gating before the vision call).
-parameter_overrides = "AnthropicApiKeyParam=\"/replate/anthropic-api-key\" AnthropicMenuModel=\"claude-sonnet-5\" AnthropicVisionModel=\"claude-sonnet-5\" AnthropicGeneratorModel=\"claude-sonnet-5\" ModerationEnabled=\"false\" RateLimitEnabled=\"true\" LocalDevOrigin=\"http://localhost:5173\" LogRetentionDays=\"14\" UploadRetentionDays=\"7\""
+parameter_overrides = "AnthropicApiKeyParam=\"/replate/anthropic-api-key\" AnthropicMenuModel=\"claude-sonnet-5-5\" AnthropicVisionModel=\"claude-sonnet-5-5\" AnthropicGeneratorModel=\"claude-sonnet-5-5\" ModerationEnabled=\"false\" RateLimitEnabled=\"true\" LocalDevOrigin=\"http://localhost:5173\" LogRetentionDays=\"14\" UploadRetentionDays=\"7\""
 s3_prefix = "replate"
 disable_rollback = true
 image_repositories = []

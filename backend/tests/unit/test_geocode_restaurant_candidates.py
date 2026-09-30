@@ -93,7 +93,7 @@ def test_persisting_twice_does_not_clobber_a_cached_menu(ddb_table):
 
 
 def test_claude_nearby_parses_web_search_json(monkeypatch):
-    monkeypatch.setattr(geocode.config, "anthropic_menu_model", lambda: "claude-sonnet-5")
+    monkeypatch.setattr(geocode.config, "anthropic_menu_model", lambda: "claude-sonnet-5-5")
     monkeypatch.setattr(anthropic_client, "is_configured", lambda: True)
     monkeypatch.setattr(
         anthropic_client,
