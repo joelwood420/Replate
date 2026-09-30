@@ -97,7 +97,8 @@
       "Resource": "${MarkJobFailedFunctionArn}",
       "Parameters": {
         "job_id.$": "$.job_id",
-        "error_message.$": "$.vision.not_food_reason"
+        "error_message.$": "$.vision.not_food_reason",
+        "failure_code": "not_food"
       },
       "ResultPath": null,
       "End": true

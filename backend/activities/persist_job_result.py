@@ -67,11 +67,14 @@ def run_recipe(activity_input: dict) -> None:
 
 
 def run_mark_failed(activity_input: dict) -> None:
-    repository.update_job(
-        activity_input["job_id"],
-        status=JobStatus.FAILED,
-        error_message=_truncate_error(activity_input.get("error_message")),
-    )
+    changes = {
+        "status": JobStatus.FAILED,
+        "error_message": _truncate_error(activity_input.get("error_message")),
+    }
+    # Only the MarkJobNotFood state passes one today; the catch-all path has no code.
+    if activity_input.get("failure_code"):
+        changes["failure_code"] = activity_input["failure_code"]
+    repository.update_job(activity_input["job_id"], **changes)
 
 
 def run_mark_recipe_failed(activity_input: dict) -> None:

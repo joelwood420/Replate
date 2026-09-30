@@ -8,11 +8,15 @@ moderation reads it, and so will the real vision call.
 
 Splitting the two also means an abandoned upload costs nothing: the job simply stays
 Queued and no orchestration is ever started.
+
+It is also where the fast food pre-check runs (shared/food_check.py): a photo that is
+clearly not food is marked Failed right here, in about a second, instead of after the
+full pipeline's vision call - so the diner hears about it before the phone goes away.
 """
 
-from shared import http, queue, repository
+from shared import food_check, http, queue, repository
 from shared.auth import get_user_oid
-from shared.models import JobStatus
+from shared.models import NOT_FOOD_MESSAGE, FailureCode, JobStatus
 
 
 def run(job_id: str, user_oid: str) -> dict:
@@ -27,6 +31,25 @@ def run(job_id: str, user_oid: str) -> dict:
         return {
             "status_code": 409,
             "body": {"error": f"Job is already {job['status']} - its photo was already submitted"},
+        }
+
+    # Only a definite False blocks. None (disabled, unsure, or a service error) falls
+    # through to the pipeline, whose vision step still makes the final is_food call.
+    if food_check.looks_like_food(job["image_key"]) is False:
+        repository.update_job(
+            job_id,
+            status=JobStatus.FAILED,
+            error_message=NOT_FOOD_MESSAGE,
+            failure_code=FailureCode.NOT_FOOD,
+        )
+        return {
+            "status_code": 200,
+            "body": {
+                "job_id": job_id,
+                "status": JobStatus.FAILED,
+                "failure_code": FailureCode.NOT_FOOD,
+                "error_message": NOT_FOOD_MESSAGE,
+            },
         }
 
     # The status check above is not atomic with this send, so two simultaneous calls

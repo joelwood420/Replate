@@ -85,7 +85,13 @@ export function UploadScreen() {
       const { job_id: jobId, upload_url: uploadUrl } = await createJob(input, authHeaders);
       await uploadPhotoToBlob(uploadUrl, photo);
       // Only now is the photo actually there for the pipeline to read.
-      await markUploadComplete(jobId, authHeaders);
+      const uploaded = await markUploadComplete(jobId, authHeaders);
+      // The food pre-check answers in about a second. Show a non-food photo right now,
+      // while the diner still has the phone out and the plate in front of them.
+      if (uploaded.failure_code === 'not_food') {
+        navigate(`/jobs/${jobId}`, { replace: true });
+        return;
+      }
       // Land in the cookbook, where the dish is already saved and processes in place, rather
       // than on a dedicated processing screen. Replace so Back doesn't return to the upload form.
       navigate('/cookbook', { replace: true });

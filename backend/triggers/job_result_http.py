@@ -51,6 +51,8 @@ def run(job_id: str, user_oid: str) -> dict:
     # being Failed.
     if job.get("error_message"):
         response_body["error_message"] = job["error_message"]
+    if job.get("failure_code"):
+        response_body["failure_code"] = job["failure_code"]
     # `result` exists from stage 1 onward, not just when a recipe has been
     # generated, so the frontend can show the dish, restaurant and confidence
     # badge while `result.elements` is still empty.

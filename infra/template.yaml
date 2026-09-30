@@ -263,6 +263,17 @@ Resources:
             TableName: !Ref Table
         - SQSSendMessagePolicy:
             QueueName: !GetAtt JobQueue.QueueName
+        # The food pre-check (shared/food_check.py). Rekognition reads the photo straight
+        # from S3 using this role, so it needs read on the uploads bucket too.
+        - S3ReadPolicy:
+            BucketName: !Ref UploadsBucket
+        - Statement:
+            - Effect: Allow
+              Action: [rekognition:DetectLabels]
+              Resource: "*"
+      Environment:
+        Variables:
+          FOOD_CHECK_ENABLED: "true"
       Events:
         Api:
           Type: HttpApi

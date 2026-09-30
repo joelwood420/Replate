@@ -54,6 +54,14 @@ No body.
 
 **202 response:** `{ "job_id": "...", "status": "Queued" }`
 
+**200 response (not food):** `{ "job_id": "...", "status": "Failed", "failure_code": "not_food", "error_message": "..." }`
+
+Before queuing, a fast food pre-check (Rekognition `DetectLabels`, about a second) looks at
+the photo. If it finds nothing food-like at all, the job is marked `Failed` with
+`failure_code: "not_food"` right here and is never queued, so the app can tell the diner
+while they still have the plate in front of them. An uncertain or failed check falls through
+to the 202 path, and the vision step still makes the final food call.
+
 **409** if the job is past `Queued` — its photo was already submitted. Makes the call safe to
 retry.
 
@@ -86,6 +94,9 @@ The pipeline runs in two stages, and `status` says which one a job is in:
 - `"error_message"` is present whenever the job has one. On a `Failed` job that's why it
   failed; on an `Identified` job it means a previous reverse-engineer attempt failed and can
   be retried.
+- `"failure_code"` is present on some `Failed` jobs so the client can pick its copy without
+  parsing `error_message`. Today the only value is `"not_food"`: the photo is not a dish,
+  caught either by the upload-time pre-check or by the vision step.
 - `"result"` is present from `Identified` onward — **not** only when `Completed` — so the
   client can show the dish, restaurant and confidence badge before any recipe exists.
   `result.elements` is an empty array until stage 2 has run.
