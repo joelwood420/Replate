@@ -22,6 +22,7 @@ import copy
 import hashlib
 
 from shared import anthropic_client, config, storage
+from shared.models import NOT_FOOD_MESSAGE
 
 # Anthropic accepts these image media types; anything else (or a missing
 # ContentType on the S3 object) falls back to JPEG, which the uploads are.
@@ -47,11 +48,8 @@ _USER_TEXT = (
 )
 
 # Shown to the user (as the job's error_message) when the photo is not a dish and the model
-# did not supply its own reason. Kept light: a wrong photo is a mistake, not a failure.
-_NOT_FOOD_MESSAGE = (
-    "Our chef squinted at that one and could not find any food. "
-    "Try again with a photo of your plate."
-)
+# did not supply its own reason. Shared with the upload-time food pre-check.
+_NOT_FOOD_MESSAGE = NOT_FOOD_MESSAGE
 
 # Structured-output schema. Mirrors the stub's shape exactly, because match_menu_item
 # reads `dish_name_guess`, each element's `description`, and averages the per-element

@@ -172,6 +172,25 @@ def test_mark_job_failed_sets_status_and_error_message(ddb_table):
     assert job["error_message"] == "boom"
 
 
+def test_mark_job_failed_records_a_failure_code_when_given(ddb_table):
+    """The vision step's not-food outcome passes a code so the app can show its own copy."""
+    _job()
+
+    persist_job_result.run_mark_failed(
+        {"job_id": "job-123", "error_message": "That is a cat.", "failure_code": "not_food"}
+    )
+
+    assert repository.get_job("job-123")["failure_code"] == "not_food"
+
+
+def test_mark_job_failed_without_a_code_leaves_none(ddb_table):
+    _job()
+
+    persist_job_result.run_mark_failed({"job_id": "job-123", "error_message": "boom"})
+
+    assert "failure_code" not in repository.get_job("job-123")
+
+
 def test_error_messages_are_truncated(ddb_table):
     """Step Functions wraps a failed task's Cause with the full remote stack trace.
 

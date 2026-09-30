@@ -10,6 +10,35 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-10-01: A fast Rekognition food pre-check runs at upload time, before the job is queued
+
+**Decision:** `POST /jobs/{jobId}/uploaded` now calls Rekognition `DetectLabels` on the photo
+before enqueuing. If it finds nothing food-like, the job is marked `Failed` with
+`failure_code: "not_food"` and the response says so straight away; the app shows a friendly
+"that doesn't look like food" screen instead of going to the cookbook. Anything uncertain,
+and every service error, falls through to the pipeline, where the vision step's `is_food` gate
+(2026-09-01) still makes the final call.
+
+**Why:** the intended use is to snap the dish in the restaurant and put the phone away. If the
+photo is unusable, the diner has to find out in that moment, while the plate is still in front
+of them; learning it at home, after the meal is eaten, means the dish can never be scanned.
+The vision gate answers only after the queue, the Step Functions start and a roughly 10 second
+Claude call, by which time the phone is away. A synchronous label check answers in about a
+second.
+
+**Alternatives considered:** a hand-written Python image heuristic (colours, shapes) is too
+easily fooled; a self-hosted classifier (MobileNet/CLIP) needs a container-image Lambda with
+multi-second cold starts, which defeats the point; a tiny Claude Haiku call would take 1-2s; an
+in-browser TensorFlow.js model is instant but adds megabytes of download and is less accurate.
+Rekognition is already in the stack for moderation and authenticates by IAM, so it adds no key
+and no model to maintain.
+
+**Cost:** one `DetectLabels` call per scan. Rekognition's free tier for image analysis is a
+12-month grant, not always-free; after it, the per-image rate applies. Re-verify both against
+the current AWS pricing page.
+
+---
+
 ## 2026-09-01: The vision food gate runs before restaurant lookup and menu fetch, not in parallel
 
 **Decision:** `dish-identify` no longer fans the vision guess out in a `Parallel` state alongside

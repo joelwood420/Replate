@@ -144,6 +144,21 @@ export function JobScreen() {
     return <ProcessingShell />;
   }
 
+  if (job.status === 'Failed' && job.failure_code === 'not_food') {
+    return (
+      <ErrorState
+        tone="moderation"
+        title="That doesn't look like food"
+        message={
+          job.error_message ??
+          'Our chef squinted at that one and could not find any food. Try again with a photo of your plate.'
+        }
+        primaryAction={{ label: 'Take another photo', onClick: () => navigate('/capture', { replace: true }) }}
+        secondaryAction={{ label: 'Back to home', onClick: () => navigate('/home', { replace: true }) }}
+      />
+    );
+  }
+
   if (job.status === 'Failed') {
     const moderation = isModerationRejection(job.error_message);
     return (

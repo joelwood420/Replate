@@ -45,7 +45,13 @@ export function CaptureScreen() {
       const { job_id: jobId, upload_url: uploadUrl } = await createJob(input, authHeaders);
       await uploadPhotoToBlob(uploadUrl, photo);
       // Only now is the photo actually there for the pipeline to read.
-      await markUploadComplete(jobId, authHeaders);
+      const uploaded = await markUploadComplete(jobId, authHeaders);
+      // The food pre-check answers in about a second. Show a non-food photo right now,
+      // while the diner still has the phone out and the plate in front of them.
+      if (uploaded.failure_code === 'not_food') {
+        navigate(`/jobs/${jobId}`, { replace: true });
+        return;
+      }
       // Land in the cookbook, where the dish is already saved and processes in place. This
       // avoids the "sit and wait" feeling of a dedicated processing screen: the scan is
       // captured, it's in your cookbook, you can put your phone away. Replace so Back from

@@ -145,3 +145,12 @@ def test_no_error_message_key_when_there_is_no_error(ddb_table):
     _job()
 
     assert "error_message" not in job_result_http.run("job-1", "owner-oid")["body"]
+
+
+def test_surfaces_the_failure_code_on_a_failed_job(ddb_table):
+    _job(status=JobStatus.FAILED)
+    repository.update_job("job-1", error_message="no food here", failure_code="not_food")
+
+    body = job_result_http.run("job-1", "owner-oid")["body"]
+
+    assert body["failure_code"] == "not_food"

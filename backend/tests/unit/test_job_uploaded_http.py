@@ -1,7 +1,7 @@
 import pytest
 
 from shared import repository
-from shared.models import JobStatus
+from shared.models import NOT_FOOD_MESSAGE, FailureCode, JobStatus
 from triggers import job_uploaded_http
 
 _OWNER = "11111111-1111-1111-1111-111111111111"
@@ -61,3 +61,45 @@ def test_does_not_requeue_a_finished_job(ddb_table, sent):
 
     assert job_uploaded_http.run("job-1", _OWNER)["status_code"] == 409
     assert sent == []
+
+
+# --- the food pre-check ------------------------------------------------------
+# A photo that is clearly not food is answered right here, in about a second, so the
+# diner hears about it before the phone goes away. Anything short of a definite "no"
+# goes to the pipeline as before.
+
+
+def test_a_non_food_photo_fails_straight_away_and_is_never_queued(ddb_table, sent, monkeypatch):
+    _job()
+    monkeypatch.setattr(job_uploaded_http.food_check, "looks_like_food", lambda _key: False)
+
+    outcome = job_uploaded_http.run("job-1", _OWNER)
+
+    assert outcome["status_code"] == 200
+    assert outcome["body"]["status"] == JobStatus.FAILED
+    assert outcome["body"]["failure_code"] == FailureCode.NOT_FOOD
+    assert outcome["body"]["error_message"] == NOT_FOOD_MESSAGE
+    assert sent == []
+    job = repository.get_job("job-1")
+    assert job["status"] == JobStatus.FAILED
+    assert job["failure_code"] == FailureCode.NOT_FOOD
+
+
+@pytest.mark.parametrize("verdict", [True, None])
+def test_food_or_an_unsure_check_still_queues_the_job(ddb_table, sent, monkeypatch, verdict):
+    _job()
+    monkeypatch.setattr(job_uploaded_http.food_check, "looks_like_food", lambda _key: verdict)
+
+    outcome = job_uploaded_http.run("job-1", _OWNER)
+
+    assert outcome["status_code"] == 202
+    assert sent == ["job-1"]
+
+
+def test_the_food_check_is_not_run_for_a_job_that_cannot_start(ddb_table, sent, monkeypatch):
+    _job(status=JobStatus.PROCESSING)
+    monkeypatch.setattr(
+        job_uploaded_http.food_check, "looks_like_food", lambda _key: pytest.fail("should not run")
+    )
+
+    assert job_uploaded_http.run("job-1", _OWNER)["status_code"] == 409

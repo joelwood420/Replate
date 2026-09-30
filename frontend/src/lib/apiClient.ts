@@ -73,6 +73,8 @@ export interface JobResult {
   elements: DishElement[];
 }
 
+export type FailureCode = 'not_food';
+
 export interface JobDetail {
   job_id: string;
   status: JobStatusValue;
@@ -80,6 +82,9 @@ export interface JobDetail {
   is_saved: boolean;
   created_at: string | null;
   error_message?: string;
+  /** Set on some `Failed` jobs so the app can pick its copy without sniffing
+   *  error_message. Mirrors backend shared/models.FailureCode. */
+  failure_code?: FailureCode;
   result?: JobResult;
 }
 
@@ -160,10 +165,19 @@ export async function uploadPhotoToBlob(uploadUrl: string, file: Blob): Promise<
  * itself, because at that point the blob it names does not exist yet and the
  * orchestrator would race the PUT above.
  */
+export interface UploadCompleteResponse {
+  job_id: string;
+  status: JobStatusValue;
+  /** Present when the upload-time food pre-check rejected the photo. The job is already
+   *  `Failed` and was never queued. */
+  failure_code?: FailureCode;
+  error_message?: string;
+}
+
 export function markUploadComplete(
   jobId: string,
   authHeaders: AuthHeaders,
-): Promise<{ job_id: string; status: JobStatusValue }> {
+): Promise<UploadCompleteResponse> {
   return request(`/jobs/${jobId}/uploaded`, { method: 'POST' }, authHeaders);
 }
 

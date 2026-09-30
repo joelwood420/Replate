@@ -8,6 +8,11 @@
       "enum": ["Queued", "Processing", "Identified", "Generating", "Completed", "Failed", "Cancelled"],
       "description": "The pipeline runs in two stages. Queued/Processing = stage 1 (identify restaurant, fetch menu, vision guess, menu match). Identified = stage 1 done: the dish is auto-saved to the cookbook with a match and confidence outcome, but has no recipe - a terminal state until the user asks for one. Generating = stage 2 (recipe generation) running after POST /jobs/{jobId}/reverse-engineer. Completed = recipe available. Failed means stage 1 failed; a stage-2 failure reverts to Identified instead. Cancelled means the user aborted an in-flight scan via POST /jobs/{jobId}/cancel to stop model spend - a normal terminal state, kept distinct from Failed."
     },
+    "FailureCode": {
+      "type": "string",
+      "enum": ["not_food"],
+      "description": "Why a Failed job failed, when the client needs to tell cases apart. not_food = the photo is not a dish, caught by the upload-time food pre-check or by the vision step's is_food gate. Mirrors backend shared/models.FailureCode."
+    },
     "RestaurantCandidate": {
       "type": "object",
       "properties": {
@@ -195,6 +200,18 @@
           "required": ["job_id", "status"],
           "additionalProperties": false
         },
+        "200": {
+          "description": "The upload-time food pre-check (Rekognition DetectLabels) found nothing food-like in the photo. The job is already \"Failed\" and was never queued. Any uncertain or failed check falls through to the 202 path instead.",
+          "type": "object",
+          "properties": {
+            "job_id": { "type": "string", "format": "uuid" },
+            "status": { "type": "string", "const": "Failed" },
+            "failure_code": { "$ref": "#/$defs/FailureCode" },
+            "error_message": { "type": "string" }
+          },
+          "required": ["job_id", "status", "failure_code", "error_message"],
+          "additionalProperties": false
+        },
         "403": { "$ref": "#/$defs/ErrorResponse" },
         "404": { "$ref": "#/$defs/ErrorResponse" },
         "409": {
@@ -222,6 +239,10 @@
             "error_message": {
               "type": "string",
               "description": "Present whenever the job has one. On a \"Failed\" job, why stage 1 failed. On an \"Identified\" job, why a previous reverse-engineer attempt failed - the action stays retryable."
+            },
+            "failure_code": {
+              "allOf": [{ "$ref": "#/$defs/FailureCode" }],
+              "description": "Present on some \"Failed\" jobs so the client can choose its copy without parsing error_message."
             },
             "result": {
               "allOf": [{ "$ref": "#/$defs/JobResult" }],

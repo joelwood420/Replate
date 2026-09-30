@@ -47,6 +47,27 @@ class JobStatus:
     CANCELLED = "Cancelled"
 
 
+class FailureCode:
+    """Why a Failed job failed, when the frontend needs to tell cases apart.
+
+    Stored as the job's `failure_code` and returned by GET /api/jobs/{jobId}, so the app
+    can pick its copy from a stable code instead of sniffing error_message text. Must be
+    mirrored in frontend/src/lib/apiClient.ts and docs/payload-schemas.json.
+    """
+
+    #: The photo is not a dish: caught by the upload-time Rekognition pre-check or by
+    #: the vision step's is_food gate. A wrong photo, not an error.
+    NOT_FOOD = "not_food"
+
+
+#: Shown when a photo is not a dish and nothing more specific is available. Kept light:
+#: snapping the wrong thing is a mistake, not a failure.
+NOT_FOOD_MESSAGE = (
+    "Our chef squinted at that one and could not find any food. "
+    "Try again with a photo of your plate."
+)
+
+
 def candidate_envelope(candidates: list[dict]) -> dict:
     """Shape a candidate list for the state machine.
 

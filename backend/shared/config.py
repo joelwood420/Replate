@@ -248,3 +248,17 @@ def moderation_min_confidence() -> float:
 
 def moderation_max_retries() -> int:
     return int(os.environ.get("MODERATION_MAX_RETRIES", "2"))
+
+
+def food_check_enabled() -> bool:
+    # Off by default locally, like moderation: Rekognition is a real AWS call. The
+    # template turns it on in prod. Off means every photo goes to the pipeline and the
+    # vision step's own is_food check decides, exactly as before the pre-check existed.
+    return os.environ.get("FOOD_CHECK_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+
+
+def food_check_min_confidence() -> float:
+    # Deliberately low. The pre-check only blocks a photo when Rekognition sees nothing
+    # food-like at all; a real dish wrongly blocked costs the diner their only chance to
+    # scan it, so any faint food signal lets the photo through to the vision check.
+    return float(os.environ.get("FOOD_CHECK_MIN_CONFIDENCE", "50"))
