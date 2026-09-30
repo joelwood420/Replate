@@ -149,10 +149,9 @@ export function JobScreen() {
       <ErrorState
         tone="moderation"
         title="That doesn't look like food"
-        message={
-          job.error_message ??
-          'Our chef squinted at that one and could not find any food. Try again with a photo of your plate.'
-        }
+        // The backend always sends its own wording (shared/models.NOT_FOOD_MESSAGE or the
+        // vision model's reason); this fallback only covers a job missing one.
+        message={job.error_message ?? 'Try again with a photo of your plate.'}
         primaryAction={{ label: 'Take another photo', onClick: () => navigate('/capture', { replace: true }) }}
         secondaryAction={{ label: 'Back to home', onClick: () => navigate('/home', { replace: true }) }}
       />

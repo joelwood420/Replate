@@ -1,5 +1,6 @@
 ﻿from activities import vision_guess
 from shared import anthropic_client, config, storage
+from shared.models import NOT_FOOD_MESSAGE
 
 
 def test_returns_stub_output_matching_expected_shape():
@@ -96,7 +97,7 @@ def test_non_food_photo_flags_is_food_false_with_a_friendly_reason(monkeypatch):
     result = vision_guess.run({"image_key": "uploads/a-cat.jpg"})
 
     assert result["is_food"] is False
-    assert result["not_food_reason"] == vision_guess._NOT_FOOD_MESSAGE
+    assert result["not_food_reason"] == NOT_FOOD_MESSAGE
 
 
 def test_non_food_reason_from_model_is_kept(monkeypatch):

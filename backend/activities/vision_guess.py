@@ -47,9 +47,6 @@ _USER_TEXT = (
     "component with a short description and a 0-1 presence confidence."
 )
 
-# Shown to the user (as the job's error_message) when the photo is not a dish and the model
-# did not supply its own reason. Shared with the upload-time food pre-check.
-_NOT_FOOD_MESSAGE = NOT_FOOD_MESSAGE
 
 # Structured-output schema. Mirrors the stub's shape exactly, because match_menu_item
 # reads `dish_name_guess`, each element's `description`, and averages the per-element
@@ -154,7 +151,7 @@ def _normalize(data: dict) -> dict:
     is_food = bool(data.get("is_food", True))
     reason = (data.get("not_food_reason") or "").strip()
     if not is_food and not reason:
-        reason = _NOT_FOOD_MESSAGE
+        reason = NOT_FOOD_MESSAGE
 
     elements = []
     for element in data.get("elements") or []:
