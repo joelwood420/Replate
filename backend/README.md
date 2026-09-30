@@ -169,7 +169,7 @@ ones that are easy to get wrong:
 | `MODERATION_ENABLED` | `false` locally. There is no key to omit any more — Rekognition uses IAM |
 | `MODERATION_MIN_CONFIDENCE` | 0–100, not Azure's 0/2/4/6. Default 80, deliberately high |
 | `ANTHROPIC_API_KEY` | The one stored credential the model calls introduce; everything else is IAM. Blank locally |
-| `ANTHROPIC_MENU_MODEL` | Must support the `web_search_20260209` tool (Sonnet 4.6+/Opus 4.6+). Default `claude-sonnet-5` |
+| `ANTHROPIC_MENU_MODEL` | Must support the `web_search_20260209` tool (Sonnet 4.6+/Opus 4.6+). Default `claude-sonnet-5-5` |
 | `COGNITO_ENABLED` | `true` raises `NotImplementedError` until Phase 3 |
 
 ## Notes for future work

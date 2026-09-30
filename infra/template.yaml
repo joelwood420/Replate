@@ -18,11 +18,11 @@ Parameters:
       model calls degrade to the no-key stub path.
   AnthropicMenuModel:
     Type: String
-    Default: "claude-sonnet-5"
+    Default: "claude-sonnet-5-5"
     Description: >
       Anthropic model id for menu extraction. Menu fetch no longer uses web_search - SerpApi
       finds the menu URL and this model only extracts the fetched page, so it must be
-      vision-capable (a menu is often a PDF or image). claude-sonnet-5 is. The ANTHROPIC_API_KEY
+      vision-capable (a menu is often a PDF or image). claude-sonnet-5-5 is. The ANTHROPIC_API_KEY
       it needs is read from SSM; blank key = stubbed (menu fetch degrades to vision-only).
   SerpApiKeyParam:
     Type: String
@@ -34,7 +34,7 @@ Parameters:
       If the parameter is absent, menu discovery falls back to the OSM website hint only.
   AnthropicMatchModel:
     Type: String
-    Default: "claude-sonnet-5"
+    Default: "claude-sonnet-5-5"
     Description: >
       Anthropic model id for the menu-match classifier (activities/match_menu_item.py). A
       short structured call; must support output_config effort (Sonnet/Opus, not Haiku 4.5).
@@ -573,7 +573,7 @@ Resources:
     Properties:
       FunctionName: !Sub "${AWS::StackName}-generate-recreation"
       Handler: activities.generate_recreation.handler
-      # The real recipe call (claude-sonnet-5, structured output) can run well past
+      # The real recipe call (claude-sonnet-5-5, structured output) can run well past
       # the 30s global default and the old 120s - the state machine allows this task
       # up to 300s (statemachines/dish-recipe.asl.json), so give the Lambda 240 and
       # keep the client timeout (ANTHROPIC_TIMEOUT_SECONDS) below it.

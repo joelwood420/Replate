@@ -40,7 +40,7 @@ def test_calls_model_with_image_and_normalizes_when_configured(monkeypatch):
     """With a model + key configured, the photo is sent as an image block and the
     result is coerced to the fixed shape with confidences clamped to 0-1."""
     captured = {}
-    monkeypatch.setattr(config, "anthropic_vision_model", lambda: "claude-sonnet-5")
+    monkeypatch.setattr(config, "anthropic_vision_model", lambda: "claude-sonnet-5-5")
     monkeypatch.setattr(anthropic_client, "is_configured", lambda: True)
     monkeypatch.setattr(storage, "read_object", lambda key: (b"\xff\xd8fakejpeg", "image/jpeg"))
 
@@ -62,7 +62,7 @@ def test_calls_model_with_image_and_normalizes_when_configured(monkeypatch):
     assert content[0]["source"]["type"] == "base64"
     assert content[0]["source"]["media_type"] == "image/jpeg"
     assert content[1]["type"] == "text"
-    assert captured["model"] == "claude-sonnet-5"
+    assert captured["model"] == "claude-sonnet-5-5"
     assert result["elements"][0]["confidence"] == 1.0
     assert result["is_food"] is True
     assert set(result.keys()) == {
@@ -78,7 +78,7 @@ def test_calls_model_with_image_and_normalizes_when_configured(monkeypatch):
 def test_non_food_photo_flags_is_food_false_with_a_friendly_reason(monkeypatch):
     """A non-food image comes back is_food=False, and a blank reason from the model is
     backfilled with the friendly default (the state machine shows it to the user)."""
-    monkeypatch.setattr(config, "anthropic_vision_model", lambda: "claude-sonnet-5")
+    monkeypatch.setattr(config, "anthropic_vision_model", lambda: "claude-sonnet-5-5")
     monkeypatch.setattr(anthropic_client, "is_configured", lambda: True)
     monkeypatch.setattr(storage, "read_object", lambda key: (b"notfood", "image/jpeg"))
     monkeypatch.setattr(
@@ -100,7 +100,7 @@ def test_non_food_photo_flags_is_food_false_with_a_friendly_reason(monkeypatch):
 
 
 def test_non_food_reason_from_model_is_kept(monkeypatch):
-    monkeypatch.setattr(config, "anthropic_vision_model", lambda: "claude-sonnet-5")
+    monkeypatch.setattr(config, "anthropic_vision_model", lambda: "claude-sonnet-5-5")
     monkeypatch.setattr(anthropic_client, "is_configured", lambda: True)
     monkeypatch.setattr(storage, "read_object", lambda key: (b"notfood", "image/jpeg"))
     monkeypatch.setattr(
@@ -122,7 +122,7 @@ def test_non_food_reason_from_model_is_kept(monkeypatch):
 
 
 def test_unsupported_content_type_falls_back_to_jpeg(monkeypatch):
-    monkeypatch.setattr(config, "anthropic_vision_model", lambda: "claude-sonnet-5")
+    monkeypatch.setattr(config, "anthropic_vision_model", lambda: "claude-sonnet-5-5")
     monkeypatch.setattr(anthropic_client, "is_configured", lambda: True)
     monkeypatch.setattr(storage, "read_object", lambda key: (b"bytes", "application/octet-stream"))
     monkeypatch.setattr(
