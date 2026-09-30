@@ -221,7 +221,9 @@ def _extract_content(model: str, name: str, content: dict, timeout: float) -> li
             system=_EXTRACT_SYSTEM,
             messages=[{"role": "user", "content": _build_content(content)}],
             schema=_MENU_SCHEMA,
-            max_tokens=2048,
+            # 2048 truncated a full real menu mid-JSON (Baduzzi, 2026-10-01). Output
+            # is billed per token actually produced, so the headroom costs nothing.
+            max_tokens=8192,
             effort="low",
             timeout=timeout,
         )

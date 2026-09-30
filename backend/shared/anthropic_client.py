@@ -243,13 +243,20 @@ def generate_structured(
 
     if response.stop_reason == "refusal":
         raise AnthropicError("Anthropic declined the request (stop_reason=refusal)")
+    # A reply cut off at max_tokens is truncated JSON. Say so plainly rather than
+    # letting it surface as a confusing JSONDecodeError mid-document.
+    if response.stop_reason == "max_tokens":
+        raise AnthropicError(f"Anthropic reply hit max_tokens ({max_tokens}); JSON truncated")
 
     text = _collect_text(response.content)
     if not text:
         raise AnthropicError("Anthropic returned no text content")
     # output_config guarantees valid JSON, but parse_json_response also tolerates
     # a stray fence, costing nothing.
-    return parse_json_response(text)
+    try:
+        return parse_json_response(text)
+    except json.JSONDecodeError as exc:
+        raise AnthropicError(f"Anthropic returned invalid JSON: {exc}") from exc
 
 
 def parse_json_response(raw: str) -> dict:
