@@ -10,6 +10,41 @@ less than one that shows where the thinking changed.
 
 ---
 
+## 2026-11-21: The menu match tries Jev, a typed decision model, before the Claude classifier
+
+**Decision:** `match_menu_item` now asks TypeSafe's Jev first: one typed Choice question
+whose options are the menu items plus an explicit "none". The chosen option's probability
+goes into the existing `MENU_MATCH_CONFIDENCE_THRESHOLD` floor (2026-09-01), unchanged. If
+Jev is unconfigured, times out (5s), errors, or the menu has more than 254 items (Jev's
+Choice limit is 255 options), the Claude classifier runs as before, and difflib remains the
+last fallback. The model is pinned (`jev-1.14.0`), not `jev-latest`, because the floor is
+tuned against one version's probabilities. The key is the SSM SecureString
+`/replate/typesafe-api-key`, read the same way as the Anthropic and SerpApi keys.
+
+**Why:**
+- **Speed.** LLM latency is the app's biggest complaint, and Jev answers in roughly 100 ms
+  against a few seconds for a Claude call.
+- **Right tool for the job.** Matching is a pick-one-from-a-list decision with no text to
+  write, which is exactly what a decision model does. It also can only return an offered
+  option, so the anti-hallucination property holds by construction.
+- **Cost.** About $0.042 USD per million input tokens, with free output, against Sonnet
+  rates for the same call.
+
+**Context worth recording:**
+
+- Jev was considered for the other Claude calls and rejected: vision, menu extraction, the
+  restaurant-lookup fallback and recipe generation all have to write text or search the web,
+  which Jev cannot do. It was also considered for the food pre-check and rejected, because
+  its image input is still experimental and Rekognition is already about 1s and IAM-authed.
+- The saving is a few seconds per scan. The long poles (menu fetch, recipe generation) are
+  untouched, so this is one step, not the fix for overall latency.
+- Calls go straight to `api.typesafe.ai` with httpx (already in the layer) rather than the
+  `typesafe-sdk` package, to avoid adding a second vendor SDK for one JSON POST.
+- **Cost:** TypeSafe has no free tier; every call is billed per input token. Re-verify the
+  rate against TypeSafe's current pricing page.
+
+---
+
 ## 2026-10-01: A fast Rekognition food pre-check runs at upload time, before the job is queued
 
 **Decision:** `POST /jobs/{jobId}/uploaded` now calls Rekognition `DetectLabels` on the photo

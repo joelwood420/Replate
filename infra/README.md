@@ -241,6 +241,7 @@ failure paths).
   ```bash
   aws ssm put-parameter --name /replate/anthropic-api-key --type SecureString --value '<key>'
   aws ssm put-parameter --name /replate/serpapi-key       --type SecureString --value '<key>'
+  aws ssm put-parameter --name /replate/typesafe-api-key  --type SecureString --value '<key>'
   ```
   The execution roles already grant `ssm:GetParameter` on `/replate/*`; the code reads them at
   runtime instead of from the (empty) env vars. The default AWS-managed SSM key is used, so no
@@ -251,6 +252,10 @@ failure paths).
     searched once and reused, so raise `MENU_CACHE_TTL_HOURS` to stretch the free tier if a demo
     approaches it. If the parameter is absent, menu discovery falls back to the OSM `website`
     hint and otherwise degrades to the vision-only outcome.
+  - **`/replate/typesafe-api-key`** backs the Jev menu-match classifier
+    (`shared/typesafe_client.py`, docs/decisions.md 2026-11-21). TypeSafe has no free tier;
+    every call is billed per input token (re-verify current pricing). If the parameter is
+    absent, matching falls back to the Claude classifier.
 - **CI/CD** is done (Phase 4): see the "CI/CD (Phase 4)" section above. The one-time step is
   deploying `github-oidc.yaml` and setting the three Actions variables.
 - **Phase 5 testing** adds two manual, one-time steps: create the e2e demo Cognito user and set

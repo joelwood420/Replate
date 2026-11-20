@@ -19,7 +19,9 @@ part, and nobody needs it while they're still sitting at the table.
 
 > **Status:** live and real. Real Cognito auth, real AWS infrastructure, and real Anthropic
 > Claude calls (`claude-sonnet-5-5`) for both the vision identification and the "Reverse engineer"
-> recipe generation (the key is read from SSM Parameter Store at runtime). Deploys are automated:
+> recipe generation (the key is read from SSM Parameter Store at runtime). The menu match uses
+> TypeSafe's Jev, a typed decision model that picks the menu item in about 0.3s, with Claude as
+> its fallback. Deploys are automated:
 > merging to `main` runs GitHub Actions that `sam deploy` the stack and publish this site, and
 > every PR runs the backend + frontend test suites; the Playwright e2e suite is run manually.
 > The remaining work is Phase 6 (real technique embeddings — a pseudo-embedding stub for now)

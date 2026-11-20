@@ -124,6 +124,30 @@ def anthropic_match_model() -> str:
     return os.environ.get("ANTHROPIC_MATCH_MODEL", "claude-sonnet-5-5")
 
 
+def typesafe_api_key_param() -> str:
+    # SSM SecureString parameter name (e.g. /replate/typesafe-api-key). Set by the SAM
+    # template when deployed; blank locally, where typesafe_api_key() (the env var) is used.
+    return os.environ.get("TYPESAFE_API_KEY_PARAM", "").strip()
+
+
+def typesafe_api_key() -> str:
+    return os.environ.get("TYPESAFE_API_KEY", "")
+
+
+def typesafe_match_model() -> str:
+    # Jev model for the menu-match classifier, tried before the Claude classifier
+    # (docs/decisions.md, 2026-11-21). Pinned to a version rather than jev-latest because the
+    # MENU_MATCH_CONFIDENCE_THRESHOLD floor is tuned against one model's probabilities. Blank
+    # disables Jev and the Claude classifier runs as before.
+    return os.environ.get("TYPESAFE_MATCH_MODEL", "jev-1.14.0").strip()
+
+
+def typesafe_timeout_seconds() -> float:
+    # Jev usually answers in 70-500 ms. A short timeout keeps a slow call from eating the time
+    # the swap is meant to save; on timeout the Claude classifier takes over.
+    return float(os.environ.get("TYPESAFE_TIMEOUT_SECONDS", "5"))
+
+
 def anthropic_vision_model() -> str:
     # Placeholder for Phase 3b - vision_guess is still a stub.
     return os.environ.get("ANTHROPIC_VISION_MODEL", "")

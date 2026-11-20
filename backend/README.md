@@ -2,10 +2,11 @@
 
 Python backend for "Shazam for restaurant dishes", on **AWS Lambda + Step Functions**.
 
-The pipeline is structurally complete and runs locally. Every external integration that
-costs money is still stubbed or partial — the vision guess and the recipe generator return
-canned data, restaurant lookup is a stub, and embeddings are deterministic hashes rather
-than real vectors. Making those real is **Phase 3**; see the root [`CLAUDE.md`](../CLAUDE.md).
+The pipeline is live in prod with real model calls, and runs locally with no keys at all:
+each paid integration falls back to canned data or a cheaper path when its key or model is
+blank (see [What's real vs. stubbed](#whats-real-vs-stubbed)). The one stub left in prod is
+the technique embeddings, which are deterministic hashes until Phase 6; see the root
+[`CLAUDE.md`](../CLAUDE.md).
 
 > **Ported from Azure on 2026-08-14.** This was Azure Functions + Durable Functions +
 > Azure SQL. Nothing had been deployed, so the move cost no data and no downtime. See
@@ -49,13 +50,17 @@ python db/seed_embeddings.py        # seeds the culinary-technique vectors
 `AWS_ENDPOINT_URL` in `.env` is the only setting that differs between local and deployed;
 it must be **blank** in a real deployment or boto3 will try to reach LocalStack from Lambda.
 
-**Not local:** the Anthropic API, Rekognition and Cognito.
+**Not local:** the Anthropic API, the TypeSafe API, Rekognition and Cognito.
 
 - **Anthropic API** — model calls go to the first-party Anthropic API (an external HTTPS
-  service). Leave `ANTHROPIC_API_KEY` blank locally. Menu fetch then raises
-  `MenuExtractionError`, which the pipeline already degrades on (it becomes the vision-only
-  medium-confidence outcome), so the flow still works end to end. `ANTHROPIC_MENU_MODEL` must
-  support the `web_search_20260209` server tool (Sonnet 4.6+/Opus 4.6+).
+  service). Leave `ANTHROPIC_API_KEY` blank locally. The vision guess and recipe generator
+  then return canned data, and menu fetch raises `MenuExtractionError`, which the pipeline
+  degrades to the vision-only medium-confidence outcome, so the flow still works end to end.
+- **SerpApi** - finds the restaurant's menu URL before the page is fetched and extracted.
+  Leave `SERPAPI_KEY` blank locally and discovery falls back to the OSM `website` hint.
+- **TypeSafe API** - the menu match asks Jev, TypeSafe's decision model, to pick the menu
+  item first (docs/decisions.md, 2026-11-21). Leave `TYPESAFE_API_KEY` blank locally and the
+  match falls back to the Claude classifier, then difflib, so it still works with no keys.
 - **Rekognition** — `MODERATION_ENABLED=false` (the default) reports every photo as
   `unchecked` and lets it through, matching the documented fail-open rule. Set it to `true`
   with real AWS credentials to exercise the real thing; it reads straight from S3, so unlike
@@ -65,11 +70,11 @@ it must be **blank** in a real deployment or boto3 will try to reach LocalStack 
 ## Running the API
 
 ```bash
-sam local start-api      # once infra/template.yaml exists (Phase 3)
+cd ../infra
+sam build --use-container && sam local start-api
 ```
 
-Until the SAM template lands in Phase 3 there is no local HTTP server. Handlers can be
-driven directly in the meantime:
+Or drive a handler directly, with no SAM or Docker:
 
 ```bash
 python -c "
@@ -103,8 +108,10 @@ Every endpoint takes the caller's id from the `X-Debug-User-Oid` header while
 
 Two Step Functions state machines, defined in [`statemachines/`](statemachines/):
 
-- **`dish-identify.asl.json`** — runs automatically on upload. Moderate → (select or
-  geocode restaurant → fetch menu) ‖ vision guess → match → persist. Stops at `Identified`.
+- **`dish-identify.asl.json`** - runs automatically on upload. Moderate → vision guess (the
+  food gate: a non-food photo stops here) → select or geocode restaurant → fetch menu →
+  match → persist. Stops at `Identified`. The vision guess runs first, not in parallel, so a
+  non-food photo never pays for a menu fetch (docs/decisions.md, 2026-09-01).
 - **`dish-recipe.asl.json`** — runs only when the user presses "Reverse engineer".
   Retrieve technique embeddings → generate → persist. Ends at `Completed`.
 
@@ -143,18 +150,19 @@ Two LocalStack details worth knowing (both set in `docker-compose.yml`):
 
 ## What's real vs. stubbed
 
-| Step | State |
-|---|---|
-| Upload, presigned URLs, job lifecycle | **Real** |
-| Rate limiting (per-user, per-stage, TTL buckets) | **Real** |
-| Menu matching (the anti-hallucination check) | **Real** |
-| Menu fetch — find + extract via `web_search` | **Real**, needs `ANTHROPIC_API_KEY` |
-| Image moderation | **Real**, needs `MODERATION_ENABLED=true` + AWS credentials |
-| Vector retrieval | Real query, **pseudo-embeddings** (real provider TBD) |
-| Restaurant lookup from GPS | **Stub** (`CANNED_CANDIDATES`) |
-| Vision guess | **Stub** (`CANNED_GUESSES`) |
-| Recipe generation | **Stub** |
-| Auth | **Stub** (`X-Debug-User-Oid`) |
+| Step | Prod | Locally, with no keys |
+|---|---|---|
+| Upload, presigned URLs, job lifecycle | Real | Real (LocalStack) |
+| Rate limiting (per-user, per-stage, TTL buckets) | Real | Real (LocalStack) |
+| Food pre-check at upload | Real (Rekognition `DetectLabels`) | Skipped |
+| Image moderation | Off (`ModerationEnabled=false`) | Off |
+| Vision guess + food gate | Real (Claude) | Canned (`CANNED_GUESSES`) |
+| Restaurant lookup from GPS | Real (OSM Overpass, Claude `web_search` fallback) | Real (Overpass is key-less) |
+| Menu fetch | Real (SerpApi finds the URL, Claude extracts the page) | Degrades to vision-only |
+| Menu matching (the anti-hallucination check) | Real (Jev, then Claude, then difflib) | difflib |
+| Vector retrieval | Real query, **pseudo-embeddings** (Phase 6) | Same |
+| Recipe generation | Real (Claude) | Canned |
+| Auth | Real (Cognito JWT, validated by API Gateway) | Stub (`X-Debug-User-Oid`) |
 
 ## Environment variables
 
@@ -169,8 +177,11 @@ ones that are easy to get wrong:
 | `MODERATION_ENABLED` | `false` locally. There is no key to omit any more — Rekognition uses IAM |
 | `MODERATION_MIN_CONFIDENCE` | 0–100, not Azure's 0/2/4/6. Default 80, deliberately high |
 | `ANTHROPIC_API_KEY` | The one stored credential the model calls introduce; everything else is IAM. Blank locally |
-| `ANTHROPIC_MENU_MODEL` | Must support the `web_search_20260209` tool (Sonnet 4.6+/Opus 4.6+). Default `claude-sonnet-5-5` |
-| `COGNITO_ENABLED` | `true` raises `NotImplementedError` until Phase 3 |
+| `ANTHROPIC_MENU_MODEL` | Only extracts the fetched menu page now (no `web_search`), so it must be vision-capable: menus are often PDFs or images. Default `claude-sonnet-5-5` |
+| `SERPAPI_KEY` | Menu-URL discovery. Blank locally falls back to the OSM `website` hint |
+| `TYPESAFE_API_KEY` | Key for Jev, the menu-match decision model. Blank locally skips Jev; the Claude classifier (then difflib) matches instead |
+| `TYPESAFE_MATCH_MODEL` | Pinned (`jev-1.14.0`), not `jev-latest`, because `MENU_MATCH_CONFIDENCE_THRESHOLD` is tuned against one version's probabilities |
+| `COGNITO_ENABLED` | `true` in prod: API Gateway validates the JWT and handlers read `sub` from its claims. `false` locally uses `X-Debug-User-Oid` |
 
 ## Notes for future work
 
