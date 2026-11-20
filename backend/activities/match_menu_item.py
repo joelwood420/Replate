@@ -1,7 +1,9 @@
 """Match the vision model's dish guess against the restaurant's real menu.
 
 This is the anti-hallucination step: a real menu item's name is trusted over the vision
-model's unaided guess. The match is done by an in-context LLM classifier - it is given the
+model's unaided guess. The match is done by Jev, TypeSafe's decision model, when it is
+configured (a typed Choice over the menu items plus "none"; docs/decisions.md, 2026-11-21),
+otherwise by an in-context LLM classifier - it is given the
 vision guess plus the one restaurant's menu and picks the single best item or "none", which
 handles stylised/shortened names ("The Classic Benny" == "Eggs Benedict") that a character
 similarity misses. The model may only choose a listed item or none, never invent one, so the
@@ -15,8 +17,18 @@ confidence outcomes and never fails the job.
 import difflib
 import logging
 
-from shared import anthropic_client, config
+from shared import anthropic_client, config, typesafe_client
 from shared.models import MatchMethod
+
+#: Jev's Choice primitive takes at most 255 options; one is reserved for "none".
+_JEV_MAX_OPTIONS = 255
+_JEV_NONE = "none"
+# Jev reads instructions literally, so "or none" is spelled out rather than implied.
+_JEV_INSTRUCTIONS = (
+    "Which restaurant menu item is the photographed dish? Match on meaning, not spelling: a "
+    "stylised or shortened name can be the same dish. Choose none if no menu item is a "
+    "plausible match."
+)
 
 _MATCH_SYSTEM = (
     "You match a diner's photographed dish to one restaurant's real menu. Choose the single "
@@ -85,6 +97,57 @@ def _menu_lines(menu_items: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _dish_summary(vision_guess: dict) -> tuple[str, str, str]:
+    dish = vision_guess.get("dish_name_guess") or "(unknown)"
+    cuisine = vision_guess.get("cuisine_guess") or "(unknown)"
+    components = "; ".join(
+        f"{e.get('name', '')}: {e.get('description', '')}".strip(": ")
+        for e in vision_guess.get("elements", [])
+    )
+    return dish, cuisine, components
+
+
+def _classify_with_jev(vision_guess: dict, menu_items: list[dict]) -> tuple[int, float] | None:
+    """Ask Jev (TypeSafe's decision model) to pick the best menu item, or none.
+
+    Tried before the Claude classifier because a pick-one-from-a-list question is exactly
+    what a decision model does, in about 100 ms instead of seconds (docs/decisions.md,
+    2026-11-21). Each menu item becomes a Choice option plus an explicit "none" option, so
+    Jev can only ever return a listed item or none. Returns (index, probability), index -1
+    for none, or None when Jev is not configured, the menu is too long for one question, or
+    the call fails, signalling the caller to try the next matcher.
+    """
+    if not typesafe_client.is_configured():
+        return None
+    if len(menu_items) >= _JEV_MAX_OPTIONS:
+        # One slot is the "none" option. Menus this long are rare; Claude handles them.
+        return None
+
+    dish, cuisine, components = _dish_summary(vision_guess)
+    state = (
+        "A diner photographed a dish at a restaurant. From the photo:\n"
+        f"- best-guess dish name: {dish}\n"
+        f"- cuisine: {cuisine}\n"
+        f"- visible components: {components or '(none noted)'}"
+    )
+    criteria = {}
+    for index, item in enumerate(menu_items):
+        description = item.get("item_description") or ""
+        suffix = f" - {description}" if description else ""
+        criteria[f"item_{index}"] = f"{item.get('item_name', '')}{suffix}"
+    criteria[_JEV_NONE] = "None of the menu items above is the photographed dish"
+
+    try:
+        picked, probability = typesafe_client.choice(state, _JEV_INSTRUCTIONS, criteria)
+    except typesafe_client.TypeSafeError as exc:
+        logging.info("Menu-match Jev call failed, falling back to Claude: %s", exc)
+        return None
+
+    if picked == _JEV_NONE:
+        return -1, 0.0
+    return int(picked.removeprefix("item_")), round(probability, 4)
+
+
 def _classify_with_llm(vision_guess: dict, menu_items: list[dict]) -> tuple[int, float] | None:
     """Ask the model to pick the best menu item (or none).
 
@@ -98,12 +161,7 @@ def _classify_with_llm(vision_guess: dict, menu_items: list[dict]) -> tuple[int,
     if not model:
         return None
 
-    dish = vision_guess.get("dish_name_guess") or "(unknown)"
-    cuisine = vision_guess.get("cuisine_guess") or "(unknown)"
-    components = "; ".join(
-        f"{e.get('name', '')}: {e.get('description', '')}".strip(": ")
-        for e in vision_guess.get("elements", [])
-    )
+    dish, cuisine, components = _dish_summary(vision_guess)
     prompt = (
         "Diner's dish (from a photo):\n"
         f"- best-guess name: {dish}\n"
@@ -161,9 +219,12 @@ def run(activity_input: dict) -> dict:
 
     threshold = config.menu_match_confidence_threshold()
 
-    # LLM classifier first; difflib is the fallback when it is unavailable. With no menu there
-    # is nothing to classify, so skip straight to the vision-only medium outcome.
-    match = _classify_with_llm(vision_guess, menu_items) if menu_items else (-1, 0.0)
+    # Jev first, then the Claude classifier, then difflib: each later matcher only runs when
+    # the one before it is unavailable or failed. With no menu there is nothing to classify,
+    # so skip straight to the vision-only medium outcome.
+    match = _classify_with_jev(vision_guess, menu_items) if menu_items else (-1, 0.0)
+    if match is None:
+        match = _classify_with_llm(vision_guess, menu_items)
     if match is None:
         match = _difflib_match(vision_guess, menu_items)
     index, confidence = match
